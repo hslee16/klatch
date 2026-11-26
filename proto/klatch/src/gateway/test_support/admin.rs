@@ -117,6 +117,10 @@ impl PolicyStore for SpyStore {
         self.inner.audit_log(limit)
     }
 
+    fn audit_page(&self, limit: usize, only: Option<&str>) -> Result<crate::store::AuditPage> {
+        self.inner.audit_page(limit, only)
+    }
+
     fn last_audit_ts(&self, action: &str, target: &str, since: i64) -> Result<Option<i64>> {
         self.inner.last_audit_ts(action, target, since)
     }

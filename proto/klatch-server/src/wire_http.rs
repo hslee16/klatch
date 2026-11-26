@@ -116,7 +116,7 @@ pub(crate) struct Shared {
     pub(crate) config: SessionConfig,
     sessions: Sessions,
     /// Forwarded identity headers seen and ignored (#110): names and counts only.
-    forwarded: crate::forwarded::Ignored,
+    pub(crate) forwarded: crate::forwarded::Ignored,
     /// The WebSocket route's origins and deadlines (#112).
     pub(crate) ws: crate::wire_ws_caps::Settings,
     /// Open WebSocket connections per member.
@@ -498,16 +498,17 @@ pub fn run(opts: &Options) -> Result<()> {
     );
     let mut shared = Shared::new(gateway.session_backend(), SessionConfig::default());
     shared.ws.apply(&opts.ws, opts.max_connections);
-    loopback::serve_concurrent(
-        &listener,
-        &crate::daemon::STOP,
-        opts.max_connections,
-        loopback::Callbacks {
-            handler: &|stream| serve_connection(stream, &shared),
-            excess: &refuse_excess,
-        },
-    );
-    eprintln!("{}", shared.forwarded.summary());
+    crate::forwarded_report::while_reporting(&shared.forwarded, &shared.backend, || {
+        loopback::serve_concurrent(
+            &listener,
+            &crate::daemon::STOP,
+            opts.max_connections,
+            loopback::Callbacks {
+                handler: &|stream| serve_connection(stream, &shared),
+                excess: &refuse_excess,
+            },
+        )
+    });
     drop(shared);
     drop(gateway);
     eprintln!("klatch-server: http stopped");

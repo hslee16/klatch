@@ -15,6 +15,7 @@ mod der_cert_tests;
 #[cfg(test)]
 mod der_tests;
 mod forwarded;
+mod forwarded_report;
 mod inbox;
 mod loopback;
 #[cfg(test)]

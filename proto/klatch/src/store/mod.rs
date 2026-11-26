@@ -229,6 +229,27 @@ pub struct NewAudit<'a> {
     pub detail: &'a str,
 }
 
+/// The audit action of the server's counts-only note of ignored forwarded identity headers (#1490). It is an
+/// operational note, not an administrative act: the default audit view leaves it out and says how many it hid, so that
+/// a row every ten minutes (which a client can cause) never pushes a real act out of the latest ones.
+pub const FORWARDED_IGNORED_ACTION: &str = "forwarded-ignored";
+
+/// Whether `action` is a well formed audit action name: 1 to 64 of lower case letters, digits, `-`, `_`, `:` and `.`.
+/// The name of an action filter is checked with this before it reaches a query.
+pub fn valid_audit_action(action: &str) -> bool {
+    (1..=64).contains(&action.len())
+        && action
+            .bytes()
+            .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b':' | b'.'))
+}
+
+/// A page of the audit: the latest rows, newest first, and how many operational rows the page left out.
+#[derive(Debug, Default)]
+pub struct AuditPage {
+    pub rows: Vec<crate::domain::AuditRecord>,
+    pub hidden: u64,
+}
+
 impl<'a> NewAudit<'a> {
     pub fn new(action: &'a str, target: &'a str, detail: &'a str) -> Self {
         Self {

@@ -19,6 +19,8 @@ mod shared;
 #[cfg(test)]
 mod shared_fairness_tests;
 #[cfg(test)]
+mod shared_forwarded_tests;
+#[cfg(test)]
 mod shared_session_tests;
 #[cfg(test)]
 mod shared_tests;

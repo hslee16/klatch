@@ -39,6 +39,12 @@ pub trait Backend {
     fn verify_credential(&self, member: &str, token: &str) -> Result<Principal>;
     /// Keep a `member-fixed` refusal the session made for the principal (#1084): a refusal row and a look at the breaker.
     fn note_member_fixed(&self, who: &Principal);
+    /// Keep the server's counts-only note of forwarded identity headers it ignored (#1490): one audit row, text of
+    /// header names and counts only (anything else is refused). Called by a timer, never per request. A backend that
+    /// keeps no audit (a test double) keeps nothing.
+    fn note_forwarded_ignored(&self, _counts: &str) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl<S: Store> Backend for Gateway<S> {
@@ -78,5 +84,8 @@ impl<S: Store> Backend for Gateway<S> {
     }
     fn note_member_fixed(&self, who: &Principal) {
         Gateway::note_member_fixed(self, who);
+    }
+    fn note_forwarded_ignored(&self, counts: &str) -> Result<()> {
+        Gateway::note_forwarded_ignored(self, counts)
     }
 }

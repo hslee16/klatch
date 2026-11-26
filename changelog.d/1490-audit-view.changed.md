@@ -1,0 +1,1 @@
+- `klatch admin audit` leaves the operational `forwarded-ignored` rows out of its default view (and says how many it hid), and takes `--action NAME` to show only the rows of one action; a server behind a proxy can no longer push real admin acts out of the latest 20 (#1490).

@@ -31,6 +31,7 @@ mod dm;
 mod dm_nudge;
 mod facilitator;
 mod floors;
+mod forwarded_note;
 mod guarding;
 mod handoff;
 mod history;

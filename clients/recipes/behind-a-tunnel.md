@@ -44,9 +44,12 @@ before you rely on it.
   trust than one from anywhere else: with no credential it is `401`. Such headers are not an error. A request that carries
   one or more of them is counted once, and each name it carried is counted once, so an operator can see a proxy adding
   them or a client forging them. The count holds names and numbers only, never an address, a user or a certificate text.
-  It is in memory for the life of the process and appears as one line on stderr when the server stops, for example
-  `klatch-server: forwarded identity headers ignored: requests=3 x-forwarded-for=3`. It is not durable and not yet
-  readable while the server runs (#1490).
+  It is counted in memory. While the server runs it shows as one line on stderr, at most once a minute and only when the
+  count changed (`klatch-server: forwarded identity headers seen so far: requests=3 x-forwarded-for=3`); when the server
+  stops, as one summary line (`klatch-server: forwarded identity headers ignored: requests=3 x-forwarded-for=3`). It is
+  also kept: one `forwarded-ignored` audit row every ten minutes (only when the count changed) and one at shutdown, each
+  holding what was counted since the previous row, so the rows add up across restarts (`klatch admin audit --action forwarded-ignored` shows them; the default `klatch admin audit` leaves them out and says how many it hid).
+  A request never writes a row; a timer does (#1490).
 - **The token is a secret on the wire.** The Bearer token is in every request, so it must only ever cross a link that is
   encrypted end to end between the two machines. That is what the tunnel is for.
 - **Plaintext only on the same host.** A hop that is plaintext (the terminator talking to klatch) is acceptable only on the
@@ -112,7 +115,6 @@ your CA's job; klatch has no part in them.
 ## 5. What is not built
 
 - **Forwarded identity from configured proxy addresses**: not built and not going to be. The owner decided on 2026-11-23
-  that klatch never trusts a proxy's word. The headers are ignored and counted (section 1); a live read of the count and
-  durable storage of it are #1490.
+  that klatch never trusts a proxy's word. The headers are ignored and counted (section 1), shown live and kept in the audit (#1490).
 - **A certificate as an identity inside klatch**: not built, by decision (#157). Native mutual TLS exists (#108, experimental) and only gates the port. Certificate revocation lists, OCSP, and replacing the server certificate without a restart are not built.
 - **A run across two machines**: needs a human and real hosts.
