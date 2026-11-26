@@ -398,6 +398,32 @@ class LauncherStateTests(unittest.TestCase):
         with open(os.path.join(self.state, "secret")) as f:
             self.assertEqual(f.read().strip(), secret, "ensure replaced the secret")
 
+    def test_ensure_says_why_when_the_claim_refuses_the_receiver(self):
+        """#1601: a receiver refused by another holder's watch:gh claim exits 2; ensure must say so and for how long."""
+        fake = os.path.join(self.t, "klatch")
+        with open(fake, "w") as f:
+            f.write('#!/bin/sh\necho "Error: refused: watch:gh is claimed by o for another 5s" >&2\nexit 1\n')
+        os.chmod(fake, 0o755)
+        home = os.path.join(self.t, "khome")
+        os.mkdir(home)
+        env = {"PATH": self.bin + ":/usr/bin:/bin", "HOME": self.t, "TMPDIR": self.t, "KLATCH_HOME": home}
+        r = subprocess.run([LAUNCHER, "ensure", "--out-dir", self.state, "--port", str(self.port), "--klatch-bin", fake,
+                            "--as-member", "m", "--room", "r"], env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertIn("receiver: down", r.stdout)
+        self.assertIn("refused", r.stdout)
+        self.assertIn("watch:gh", r.stdout)
+        self.assertIn("90 s", r.stdout)
+        self.assertIn("run gh-watch ensure again", r.stdout)
+
+    def test_ensure_reports_other_failures_from_serve_out(self):
+        env = {"PATH": self.bin + ":/usr/bin:/bin", "HOME": self.t, "TMPDIR": self.t}
+        r = subprocess.run([LAUNCHER, "ensure", "--out-dir", self.state, "--port", str(self.port), "--klatch-bin", "/bin/true"],
+                           env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertIn("did not start", r.stdout)
+        self.assertIn("serve.out", r.stdout)
+
     def test_ensure_ok_when_forwarder_present(self):
         self.set_ps([self.FORWARDER % self.port])
         r = self.run_cmd("ensure")
