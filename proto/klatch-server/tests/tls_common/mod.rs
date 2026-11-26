@@ -415,10 +415,21 @@ impl Server {
         extra: &[String],
         env: &[(&str, &str)],
     ) -> Server {
+        Server::started_with(dir, subcommand, extra, true, env)
+    }
+
+    /// [`Server::started_env`] with or without the knob for short limits (`false` is the server as an operator runs it).
+    pub fn started_with(
+        dir: &Dir,
+        subcommand: &str,
+        extra: &[String],
+        short_limits: bool,
+        env: &[(&str, &str)],
+    ) -> Server {
         let mut args = vec!["--listen".to_string(), "127.0.0.1:0".to_string()];
         args.extend_from_slice(extra);
         let mut server = Server {
-            child: spawn_env(dir, subcommand, &args, true, env),
+            child: spawn_env(dir, subcommand, &args, short_limits, env),
             addr: "127.0.0.1:0".parse().unwrap(),
         };
         let marker = format!("{subcommand} listening on ");

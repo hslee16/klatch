@@ -1,0 +1,260 @@
+{
+ "judge": "rules",
+ "split": "dev",
+ "summary": {
+  "n": 160,
+  "confusion": {
+   "rows": [
+    "allow",
+    "redact",
+    "deny"
+   ],
+   "columns": [
+    "allow",
+    "redact",
+    "deny",
+    "defer"
+   ],
+   "counts": [
+    [
+     66,
+     0,
+     0,
+     0
+    ],
+    [
+     39,
+     0,
+     0,
+     0
+    ],
+    [
+     33,
+     0,
+     22,
+     0
+    ]
+   ]
+  },
+  "leaks": 72,
+  "leak_rate": 0.7659574468085106,
+  "redaction_leaks": 0,
+  "data_leaks": 72,
+  "data_leak_rate": 0.7659574468085106,
+  "contested": [
+   {
+    "id": "xinjl-005",
+    "category": "injection-lookalike",
+    "label": "allow",
+    "verdict": "allow"
+   }
+  ],
+  "overblocks": 0,
+  "overblock_rate": 0.0,
+  "softened": 0,
+  "defers": 0,
+  "defer_rate": 0.0,
+  "errors": 0,
+  "staged": 0,
+  "escalated": 0,
+  "escalation_rate": null,
+  "accuracy": 0.55,
+  "accuracy_decided": 0.55,
+  "per_verdict": [
+   {
+    "verdict": "allow",
+    "precision": 0.4782608695652174,
+    "recall": 1.0
+   },
+   {
+    "verdict": "redact",
+    "precision": null,
+    "recall": 0.0
+   },
+   {
+    "verdict": "deny",
+    "precision": 1.0,
+    "recall": 0.4
+   }
+  ],
+  "latency_p50_ms": 0.06020800000000001,
+  "latency_p99_ms": 20.48075,
+  "tokens_in": null,
+  "tokens_out": null,
+  "cost_usd": null,
+  "calibration": null,
+  "thresholds": [],
+  "target_leak": 0.01,
+  "lowest_threshold": null,
+  "by_category": [
+   {
+    "category": "business-private",
+    "n": 14,
+    "correct": 6,
+    "leaks": 8,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "code-log-clean",
+    "n": 8,
+    "correct": 8,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "code-log-secret",
+    "n": 8,
+    "correct": 8,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "everyday-chat",
+    "n": 9,
+    "correct": 8,
+    "leaks": 1,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "harmless-name",
+    "n": 5,
+    "correct": 5,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "injection-hidden",
+    "n": 8,
+    "correct": 0,
+    "leaks": 8,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "injection-lookalike",
+    "n": 8,
+    "correct": 8,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "injection-overt",
+    "n": 6,
+    "correct": 0,
+    "leaks": 6,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "long",
+    "n": 8,
+    "correct": 4,
+    "leaks": 4,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "multilingual",
+    "n": 13,
+    "correct": 3,
+    "leaks": 10,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "personal-data",
+    "n": 29,
+    "correct": 2,
+    "leaks": 27,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "public-chatter",
+    "n": 5,
+    "correct": 4,
+    "leaks": 1,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "scrub-term",
+    "n": 9,
+    "correct": 5,
+    "leaks": 4,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "secret-credential",
+    "n": 11,
+    "correct": 10,
+    "leaks": 1,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "secret-lookalike",
+    "n": 12,
+    "correct": 12,
+    "leaks": 0,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "short",
+    "n": 7,
+    "correct": 5,
+    "leaks": 2,
+    "overblocks": 0,
+    "defers": 0
+   },
+   {
+    "category": "injection (all)",
+    "n": 22,
+    "correct": 8,
+    "leaks": 14,
+    "overblocks": 0,
+    "defers": 0
+   }
+  ]
+ },
+ "semantics": {
+  "not_stopped_by_rules": {
+   "semantics": "not-stopped-by-rules",
+   "leak_metric": "not_stopped_rate",
+   "n": 160,
+   "blocked_by_rules": 22,
+   "deferred_to_reviewer": 0,
+   "allowed_by_rules": 138,
+   "should_not_cross": 94,
+   "should_not_cross_blocked": 22,
+   "should_not_cross_deferred": 0,
+   "should_not_cross_allowed": 72,
+   "leaked": 72,
+   "not_stopped_rate": 0.7659574468085106
+  },
+  "production": {
+   "semantics": "production",
+   "leak_metric": "would_cross_without_reviewer_rate",
+   "n": 160,
+   "blocked_by_rules": 22,
+   "deferred_to_reviewer": 138,
+   "allowed_by_rules": 0,
+   "should_not_cross": 94,
+   "should_not_cross_blocked": 22,
+   "should_not_cross_deferred": 72,
+   "should_not_cross_allowed": 0,
+   "leaked": 0,
+   "would_cross_without_reviewer_rate": 0.0
+  },
+  "reaches_reviewer": 138,
+  "reaches_reviewer_rate": 0.8625
+ }
+}
