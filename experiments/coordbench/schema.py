@@ -116,13 +116,20 @@ def _is_hex(v, n):
 def _identity_errors(rec):
     """The run identity fields added after schema 1 (#1530, #1547) are optional (a record made before has none), but when
     present they must have their shape: arm_text_sha256 a sha256 or null, prompt_sha256 null or {agent: sha256}, klatch.version_output
-    a string or null, klatch.bench_commit a string or null."""
+    a string or null, klatch.bench_commit a string or null, fixture.seed an integer or null and fixture.facts_sha256 a sha256 or null (#1531)."""
     errs = []
     if "arm_text_sha256" in rec and rec["arm_text_sha256"] is not None and not _is_hex(rec["arm_text_sha256"], 64):
         errs.append("arm_text_sha256 is not a sha256 or null")
     ps = rec.get("prompt_sha256")
     if ps is not None and not (isinstance(ps, dict) and all(_is_hex(v, 64) for v in ps.values())):
         errs.append("prompt_sha256 is not null or an object of sha256 values")
+    fx = rec.get("fixture")
+    if isinstance(fx, dict):  # #1531: only a fixture with seeded hidden facts has them; a record made before has neither
+        seed = fx.get("seed")
+        if seed is not None and (not isinstance(seed, int) or isinstance(seed, bool)):
+            errs.append("fixture.seed is not an integer or null")
+        if fx.get("facts_sha256") is not None and not _is_hex(fx["facts_sha256"], 64):
+            errs.append("fixture.facts_sha256 is not a sha256 or null")
     k = rec.get("klatch")
     if isinstance(k, dict):
         errs += ["klatch.%s is not a string or null" % key for key in ("version_output", "bench_commit")

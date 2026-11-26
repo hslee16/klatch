@@ -85,6 +85,7 @@ class S9Base(Base):
     def argv(self, arms="B0", runs=1, variant=None, **kw):
         a = super().argv(arms, runs, **kw)
         a[a.index("--fixture") + 1] = "history"
+        a.append("--committed-facts")  # these scripts name the committed default-seed facts (#1531)
         if variant:
             a += ["--variant", variant]
         return a

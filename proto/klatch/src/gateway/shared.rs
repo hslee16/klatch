@@ -25,6 +25,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod cancel;
+
 /// Makes the harness a connection's `join` is judged by. Called on the owner thread, so the harness need not be `Send`.
 type HarnessMaker = Arc<dyn Fn() -> Box<dyn crate::harness::Harness> + Send + Sync>;
 
@@ -207,6 +209,7 @@ impl SharedGateway {
         SharedBackend {
             gateway: self.clone(),
             harness: None,
+            inflight: Arc::default(),
         }
     }
 
@@ -267,11 +270,24 @@ impl SharedGateway {
     }
 }
 
-/// The session loop's view of a shared gateway (`SharedGateway::session_backend`). `Clone`, `Send` and `Sync`.
-#[derive(Clone)]
+/// The session loop's view of a shared gateway (`SharedGateway::session_backend`). `Clone`, `Send` and `Sync`. A clone
+/// is a new connection's handle and starts with no looks in flight (see `cancel`).
 pub struct SharedBackend {
     gateway: SharedGateway,
     harness: Option<HarnessMaker>,
+    inflight: Arc<cancel::InFlight>,
+}
+
+impl Clone for SharedBackend {
+    fn clone(&self) -> Self {
+        Self {
+            gateway: self.gateway.clone(),
+            harness: self.harness.clone(),
+            // Call ids belong to one connection: two connections may both have a request "1", so a clone never shares
+            // the registry a cancel looks in.
+            inflight: Arc::default(),
+        }
+    }
 }
 
 impl SharedBackend {
@@ -341,6 +357,22 @@ impl Backend for SharedBackend {
         // any request may have stored something: a waiting session's change token moves after it
         self.gateway.posts.fetch_add(1, Ordering::SeqCst);
         frames.unwrap_or_else(|e| Self::failed(id, &e))
+    }
+    fn handle_cancellable(
+        &self,
+        who: &Principal,
+        call: Call,
+        _harness: Option<&dyn crate::harness::Harness>,
+    ) -> crate::session::Outcome {
+        // Only a pure look can be cancelled; a request with an effect is a plain `handle` and is never `Cancelled`.
+        // The connection's own harness (set by the daemon's edge) judges a `join`, as in `handle`.
+        if !crate::session::cancellable::is_look(&call) {
+            return crate::session::Outcome::Done(self.handle(who, call));
+        }
+        self.look_cancellable(who, call)
+    }
+    fn canceller(&self) -> Arc<dyn crate::session::CancelHook> {
+        self.inflight.clone()
     }
     fn verify_credential(&self, member: &str, token: &str) -> Result<Principal> {
         let (member, token) = (member.to_owned(), token.to_owned());

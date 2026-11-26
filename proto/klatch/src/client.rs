@@ -27,9 +27,11 @@ mod http;
 #[cfg(feature = "client-http")]
 pub use http::{HttpFault, HttpOptions};
 
-pub use records::{ClaimInfo, Collected, History, Member, Message, ReviewItem, Verdict};
+pub use records::{
+    BoundedRead, ClaimInfo, Collected, History, Member, Message, ReviewItem, Verdict,
+};
 use records::{array_of, message_of, opt_str, str_of};
-pub use requests::{ClaimRequest, Handoff, PostRequest, RefInput};
+pub use requests::{ClaimRequest, Handoff, PostRequest, ReadRequest, RefInput};
 
 /// A boxed writer for the session's input, and the action that ends a transport that has no child to wait for.
 type Writer = Box<dyn Write + Send>;

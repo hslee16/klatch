@@ -48,7 +48,7 @@ def main(argv=None):
         out = p.communicate()[0]
         if p.returncode != 0:
             failed.append(name)
-            print("FAILED %s\n%s" % (name, "\n".join(out.splitlines()[-40:])))
+            print("FAILED %s\n%s" % (name, "\n".join(out.splitlines()[-120:])))
     print("coordbench: %d of %d modules (%s), %d failed, %ds" % (total - len(failed), total, "all" if a.all else "fast subset",
                                                             len(failed), time.time() - started))
     return 1 if failed else 0

@@ -249,3 +249,155 @@ fn no_more_than_one_byte_past_the_cap_is_ever_read() {
     assert_eq!(read_capped(Counting(served.clone()), 10), None);
     assert!(served.get() <= 11, "read {} bytes", served.get());
 }
+
+fn record_text(pid: usize) -> String {
+    REC.replace("\"pid\":10", &format!("\"pid\":{pid}"))
+}
+
+fn own(d: &Path) -> OwnRegistry {
+    OwnRegistry {
+        dir: d.to_path_buf(),
+        uid: me(),
+    }
+}
+
+#[test]
+fn junk_entries_do_not_use_up_the_entry_bound_of_a_listing() {
+    let d = dir("junk-list");
+    mode(&d, 0o700);
+    for i in 0..3000 {
+        std::fs::write(d.join(format!("junk-{i}.txt")), "x").unwrap();
+    }
+    for pid in 100..120 {
+        std::fs::write(d.join(format!("{pid}.json")), record_text(pid)).unwrap();
+    }
+    assert_eq!(
+        own(&d).records().0.len(),
+        20,
+        "a record was starved by junk"
+    );
+}
+
+#[test]
+fn junk_entries_do_not_use_up_the_entry_bound_of_the_temp_cleanup() {
+    let d = dir("junk-temps");
+    mode(&d, 0o700);
+    for i in 0..3000 {
+        std::fs::write(d.join(format!("junk-{i}.txt")), "x").unwrap();
+    }
+    for n in 0..5 {
+        let temp = d.join(format!(".10.tmp{n}"));
+        std::fs::write(&temp, "x").unwrap();
+        age(&temp, 120);
+    }
+    remove_stale_temps(&d, Duration::from_secs(60));
+    for n in 0..5 {
+        assert!(!d.join(format!(".10.tmp{n}")).exists(), "temp {n} left");
+    }
+}
+
+#[test]
+fn the_temp_cleanup_looks_at_no_more_than_the_entry_bound_of_temporary_files() {
+    let d = dir("temps-bound");
+    mode(&d, 0o700);
+    let n = MAX_ENTRIES + 20;
+    for i in 0..n {
+        let temp = d.join(format!(".10.tmp{i}"));
+        std::fs::write(&temp, "x").unwrap();
+        age(&temp, 120);
+    }
+    remove_stale_temps(&d, Duration::from_secs(60));
+    let left = (0..n)
+        .filter(|i| d.join(format!(".10.tmp{i}")).exists())
+        .count();
+    assert_eq!(left, 20, "exactly the bound is removed in one pass");
+}
+
+/// A shuffled but fixed age for each pid, so directory order has nothing to do with age.
+fn shuffled_age(pid: usize, n: usize) -> usize {
+    (pid * 7919) % n
+}
+
+#[test]
+fn with_more_records_than_the_bound_the_newest_are_read_not_the_first_in_directory_order() {
+    let d = dir("newest");
+    mode(&d, 0o700);
+    let n = MAX_ENTRIES + 44;
+    for i in 0..n {
+        let file = d.join(format!("{}.json", 1000 + i));
+        std::fs::write(&file, record_text(1000 + i)).unwrap();
+        // rank 0 is the oldest; ages are whole minutes apart, so no tie
+        age(&file, 100_000 - 60 * shuffled_age(i, n) as u64);
+    }
+    let mut expect: Vec<usize> = (0..n)
+        .filter(|&i| shuffled_age(i, n) >= n - MAX_ENTRIES)
+        .collect();
+    expect.sort_unstable();
+    let expect: Vec<u32> = expect.into_iter().map(|i| 1000 + i as u32).collect();
+    let got: Vec<u32> = own(&d).records().0.iter().map(|r| r.pid).collect();
+    assert_eq!(
+        got, expect,
+        "a live (newest) record was hidden by older ones"
+    );
+}
+
+/// Swap the name between a plain file and a symlink to another plain file of ours, as fast as it can, until told to stop.
+fn swapper(
+    dir: PathBuf,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> std::thread::JoinHandle<()> {
+    use std::sync::atomic::Ordering;
+    std::thread::spawn(move || {
+        let mut i = 0u64;
+        while !stop.load(Ordering::Relaxed) {
+            i += 1;
+            let stage = dir.join(format!("stage{}", i % 2));
+            let _ = std::fs::remove_file(&stage);
+            if i.is_multiple_of(2) {
+                let _ = std::os::unix::fs::symlink(dir.join("other"), &stage);
+            } else {
+                let _ = std::fs::hard_link(dir.join("real"), &stage);
+            }
+            let _ = std::fs::rename(&stage, dir.join("10.json"));
+        }
+    })
+}
+
+#[test]
+fn a_name_swapped_to_a_symlink_while_it_is_read_never_gives_the_text_behind_the_link() {
+    use std::sync::atomic::Ordering;
+    let d = dir("race");
+    mode(&d, 0o700);
+    std::fs::write(d.join("real"), REC).unwrap();
+    std::fs::write(d.join("other"), "swapped").unwrap();
+    std::fs::hard_link(d.join("real"), d.join("10.json")).unwrap();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let thread = swapper(d.to_path_buf(), stop.clone());
+    let registry = own(&d);
+    let started = std::time::Instant::now();
+    let (mut reads, mut leaked) = (0u32, 0u32);
+    while started.elapsed() < Duration::from_secs(3) && leaked == 0 {
+        for _ in 0..200 {
+            reads += 1;
+            // through the named reader and through the registry, the two ways a record is opened
+            if read_named(&d, "10.json", me()).as_deref() == Some("swapped")
+                || registry
+                    .record_for(10)
+                    .is_some_and(|r| r.session_id == "swapped")
+                || registry
+                    .records()
+                    .0
+                    .iter()
+                    .any(|r| r.session_id == "swapped")
+            {
+                leaked += 1;
+            }
+        }
+    }
+    stop.store(true, Ordering::Relaxed);
+    thread.join().unwrap();
+    assert_eq!(
+        leaked, 0,
+        "the text behind a swapped-in symlink was believed ({reads} reads)"
+    );
+}

@@ -577,8 +577,22 @@ class Client:
         lower of the two clearances), never above."""
         return self.request("dm", to=to, body=body, **_given(("label", label)))
 
-    def read(self, room, peek=False):
-        return self.request("read", room=room, peek=peek)["messages"]
+    def read(self, room, peek=False, max_messages=None, max_bytes=None):
+        """Unread messages from others, advancing the cursor unless `peek`. `max_messages` and `max_bytes` (#1390) bound
+        the read: whole messages, the most important first, at most that many and at most that many bytes of JSON; the rest
+        stay unread for the next `read`. Both are sent as given (a non-negative integer; the server checks and refuses
+        what it cannot take, as an ApiError) and left out when None, so the read is unbounded as before. Returns the
+        message list; `read_bounded` also says how many were left."""
+        return self.read_bounded(room, peek, max_messages, max_bytes)["messages"]
+
+    def read_bounded(self, room, peek=False, max_messages=None, max_bytes=None):
+        """`read` with the whole answer: {"messages": [...], "omitted": n or None, "by_importance": bool}. `omitted` is
+        the number of messages a bounded read left unread (None when no bound was given, as the server sends no count);
+        `by_importance` is True when the page is not in `seq` order."""
+        r = self.request(
+            "read", room=room, peek=peek, **_given(("max_messages", max_messages), ("max_bytes", max_bytes))
+        )
+        return {"messages": r["messages"], "omitted": r.get("omitted"), "by_importance": r.get("by_importance", False)}
 
     def history(self, room, last=None, since=None):
         """Look back without moving any cursor. Returns {"messages": [...], "more": n}. No `last` and no `since`: the

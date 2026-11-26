@@ -9,6 +9,36 @@ use crate::domain::{Principal, Result};
 use crate::gateway::{Batch, Gateway, Subscription};
 use crate::protocol::ServerFrame;
 use crate::store::Store;
+use std::sync::Arc;
+
+/// How a look that may be cancelled ended (`Backend::handle_cancellable`, #1562).
+#[derive(Debug)]
+pub enum Outcome {
+    /// The look ran to its end: the frames that answer it, complete.
+    Done(Vec<ServerFrame>),
+    /// The look was cancelled and gave no answer. Never a partial list standing in for a whole one.
+    Cancelled,
+}
+
+/// Cancels the look in flight under one call id (#1562). It is `Send + Sync` so the thread that reads the input can
+/// call it while the thread that made the look is blocked in the backend.
+pub trait CancelHook: Send + Sync {
+    /// Tell the look with `call_id` to stop. `true` only when such a look was in flight and this call told it to stop
+    /// (a second cancel of the same look, a look that already finished and an unknown id are `false`). It never
+    /// touches another look. An answer of `true` is not a promise about work already done: a look the backend had begun
+    /// still ran to its own end and kept whatever audit it wrote; the caller just stops waiting for it.
+    fn cancel(&self, call_id: &str) -> bool;
+}
+
+/// The hook of a backend that cannot interrupt a look: it reports, honestly, that nothing was cancelled (#485: a
+/// default never claims a success it did not have).
+pub struct NoCancel;
+
+impl CancelHook for NoCancel {
+    fn cancel(&self, _call_id: &str) -> bool {
+        false
+    }
+}
 
 /// The calls a session loop makes on a gateway. Every call names the principal it acts for.
 pub trait Backend {
@@ -33,6 +63,20 @@ pub trait Backend {
         _harness: Option<&dyn crate::harness::Harness>,
     ) -> Vec<ServerFrame> {
         self.handle(who, call)
+    }
+    /// `handle_as` for a look that may be cancelled through `canceller()` under `call.id` (#1562). The default cannot be
+    /// interrupted: it runs the call to its end and is never `Cancelled`, which agrees with the default `canceller`.
+    fn handle_cancellable(
+        &self,
+        who: &Principal,
+        call: Call,
+        harness: Option<&dyn crate::harness::Harness>,
+    ) -> Outcome {
+        Outcome::Done(self.handle_as(who, call, harness))
+    }
+    /// The hook that cancels looks of `handle_cancellable`. The default is [`NoCancel`].
+    fn canceller(&self) -> Arc<dyn CancelHook> {
+        Arc::new(NoCancel)
     }
     /// Prove a member from the text of its credential token: `Verified` when it is live, else the refusal. Nothing
     /// weaker is ever returned for a bad token.

@@ -146,7 +146,7 @@ class Seeded(Harness):
         for arm, want in (("B1", True), ("B0", False)):
             dest = os.path.join(self.tmp, "h-" + arm)
             os.makedirs(dest)
-            subprocess.run(["bash", os.path.join(BENCH, "fixtures", "history", "setup.sh"), dest, "1"], check=True,
+            subprocess.run(["bash", os.path.join(BENCH, "fixtures", "history", "setup.sh"), dest, "20261124"], check=True,
                            env=dict(GENV, COORDBENCH_ARM=arm), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             has = os.path.exists(os.path.join(dest, ".gitattributes"))
             self.assertEqual(has, want, arm)

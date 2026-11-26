@@ -337,6 +337,41 @@ class Methods(SocketCase):
         c.role_act("close", room="r")
         self.assertEqual(d.frames()[-1]["params"], {"act": "close", "room": "r"})
 
+    def test_read_sends_max_messages_and_max_bytes_only_when_given(self):
+        f = self.wire(lambda c: c.read("r"), {"messages": []})
+        self.assertEqual(f["params"], {"room": "r", "peek": False})
+        f = self.wire(lambda c: c.read("r", True, max_messages=3, max_bytes=2000), {"messages": []})
+        self.assertEqual(list(f["params"]), ["room", "peek", "max_messages", "max_bytes"])
+        self.assertEqual(f["params"], {"room": "r", "peek": True, "max_messages": 3, "max_bytes": 2000})
+        f = self.wire(lambda c: c.read("r", max_messages=0), {"messages": []})
+        self.assertEqual(f["params"], {"room": "r", "peek": False, "max_messages": 0})
+
+    def test_read_bounded_answers_the_messages_omitted_and_by_importance(self):
+        d = self.serve(answer=lambda f: [ok(f["id"], {"messages": [1], "omitted": 4, "by_importance": True})])
+        c = self.connect(d)
+        self.assertEqual(c.read("r", max_messages=1), [1])
+        self.assertEqual(
+            c.read_bounded("r", max_messages=1), {"messages": [1], "omitted": 4, "by_importance": True}
+        )
+        self.assertEqual(d.frames()[-1]["params"], {"room": "r", "peek": False, "max_messages": 1})
+
+    def test_read_bounded_without_a_bound_has_no_omitted_and_no_by_importance(self):
+        d = self.serve(answer=lambda f: [ok(f["id"], {"messages": [1]})])
+        c = self.connect(d)
+        self.assertEqual(c.read_bounded("r", peek=True), {"messages": [1], "omitted": None, "by_importance": False})
+        self.assertEqual(d.frames()[-1]["params"], {"room": "r", "peek": True})
+
+    def test_a_bound_the_server_refuses_is_an_api_error_and_was_sent_as_given(self):
+        def fail(f):
+            return [{"type": "response", "id": f["id"], "ok": False, "error": {"code": "bad_params", "message": "max_messages"}}]
+
+        d = self.serve(answer=fail)
+        c = self.connect(d)
+        with self.assertRaises(kc.ApiError) as cm:
+            c.read("r", max_messages=-1)
+        self.assertEqual(cm.exception.code, "bad_params")
+        self.assertEqual(d.frames()[-1]["params"]["max_messages"], -1)
+
     def test_ack_is_a_frame_not_a_request_and_waits_for_no_answer(self):
         d = self.serve()
         c = self.connect(d)

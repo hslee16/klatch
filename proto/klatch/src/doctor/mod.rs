@@ -79,6 +79,7 @@ pub fn run(
     store::check_passphrase(&mut r, home);
     session::check_codex(&mut r, home, project_dir);
     session::check_harness(&mut r);
+    session::check_process_table(&mut r);
     hooks::check_hooks(&mut r, project_dir, home, exe);
     session::check_session(&mut r);
     session::check_registry(&mut r);
@@ -87,7 +88,7 @@ pub fn run(
 
 #[cfg(test)]
 mod tests {
-    use super::{Report, Status, store};
+    use super::{Report, Status, session, store};
     use klatch::sync::within;
     use std::time::{Duration, Instant};
 
@@ -150,5 +151,19 @@ mod tests {
         assert!(unset[0].0 == Status::Warn);
         assert!(unset[0].1.contains("no admin passphrase is set"));
         assert!(unset[0].2.as_deref().unwrap().contains("init-passphrase"));
+    }
+
+    #[test]
+    fn a_missing_ps_is_one_fixed_warning_and_a_present_one_is_quiet() {
+        let lines = |notice| {
+            let mut r = Report { lines: Vec::new() };
+            session::report_process_table(&mut r, notice);
+            r.lines
+        };
+        assert!(lines(None).is_empty());
+        let missing = lines(Some(klatch::harness::NO_PROCESS_TABLE));
+        assert_eq!(missing.len(), 1);
+        assert!(missing[0].0 == Status::Warn);
+        assert_eq!(missing[0].1, klatch::harness::NO_PROCESS_TABLE);
     }
 }

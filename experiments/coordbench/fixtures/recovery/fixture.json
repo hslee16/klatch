@@ -15,6 +15,7 @@
   "test_command": "python3 -m unittest discover -s tests -t .",
   "checker": "recovery",
   "generator_sources": ["gen_facts.py"],
+  "seeded_facts": {"default_seed": 20261123, "outputs": ["private", "reference/recoverkit/ranges.py", "fake.json"], "checker_files": ["facts.json"]},
   "private": "private",
   "est_cost_usd_haiku": 0.8,
   "fake": "fake.json"

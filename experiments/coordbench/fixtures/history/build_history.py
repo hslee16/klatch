@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""build_history.py DEST ARM: build the prebuilt repository of fixture F9 in DEST from history.json (#1374).
+"""build_history.py DEST ARM [SEED]: build the prebuilt repository of fixture F9 in DEST from history.json (#1374).
 
 A git repository on branch main with one commit per entry of history.json, each by its own author at its own fixed time (one
 hour apart from the start), so the commit ids are identical in every run and every arm of the same board kind. In arm B1 the
 commit also appends its `board` lines to TASKS.md and its `decisions` lines to DECISIONS.md; in every other arm those lines are
 ignored. A commit that changes no file is an empty commit (a decision or a handoff recorded in a message).
+
+SEED (#1531) is the run's seed: the facts in the commit messages are drawn from it (gen_facts.generate), so the commit ids differ
+from seed to seed and are the same for the same seed and arm. Without SEED, or with the generator's default seed, the committed
+history.json is used.
 """
 import datetime
 import json
@@ -59,9 +63,20 @@ def _commit(repo, c, when, board):
     repo.git("commit", "-q", "--allow-empty", "-m", c["message"], env=env)
 
 
-def main(dest, arm):
+def load_history(seed):
+    """The scripted history of the seed: the committed history.json for no seed or the default seed, else drawn from the seed."""
+    if seed is not None:
+        if HERE not in sys.path:
+            sys.path.insert(0, HERE)
+        import gen_facts
+        if seed != gen_facts.SEED:
+            return json.loads(gen_facts.generate(seed)["fixtures/history/history.json"])
     with open(os.path.join(HERE, "history.json")) as f:
-        hist = json.load(f)
+        return json.load(f)
+
+
+def main(dest, arm, seed=None):
+    hist = load_history(seed)
     repo = Repo(dest)
     repo.git("init", "-q", "-b", "main")
     t0 = datetime.datetime.strptime(hist["start"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
@@ -75,6 +90,6 @@ def main(dest, arm):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        raise SystemExit("usage: build_history.py DEST ARM")
-    main(sys.argv[1], sys.argv[2])
+    if len(sys.argv) not in (3, 4):
+        raise SystemExit("usage: build_history.py DEST ARM [SEED]")
+    main(sys.argv[1], sys.argv[2], int(sys.argv[3]) if len(sys.argv) == 4 else None)

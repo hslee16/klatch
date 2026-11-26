@@ -136,6 +136,7 @@ class S4Base(Base):
     def argv(self, arms="B1", runs=1, **kw):
         a = super().argv(arms, runs, **kw)
         a[a.index("--fixture") + 1] = "specialists"
+        a.append("--committed-facts")  # these scripts name the committed default-seed facts (#1531)
         a[a.index("--wall-s") + 1] = "120"
         return a
 
