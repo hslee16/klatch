@@ -19,7 +19,7 @@
 //!
 //! **Revocation: a CRL if the operator gives one, never OCSP.** Without `--tls-client-crl` a client certificate that was
 //! valid when it was issued stays accepted until it expires or until the CA file is replaced (the files are read at
-//! start, so replacing one takes a restart); revocation then means short-lived certificates, or a new CA. With it
+//! start and again on SIGHUP, `tls_reload.rs`, #1492); revocation then means short-lived certificates, or a new CA. With it
 //! (#1491) the one client verifier below also checks the listed CRLs: a listed serial fails the handshake, an expired CRL
 //! is enforced (it refuses its issuer's certificates) and a certificate no CRL covers is allowed. The file, the checks
 //! on it and the reasons for each choice are in `tls_crl.rs`. There is one verifier and one listener: the HTTP routes,
@@ -58,6 +58,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// A finished server configuration, shareable between connections (the name other modules use, so they never name rustls).
+pub type SharedConfig = Arc<ServerConfig>;
+
+/// The configuration type itself, for generic holders (`tls_reload::Current`).
+pub type Config = ServerConfig;
+
 /// The files the operator names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsFiles {
@@ -68,10 +74,56 @@ pub struct TlsFiles {
     pub client_crl: Option<PathBuf>,
 }
 
-/// Read a file the operator named; the error names the file and what kind of failure, never the content.
-fn read_pem(path: &Path, what: &str) -> Result<Vec<u8>> {
-    std::fs::read(path)
-        .map_err(|e| anyhow::anyhow!("cannot read the {what} {}: {}", path.display(), e.kind()))
+/// The most a certificate or CA file may hold: 4 MiB. A chain of certificates is a few KiB; more is a mistake.
+const MAX_PEM_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Read a file the operator named, the way the key and CRL files are read: opened without following a link and without
+/// blocking (so a FIFO cannot hold start or a reload), checked on the open descriptor to be a regular file of at most
+/// 4 MiB, and, for a `trusted` file (the CA file: a trust anchor), owned by this user or root and not writable by group
+/// or other (whoever can write it chooses who may connect). The error names the file and the kind of failure, never the
+/// content.
+fn read_pem(path: &Path, what: &str, trusted: bool) -> Result<Vec<u8>> {
+    let shown = path.display();
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|e| match e.raw_os_error() {
+            Some(libc::ELOOP) => {
+                anyhow::anyhow!("the {what} {shown} is a symbolic link: name the file itself")
+            }
+            _ => anyhow::anyhow!("cannot read the {what} {shown}: {}", e.kind()),
+        })?;
+    let meta = file
+        .metadata()
+        .map_err(|e| anyhow::anyhow!("cannot inspect the {what} {shown}: {}", e.kind()))?;
+    if !meta.is_file() {
+        bail!("the {what} {shown} is not a regular file");
+    }
+    if trusted {
+        if meta.uid() != euid() && meta.uid() != 0 {
+            bail!("the {what} {shown} is not owned by the user running the server or by root");
+        }
+        let mode = meta.mode() & 0o777;
+        if mode & 0o022 != 0 {
+            bail!(
+                "the {what} {shown} is writable by group or other (mode {mode:04o}): whoever can write it chooses who may connect; use 0644 or stricter"
+            );
+        }
+    }
+    if meta.len() > MAX_PEM_BYTES {
+        bail!("the {what} {shown} is larger than 4 MiB: it is not read");
+    }
+    let mut bytes = Vec::new();
+    // bounded again at the read: a file that grew since it was inspected is cut off and refused
+    (&file)
+        .take(MAX_PEM_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| anyhow::anyhow!("cannot read the {what} {shown}: {}", e.kind()))?;
+    if bytes.len() as u64 > MAX_PEM_BYTES {
+        bail!("the {what} {shown} grew beyond 4 MiB while it was being read: it is refused");
+    }
+    Ok(bytes)
 }
 
 /// The user the server runs as: the one place this crate asks (the key file's and the CRL file's owner checks use it).
@@ -118,7 +170,7 @@ fn read_key(path: &Path) -> Result<PrivateKeyDer<'static>> {
 
 /// The certificates of a PEM file (at least one).
 fn read_certs(path: &Path, what: &str) -> Result<Vec<CertificateDer<'static>>> {
-    let bytes = read_pem(path, what)?;
+    let bytes = read_pem(path, what, false)?;
     let certs: Vec<_> = CertificateDer::pem_slice_iter(&bytes)
         .collect::<Result<_, _>>()
         .map_err(|_| anyhow::anyhow!("the {what} {} is not valid PEM", path.display()))?;
@@ -131,7 +183,7 @@ fn read_certs(path: &Path, what: &str) -> Result<Vec<CertificateDer<'static>>> {
 /// The certificates the client CA file holds (possibly none: the bind policy refuses a listener with no root, in its own
 /// words, before any server configuration is built).
 pub fn client_roots(path: &Path) -> Result<RootCertStore> {
-    let bytes = read_pem(path, "client CA file")?;
+    let bytes = read_pem(path, "client CA file", true)?;
     let mut roots = RootCertStore::empty();
     for ca in CertificateDer::pem_slice_iter(&bytes) {
         let ca = ca.map_err(|_| {
@@ -147,9 +199,16 @@ pub fn client_roots(path: &Path) -> Result<RootCertStore> {
     Ok(roots)
 }
 
-/// The server configuration for these files and client roots, or the reason the server must not start. Client
-/// authentication is mandatory and nothing in this function can turn it off.
-pub fn build_config(files: &TlsFiles, roots: RootCertStore) -> Result<Arc<ServerConfig>> {
+/// The server configuration for these files and client roots at a stage (start, or a reload that refuses a CRL file older
+/// than the one in force), or the reason the server must not start; with the earliest `nextUpdate` of the CRLs it adopted
+/// (`None` without a CRL file): what the next reload compares against. Client authentication is mandatory and nothing in
+/// this function can turn it off.
+pub fn build_config_at(
+    files: &TlsFiles,
+    roots: RootCertStore,
+    stage: tls_crl::Stage,
+) -> Result<(Arc<ServerConfig>, Option<i64>)> {
+    let mut due = None;
     let key = read_key(&files.key)?;
     let chain = read_certs(&files.cert, "server certificate")?;
     let provider = Arc::new(rustls::crypto::ring::default_provider());
@@ -160,8 +219,10 @@ pub fn build_config(files: &TlsFiles, roots: RootCertStore) -> Result<Arc<Server
         // the CA subjects a CRL's issuer must match (#1614): taken from the roots the verifier was built on
         let subjects: Vec<&[u8]> = roots_subjects.iter().map(|s| s.as_ref()).collect();
         // expiry enforced, unknown status allowed: the reasons are in `tls_crl.rs`
+        let (crls, earliest) = tls_crl::read_crls_at(path, &subjects, tls_crl::now_unix()?, stage)?;
+        due = earliest;
         builder = builder
-            .with_crls(tls_crl::read_crls(path, &subjects, tls_crl::now_unix()?)?)
+            .with_crls(crls)
             .allow_unknown_revocation_status()
             .enforce_revocation_expiration();
     }
@@ -185,7 +246,7 @@ pub fn build_config(files: &TlsFiles, roots: RootCertStore) -> Result<Arc<Server
     // every connection passes the whole handshake: no cached session, no ticket
     config.session_storage = Arc::new(NoServerSessionStorage {});
     config.send_tls13_tickets = 0;
-    Ok(Arc::new(config))
+    Ok((Arc::new(config), due))
 }
 
 /// One step of the handshake: send what the connection has to say, or read once and process it. `complete_io` would loop
@@ -321,7 +382,9 @@ mod tests {
         std::fs::set_permissions(&files.key, std::fs::Permissions::from_mode(0o600)).unwrap();
         std::fs::write(&files.client_ca, ca_pem()).unwrap();
         let roots = client_roots(&files.client_ca).unwrap();
-        let config = build_config(&files, roots).unwrap();
+        let config = build_config_at(&files, roots, tls_crl::Stage::Start)
+            .unwrap()
+            .0;
         let _ = std::fs::remove_dir_all(&dir);
         (config, cert.der().clone())
     }
