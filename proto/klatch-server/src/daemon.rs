@@ -26,6 +26,7 @@
 //! `--max-connections` connections at once, and the excess gets one refusal frame and is closed; output goes through the
 //! session's bounded queue.
 
+use crate::conn_guard::{self, Registry, Slot};
 use anyhow::{Context, Result, bail};
 use klatch::domain::Principal;
 use klatch::gateway::{EvidenceTable, Identity, LocalIdentity, PeerEvidence};
@@ -33,7 +34,6 @@ use klatch::gateway::{SharedBackend, SharedGateway};
 use klatch::protocol::{ErrorBody, MAX_LINE_BYTES, PROTOCOL_VERSION, ServerFrame, encode_line};
 use klatch::session::{Backend, Session, SessionConfig, hello_frame};
 use serde_json::{Value, json};
-use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
 use std::net::Shutdown;
 use std::os::fd::AsRawFd;
@@ -41,7 +41,6 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// Concurrent connections served by default.
@@ -380,7 +379,7 @@ struct Shared {
     config: SessionConfig,
 }
 
-type Open = Arc<Mutex<HashMap<u64, UnixStream>>>;
+type Open = Registry<UnixStream>;
 
 /// The next waiting connection, or `None` when there is none (or the accept failed: it is tried again after the wait).
 fn next_connection(listener: &UnixListener) -> Option<UnixStream> {
@@ -389,12 +388,12 @@ fn next_connection(listener: &UnixListener) -> Option<UnixStream> {
 
 /// Decide what an accepted connection is: its slot, who it is, and the socket to serve. `None` closes it (a peer the
 /// kernel cannot name, another user's, or one over the cap, which is told so first).
-fn admit(
+fn admit<'a>(
     stream: UnixStream,
     uid: u32,
-    (open, max_connections): (&Open, usize),
+    (open, max_connections): (&'a Open, usize),
     next_id: &mut u64,
-) -> Option<(u64, PeerEvidence, UnixStream)> {
+) -> Option<(Slot<'a, UnixStream>, PeerEvidence, UnixStream)> {
     // an accepted socket may inherit the listener's non-blocking mode
     stream.set_nonblocking(false).ok()?;
     // who first: another user's connection is closed before a byte moves in either direction
@@ -410,21 +409,40 @@ fn admit(
     };
     let evidence = local_evidence(peer, uid).ok()?;
     let handle = stream.try_clone().ok()?;
-    let slot = {
-        let mut open = open.lock().unwrap_or_else(|e| e.into_inner());
-        if open.len() >= max_connections {
-            None
-        } else {
-            *next_id += 1;
-            open.insert(*next_id, handle);
-            Some(*next_id)
-        }
-    };
-    let Some(id) = slot else {
+    let Ok(slot) = open.claim(max_connections, next_id, handle) else {
         refuse_excess(stream);
         return None;
     };
-    Some((id, evidence, stream))
+    Some((slot, evidence, stream))
+}
+
+/// Accept connections until `stop` is set; each is served by `serve` on a thread of its own, holding a slot (a guard,
+/// `conn_guard`: freed on return and on unwind; a panic in `serve` is caught and logged, #1640). On stop every open
+/// connection is closed so its session ends, and the scope joins the threads.
+fn accept_loop(
+    listener: &UnixListener,
+    stop: &AtomicBool,
+    (uid, max_connections): (u32, usize),
+    serve: &(impl Fn(UnixStream, PeerEvidence) + Sync),
+) {
+    let open = Open::default();
+    std::thread::scope(|scope| {
+        let mut next_id = 0u64;
+        while !stop.load(Ordering::SeqCst) {
+            wait_readable(listener.as_raw_fd(), 200);
+            while let Some(stream) = next_connection(listener) {
+                let Some((slot, evidence, stream)) =
+                    admit(stream, uid, (&open, max_connections), &mut next_id)
+                else {
+                    continue;
+                };
+                scope.spawn(move || conn_guard::run(slot, || serve(stream, evidence)));
+            }
+        }
+        open.each(|s| {
+            let _ = s.shutdown(Shutdown::Both);
+        });
+    });
 }
 
 /// Run the daemon until SIGTERM or SIGINT. Order matters: the options and the socket directory are checked, then the
@@ -448,30 +466,12 @@ pub fn run(opts: &Options) -> Result<()> {
         first_frame: opts.first_frame,
         config: SessionConfig::default(),
     };
-    let open: Open = Arc::default();
-    let uid = own_uid();
-    std::thread::scope(|scope| {
-        let mut next_id = 0u64;
-        while !STOP.load(Ordering::SeqCst) {
-            wait_readable(bound.listener.as_raw_fd(), 200);
-            while let Some(stream) = next_connection(&bound.listener) {
-                let Some((id, evidence, stream)) =
-                    admit(stream, uid, (&open, opts.max_connections), &mut next_id)
-                else {
-                    continue;
-                };
-                let (shared, open) = (&shared, &open);
-                scope.spawn(move || {
-                    serve_one(stream, evidence, shared);
-                    open.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
-                });
-            }
-        }
-        // stopping: no new connections; close every open one so its session ends, then the scope joins the threads
-        for s in open.lock().unwrap_or_else(|e| e.into_inner()).values() {
-            let _ = s.shutdown(Shutdown::Both);
-        }
-    });
+    accept_loop(
+        &bound.listener,
+        &STOP,
+        (own_uid(), opts.max_connections),
+        &|stream, evidence| serve_one(stream, evidence, &shared),
+    );
     // the gateway's owner stops and closes the store when the last handle goes; the socket file goes with `bound`
     drop(shared);
     drop(gateway);
@@ -710,6 +710,103 @@ fn serve_inner(stream: UnixStream, evidence: &PeerEvidence, shared: &Shared) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1640: with a cap of one, a connection whose handler panics must give its slot back, the accept loop must go on,
+    /// and the loop must end normally at stop. Every connect and read has a deadline.
+    #[test]
+    fn a_daemon_handler_that_panics_gives_its_slot_back_and_the_loop_goes_on() {
+        let dir = TestDir::new("panic");
+        let path = dir.0.join("d.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let stop = AtomicBool::new(false);
+        let first = AtomicBool::new(true);
+        let mut said = String::new();
+        std::thread::scope(|scope| {
+            let loop_ended = scope.spawn(|| {
+                accept_loop(&listener, &stop, (own_uid(), 1), &|mut s, _| {
+                    if first.swap(false, Ordering::SeqCst) {
+                        panic!("a handler fault");
+                    }
+                    let _ = s.write_all(b"ok");
+                });
+            });
+            let ask = || {
+                let mut c = UnixStream::connect(&path).unwrap();
+                c.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                let mut out = Vec::new();
+                let _ = c.read_to_end(&mut out);
+                String::from_utf8_lossy(&out).into_owned()
+            };
+            let _ = ask();
+            let until = std::time::Instant::now() + Duration::from_secs(10);
+            while std::time::Instant::now() < until {
+                said = ask();
+                if said.ends_with("ok") {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            stop.store(true, Ordering::SeqCst);
+            assert!(loop_ended.join().is_ok(), "the panic ended the accept loop");
+        });
+        assert!(
+            said.ends_with("ok"),
+            "the slot of the panicked handler was kept: {said}"
+        );
+    }
+
+    /// #1640: on stop every open connection is closed, so a handler blocked on its socket returns and the loop ends.
+    /// The handler's own read gives up after 4 s, so a regression fails the assertion instead of hanging.
+    #[test]
+    fn open_connections_are_closed_when_the_accept_loop_stops() {
+        let dir = TestDir::new("stop");
+        let path = dir.0.join("d.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let (stop, serving) = (AtomicBool::new(false), AtomicBool::new(false));
+        let mut closed = false;
+        std::thread::scope(|scope| {
+            let loop_ended = scope.spawn(|| {
+                accept_loop(&listener, &stop, (own_uid(), 4), &|mut s, _| {
+                    s.set_read_timeout(Some(Duration::from_secs(4))).unwrap();
+                    serving.store(true, Ordering::SeqCst);
+                    let _ = s.read(&mut [0u8; 1]);
+                });
+            });
+            let mut c = UnixStream::connect(&path).unwrap();
+            let until = std::time::Instant::now() + Duration::from_secs(5);
+            while !serving.load(Ordering::SeqCst) && std::time::Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            stop.store(true, Ordering::SeqCst);
+            c.set_read_timeout(Some(Duration::from_millis(1500)))
+                .unwrap();
+            closed = matches!(c.read(&mut [0u8; 1]), Ok(0));
+            assert!(loop_ended.join().is_ok());
+        });
+        assert!(closed, "an open connection was left open at stop");
+    }
+
+    /// A private (0700) directory that goes when the test ends, even on a failed assertion. The tests here do not use
+    /// `bind`, which sets the process-wide umask for a moment and would race the tests that create directories.
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new(tag: &str) -> TestDir {
+            use std::os::unix::fs::DirBuilderExt;
+            let dir = PathBuf::from(format!("/tmp/kp{}-{tag}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
+            TestDir(dir)
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
 
     /// Whether `join gated` is admitted on the backend `unidentified_backend` gives a peer, with `probe` standing in for
     /// the process-tree walk. The room requires a capability only a verified harness has.
