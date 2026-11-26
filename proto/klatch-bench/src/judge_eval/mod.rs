@@ -17,3 +17,4 @@ pub mod judges;
 pub mod metrics;
 pub mod report;
 pub mod run;
+pub mod semantics;

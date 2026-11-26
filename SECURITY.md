@@ -252,7 +252,7 @@ Supported versions: the newest release only, the current practice and not a poli
   who runs klatch can read every room, a dm included (`klatch admin export`), so an agent must not promise its user
   that a dm is hidden from them. klatch runs as you (DESIGN section 23): a hostile process of yours can read a dm like
   any message, except text in a sealed label, which stays encrypted everywhere but the reading agent's context. Making a dm needs no room-creation grant (decisions #631 and #672).
-- **The default channel-safety screening misses most of what it is measured on.** Its measured miss rate is about half
+- **The default channel-safety screening misses most of what it is measured on.** Its measured miss rate (items the rules did not stop, scored as if nothing else gated them) is about half
   or more ("Channel-safety screening" below). It is a safety net, not a boundary.
 - **Claims** are advisory to every route into a file other than the claim hook.
 - **Session end.** The session-end hook cannot mark a member done when its credential idle-expired (#1027).
@@ -290,8 +290,12 @@ a label. (2) The scrubber: the private terms the administrator listed, matched a
 when the readers are below the agent cap (`private` by default). A match is a deny that names the rule, never the
 text. That is the whole of its label awareness. It never redacts, and in `klatch judge run` it never allows: text
 it does not match is left queued for the quarantined reviewer, so with no reviewer such text does not cross. The
-measurements below count "not matched" as "would cross", because that is how the bench scores a judge that has no
-other gate.
+measurements below count "not matched" as "would cross" (the not-stopped-by-rules reading, `not_stopped_rate`), because
+that is how the bench scores a judge that has no other gate. Under the production reading (`would_cross_without_reviewer_rate`)
+those items are held, so the rules judge itself lets 0 of them cross; that figure says the rules vouch for nothing, not
+that held items are safe, since a reviewer who allows one releases it. Counting held items as reaching a reviewer, 80.7 to
+86.2 percent of all items in the runs below are deferred to one (the 2026-11-26 results README has both readings and
+the share per corpus and split).
 
 **How often it misses (measured, synthetic corpus).** "Miss" is an item labelled as one that should not cross
 (deny or redact) that the judge did not stop. The corpus is synthetic and labelled by one reviewer (an independent
@@ -299,14 +303,15 @@ labeller is #924); real traffic will differ, in either direction. The numbers be
 2026-11-23 for scenario S10 part 2 (commit 33bff7e8; no model call, no cost; the frozen test split is scored, not
 tuned on).
 
-| corpus | split | missed (should not cross) | false positives (clean items stopped) |
+| corpus | split | missed (should not cross; not-stopped-by-rules reading) | false positives (clean items stopped) |
 |---|---|---|---|
 | main (333 items) | dev | 41 of 79, 51.9 percent (95 percent interval 41.1 to 62.6) | 0 of 118 (interval 0 to 3.2 percent) |
 | main | test | 30 of 55, 54.5 percent (41.5 to 67.0) | 0 of 79 (0 to 4.6 percent) |
 | hard (271 items) | dev | 72 of 94, 76.6 percent (67.1 to 84.0) | 0 of 66 (0 to 5.5 percent) |
 | hard | test | 56 of 72, 77.8 percent (66.9 to 85.8) | 0 of 38 (0 to 9.2 percent) |
 
-Sources: `experiments/coordbench/results-docs/s10-judge-rules.json` and `s10-judge-rules-hard.json`; corpora in
+Each cell is the old reading; the production reading of every row is 0 of the same denominator, and the same run is
+re-reported under both readings in `proto/klatch-bench/judge-eval/results/2026-11-26/` (#1546). Sources: `experiments/coordbench/results-docs/s10-judge-rules.json` and `s10-judge-rules-hard.json`; corpora in
 `proto/klatch-bench/judge-eval/` (`corpus.jsonl`, `corpus-hard.jsonl`, `scrub.txt`). An earlier run of the same judge
 on the main corpus (2026-11-19, `proto/klatch-bench/judge-eval/results/2026-11-19/`) missed 51 of 79 on dev (64.6
 percent) and 36 of 55 on test (65.5 percent), and 83 of 94 (88.3 percent) and 63 of 71 (88.7 percent) on the hard
