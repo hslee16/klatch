@@ -58,7 +58,7 @@ def parse_args(argv):
     p.add_argument("--arms-dir", default=os.path.join(HERE, "arms"))
     p.add_argument("--arm-text-version", default="draft-2")
     p.add_argument("--klatch-bin", help="absolute path of the klatch binary (needed by K arms)")
-    p.add_argument("--klatch-commit", help="the klatch commit (default: git HEAD of this repository)")
+    p.add_argument("--klatch-commit", help="the commit of the klatch build under test (default: not recorded; the binary does not say it)")
     p.add_argument("--bench-bin", help="the klatch-bench tool that exports the K arms' run store as counts (default: "
                    "$KLATCH_BENCH_BIN, else klatch-bench beside the klatch binary; without it the export is skipped with a note)")
     p.add_argument("--isolation", choices=("sandbox", "layout"), default="sandbox",

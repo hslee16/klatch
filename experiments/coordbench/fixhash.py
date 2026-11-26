@@ -62,11 +62,14 @@ def version_of(rec):
 
 
 def condition(records):
-    """{"fixture hash version": [...], "fixture checker sha256": [...]} for the fields any record carries, in order of
+    """{"fixture hash version": [...], "fixture checker sha256": [...], "arm text sha256": [...], "klatch version": [...]} (the
+    last two from #1547) for the fields any record carries, in order of
     appearance (records made before version 2 have neither, so a report of only those is unchanged)."""
     out = {}
     for label, get in (("fixture hash version", lambda r: r.get("fixture_hash_version")),
-                       ("fixture checker sha256", lambda r: (r.get("fixture") or {}).get("checker_sha256"))):
+                       ("fixture checker sha256", lambda r: (r.get("fixture") or {}).get("checker_sha256")),
+                       ("arm text sha256", lambda r: r.get("arm_text_sha256")),
+                       ("klatch version", lambda r: (r.get("klatch") or {}).get("version_output"))):
         seen = []
         for r in records:
             v = get(r)

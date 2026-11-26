@@ -44,6 +44,7 @@ from runcli import DEFAULT_ARMS, DEFAULT_RUN_USD, DEFAULT_SUITE_USD, dry_run, es
 from runenv import GuardError, commit_of, git, guard_paths, inside, kill_group, klatch_facts, minimal_env, now_iso, sha256_file  # noqa: F401
 from runexec import RunExecution, RunSpot
 from runprompt import TASK_BOARD, build_prompt  # noqa: F401
+import metricver
 import runidentity
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -122,16 +123,18 @@ class Suite:
 
     def skeleton(self, run_id, arm, seed, started):
         a = self.args
-        sha, schema_no = self.klatch_facts
+        sha, schema_no, version_output = self.klatch_facts
         return {
             "schema": schema.SCHEMA_VERSION, "run_id": run_id, "milestone": a.suite_id, "scenario": self.fx.name,
             "topology": self.fx.topology, "arm": arm, "arm_text_version": a.arm_text_version,
+            "metric_version": metricver.METRIC_VERSION,
             **runidentity.identity(a, self.fx, arm), "seed": seed, "valid": True,
             "supersedes": None,
             "models": {"agent": a.model or self.driver.name, "roles": a.roles_model if roles_mod.is_role_arm(arm) else None,
                        "resolved_ids": []},
             "claude_code_version": self.driver_version, "klatch": {"commit": self.commit, "binary_sha256": sha,
-                                                                    "store_schema": schema_no},
+                                                                    "store_schema": schema_no, "version_output": version_output,
+                                                                    "bench_commit": self.bench_commit},
             "temperature": "default",
             "caps": {"per_run_usd": a.max_run_usd, "suite_usd": a.max_suite_usd, "wall_s": a.wall_s,
                      "max_turns_per_agent": a.max_turns},
@@ -207,7 +210,8 @@ class Suite:
             self.klatch_facts = klatch_facts(a.klatch_bin, minimal_env(os.environ, probe_home))
         finally:
             shutil.rmtree(probe_home, ignore_errors=True)
-        self.commit = a.klatch_commit or commit_of(HERE)
+        self.commit = a.klatch_commit  # only what the caller says: the bench repository's HEAD is not the binary's commit (#1547)
+        self.bench_commit = commit_of(HERE)
         self.driver_version = self.driver.version()
         started = now_iso()
         with open(os.path.join(a.results_dir, "LEDGER.md"), "a") as f:

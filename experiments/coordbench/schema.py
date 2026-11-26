@@ -109,6 +109,27 @@ def _messaging_errors(mv):
     return ["messaging_verified misses %s" % k for k in MESSAGING_KEYS if k not in mv]
 
 
+def _is_hex(v, n):
+    return isinstance(v, str) and len(v) == n and all(c in "0123456789abcdef" for c in v)
+
+
+def _identity_errors(rec):
+    """The run identity fields added after schema 1 (#1530, #1547) are optional (a record made before has none), but when
+    present they must have their shape: arm_text_sha256 a sha256 or null, prompt_sha256 null or {agent: sha256}, klatch.version_output
+    a string or null, klatch.bench_commit a string or null."""
+    errs = []
+    if "arm_text_sha256" in rec and rec["arm_text_sha256"] is not None and not _is_hex(rec["arm_text_sha256"], 64):
+        errs.append("arm_text_sha256 is not a sha256 or null")
+    ps = rec.get("prompt_sha256")
+    if ps is not None and not (isinstance(ps, dict) and all(_is_hex(v, 64) for v in ps.values())):
+        errs.append("prompt_sha256 is not null or an object of sha256 values")
+    k = rec.get("klatch")
+    if isinstance(k, dict):
+        errs += ["klatch.%s is not a string or null" % key for key in ("version_output", "bench_commit")
+                 if k.get(key) is not None and not isinstance(k[key], str)]
+    return errs
+
+
 def validate_record(rec):
     """A list of problems with the record (empty when it is valid)."""
     if not isinstance(rec, dict):
@@ -119,4 +140,4 @@ def validate_record(rec):
         errs.append("schema must be %d" % SCHEMA_VERSION)
     if rec.get("outcome") not in OUTCOMES:
         errs.append("outcome %r is not one of %s" % (rec.get("outcome"), ", ".join(OUTCOMES)))
-    return errs + validate_roles(rec.get("roles")) + _checks_errors(rec) + _isolation_errors(rec.get("isolation")) + _messaging_errors(rec.get("messaging_verified"))
+    return errs + _identity_errors(rec) + validate_roles(rec.get("roles")) + _checks_errors(rec) + _isolation_errors(rec.get("isolation")) + _messaging_errors(rec.get("messaging_verified"))
