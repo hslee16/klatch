@@ -1,6 +1,7 @@
 //! Taking a claim: the conflict check, the record of who is waiting for whom (so a conflict that closes a cycle is
 //! recognised as a deadlock), and the short lease an `ask:<N>` claim carries.
 
+use super::claim_chain::{Wait, chain, path_waited_for, reaches};
 use super::claim_events::{ClaimEvent, ClaimKey};
 use super::claim_lapses::Lapsed;
 use super::{SqliteStore, WAIT_WINDOW_SECS};
@@ -12,61 +13,25 @@ use crate::store::ClaimRequest;
 use rusqlite::params;
 
 /// Everything one attempt to take a claim needs: the request and the moment.
-struct Attempt<'a> {
-    room: &'a str,
-    owner: &'a str,
-    scope: &'a str,
-    path: &'a str,
-    ttl: i64,
-    reason: &'a str,
-    anchor: &'a str,
-    now: i64,
+pub(super) struct Attempt<'a> {
+    pub(super) room: &'a str,
+    pub(super) owner: &'a str,
+    pub(super) scope: &'a str,
+    pub(super) path: &'a str,
+    pub(super) ttl: i64,
+    pub(super) reason: &'a str,
+    pub(super) anchor: &'a str,
+    pub(super) now: i64,
 }
 
 /// A live claim.
-struct Held {
-    path: String,
-    owner: String,
-    expires: i64,
-    scope: String,
+pub(super) struct Held {
+    pub(super) path: String,
+    pub(super) owner: String,
+    pub(super) expires: i64,
+    pub(super) scope: String,
     /// When it was first held; 0 when unknown (#547).
-    since: i64,
-}
-
-/// A member's refused claim attempt, remembered as a wait.
-struct Wait {
-    member: String,
-    path: String,
-    scope: String,
-}
-
-/// The members `node` is waiting for: holders of a claim that overlaps something `node` waits for, in a scope
-/// that collides with the wait.
-fn blockers<'a>(node: &str, waits: &[Wait], held: &'a [Held]) -> Vec<&'a str> {
-    let mut out = Vec::new();
-    for w in waits.iter().filter(|w| w.member == node) {
-        let blocks = |h: &&Held| {
-            h.owner != w.member && overlaps(&h.path, &w.path) && scopes_collide(&h.scope, &w.scope)
-        };
-        out.extend(held.iter().filter(blocks).map(|h| h.owner.as_str()));
-    }
-    out
-}
-
-/// Whether `target` can be reached from `start` by following who waits for whom.
-fn reaches(start: &str, target: &str, waits: &[Wait], held: &[Held]) -> bool {
-    let mut seen: Vec<&str> = Vec::new();
-    let mut stack = vec![start];
-    while let Some(node) = stack.pop() {
-        if node == target {
-            return true;
-        }
-        if !seen.contains(&node) {
-            seen.push(node);
-            stack.extend(blockers(node, waits, held));
-        }
-    }
-    false
+    pub(super) since: i64,
 }
 
 /// Whether the live claim `h` refuses the attempt: another member's, overlapping, in a colliding scope.
@@ -242,8 +207,18 @@ impl SqliteStore {
         )?;
         let cycle = self.cycle_holders(req, held)?;
         let deadlock = !cycle.is_empty();
+        let (mut names, mut via) = (Vec::new(), String::new());
         if deadlock {
             self.mark_yield_parties(req, &cycle)?;
+            // Name only what the requester can see: members of this room on the chain and its own held path.
+            let waits = self.room_waits(req.room)?;
+            if let Some(c) = chain(&blocker.owner, req.owner, &waits, held)
+                .or_else(|| chain(&cycle[0], req.owner, &waits, held))
+            {
+                let last = c[c.len() - 2.min(c.len())];
+                via = path_waited_for(last, req, &waits, held).unwrap_or_default();
+                names = c[..c.len() - 1].iter().map(|m| m.to_string()).collect();
+            }
         }
         let reason = if deadlock {
             "deadlock"
@@ -272,6 +247,8 @@ impl SqliteStore {
             secs_left: crate::domain::secs_between(blocker.expires, req.now),
             held_secs: held_for(blocker.since, req.now),
             deadlock,
+            cycle: names,
+            via,
         })
     }
 

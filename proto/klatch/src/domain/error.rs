@@ -16,6 +16,11 @@ pub enum Error {
         /// The holder is itself waiting, directly or through others, for something the requester holds, and the
         /// requester's attempt closed that cycle: the requester yields (DESIGN section 25.12).
         deadlock: bool,
+        /// On a deadlock: the members of this room on the chain, from the holder to the member that waits for the
+        /// requester (#1603). Empty otherwise.
+        cycle: Vec<String>,
+        /// On a deadlock: the requester's own held path that the last member on the chain waits for. Empty otherwise.
+        via: String,
     },
     /// A policy refused the operation. `rule` names the rule that did (for the audit record); `reason` is
     /// safe to show and never contains the content that triggered it.
@@ -55,6 +60,8 @@ impl fmt::Display for Error {
                 secs_left,
                 held_secs,
                 deadlock,
+                cycle,
+                via,
             } => {
                 write!(
                     f,
@@ -72,6 +79,13 @@ impl fmt::Display for Error {
                         f,
                         "; deadlock: {owner} is waiting, directly or through others, for a path you hold, and your attempt closed the cycle, so you yield: release the claims you hold in this room, wait, then try again"
                     )?;
+                    if !via.is_empty() && !cycle.is_empty() {
+                        write!(
+                            f,
+                            " (the cycle: {owner} waits through {} for your path {via})",
+                            cycle.join(", ")
+                        )?;
+                    }
                 }
                 Ok(())
             }
@@ -93,6 +107,8 @@ mod tests {
             secs_left: 42,
             held_secs: 0,
             deadlock: false,
+            cycle: vec![],
+            via: String::new(),
         };
         assert_eq!(
             e.to_string(),
@@ -108,6 +124,8 @@ mod tests {
             secs_left: 42,
             held_secs: 0,
             deadlock: true,
+            cycle: vec!["bob".into()],
+            via: "src/b".into(),
         };
         let m = e.to_string();
         assert!(

@@ -9,6 +9,7 @@ mod archive;
 mod archive_keys;
 mod asks;
 mod backup;
+mod claim_chain;
 mod claim_events;
 mod claim_lapses;
 mod claims;
