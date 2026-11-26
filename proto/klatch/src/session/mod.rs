@@ -4,6 +4,7 @@
 pub mod acp;
 pub(crate) mod acp_reader;
 mod backend;
+pub(crate) mod cancellable;
 mod fixed;
 mod frames;
 mod guarded;
@@ -18,7 +19,7 @@ use crate::protocol::{ClientFrame, DecodeError, FrameReader, PROTOCOL_VERSION, S
 use crate::store::Store;
 use crate::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError, channel};
 use crate::sync::thread;
-pub use backend::Backend;
+pub use backend::{Backend, CancelHook, NoCancel, Outcome};
 use frames::{Out, attribution, decode_refusal, failure, message_frame, ok, stream_refusal};
 #[doc(hidden)]
 pub use methods::Call;
@@ -557,6 +558,10 @@ pub(crate) fn collect(rx: &Receiver<Item>, wait: Duration, open: &mut bool) -> V
 mod acp_cancel_tests;
 #[cfg(test)]
 mod acp_tests;
+#[cfg(test)]
+mod cancel_effect_tests;
+#[cfg(test)]
+mod cancel_hook_tests;
 #[cfg(test)]
 mod facilitator_tests;
 #[cfg(test)]
