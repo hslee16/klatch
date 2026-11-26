@@ -344,8 +344,8 @@ look at the board, `ListAgents`; every arm: `git log`, `sleep`. No new content m
 `ListAgents`, claims, who), a result equal to this agent's last result of the same call. A read that returned something new is not
 idle; a turn that also edits or runs anything else is not idle; a call whose result never arrived is not idle. A klatch call made
 through a variable, alias or function defined in the same command is read as the binary; a wrapper script or a variable from an
-earlier command is not resolved and is a stated limit (`ctxcount.RESOLVE_LIMIT`). S3's `idle_turns` (`chain.py`) keeps its own
-blocked-turn definition and is not this metric.
+earlier command is not resolved and is a stated limit (`ctxcount.RESOLVE_LIMIT`). S3's `idle_turns` (`chain.py`) uses this same
+definition (#1527), counted only among the blocked turns of the waiting agent, so a text-only turn is not idle there either.
 
 Self-reports are used only for the human-intervention manual pass and for nothing else, and the record says so.
 

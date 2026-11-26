@@ -13,19 +13,11 @@ import json
 import os
 import re
 import shlex
+import cmdkinds
 import streamshape
 
 NEGATIVE = re.compile(r"No such file|not found|does not exist|ENOENT|cannot access|fatal:|[Ee]rror", re.I)
-# One simple command that only waits or looks: sleep, klatch waits and reads of the board, git fetch and friends, a listing
-# or an existence test, or reading the shared task board.
-POLL = re.compile(
-    r"^\s*(?:sleep\b|timeout\b|watch\b"
-    r"|(?:\S*/)?klatch\s+(?:-\S+\s+)*(?:wait|read|history|board|who|claims|asks|stuck|hooks|inbox|find)\b"
-    r"|git\s+(?:-\S+\s+)*(?:fetch|pull|log|status|ls-remote|remote|diff|show)\b"
-    r"|ls\b|test\b|\[\s|stat\b|cat\s+\S*TASKS\.md\b|true\b|echo\b)")
 WRITES = re.compile(r"(>|\btee\b|\bcp\s|\bmv\s|\bsed\s+-i|\binstall\s)")
-SEPARATORS = re.compile(r"\s*(?:&&|\|\||;|\n)\s*")
-FILTER = re.compile(r"^\s*(?:head|tail|wc|grep|sort|cut|awk|tr|uniq|sed\s+-n)\b")
 CLAIM_VERBS = ("claim", "release", "post", "dm", "ask", "answer", "handoff")
 KLATCH_CMD = r"(?:\S*/)?klatch\s+(?:-\S+\s+)*(%s)\b([^\n;&|]*)"
 
@@ -51,7 +43,7 @@ def _add_block(b, turn, tools):
         return
     if b.get("type") == "tool_use" and streamshape.ident(b.get("id")) not in tools:
         tu = streamshape.tool_use(b)
-        t = {"name": tu["name"], "input": tu["input"], "result": ""}
+        t = {"name": tu["name"], "input": tu["input"], "result": "", "arrived": False}
         tools[tu["id"]] = t
         turn["tools"].append(t)
     elif b.get("type") == "text" and isinstance(b.get("text"), str):
@@ -75,7 +67,9 @@ def _is_known_result(b, tools):
 def _add_results(e, tools):
     for b in streamshape.content(e):
         if _is_known_result(b, tools):
-            tools[streamshape.ident(b["tool_use_id"])]["result"] = _text_of(b.get("content"))
+            tool = tools[streamshape.ident(b["tool_use_id"])]
+            tool["result"] = _text_of(b.get("content"))
+            tool["arrived"] = True
 
 
 def parse_stream(lines):
@@ -99,25 +93,6 @@ def _command(tool):
 
 def _is_klatch_read(tool):
     return bool(re.search(r"(?:^|[\s;&|])(?:\S*/)?klatch\s", _command(tool))) or tool["name"] in ("SendMessage", "ListAgents")
-
-
-def _poll_pipeline(cmd):
-    """A poll, then only filters of its output."""
-    first, *rest = [p for p in re.split(r"(?<!\|)\|(?!\|)", cmd)]
-    return bool(POLL.match(first)) and all(FILTER.match(p) for p in rest)
-
-
-def is_poll(tool):
-    """True when one tool call only waits or looks. A Bash command is a poll when every simple command in it is (a
-    `sleep 3; python3 -m unittest` is not); a Read of the shared task board and a ListAgents call are polls."""
-    if tool["name"] == "ListAgents":
-        return True
-    if tool["name"] in ("Read", "Glob", "Grep"):
-        return "TASKS.md" in json.dumps(tool["input"])
-    if tool["name"] != "Bash":
-        return False
-    cmds = [c for c in SEPARATORS.split(_command(tool)) if c.strip()]
-    return bool(cmds) and all(_poll_pipeline(c) for c in cmds)
 
 
 def _shows(tool, dependency):
@@ -153,23 +128,48 @@ def _first_seen_turn(turns, dependency):
     return None
 
 
-def _turn_classes(blocked, guarded):
+def _idle_ids(turns, klatch_bin):
+    """The turn numbers that are idle by the shared definition (cmdkinds, SPEC section 5): every tool call is a read-only
+    coordination call whose result had no new content. "New" is judged against this agent's last result of the same call,
+    over all its turns in order, and a call whose result never arrived is not idle."""
+    last, idle = {}, set()
+    for t in turns:
+        flags = []
+        for x in t["tools"]:
+            inp = x["input"] if isinstance(x["input"], dict) else {}
+            if x["name"] == "Bash" and "command" in inp:
+                inp = dict(inp, command=cmdkinds.resolve_command(inp["command"], klatch_bin))
+            kinds = cmdkinds.read_kinds(x["name"], inp, klatch_bin)
+            if not kinds or not x["arrived"]:
+                flags.append(False)
+                continue
+            key = ",".join(kinds)
+            flags.append(not cmdkinds.is_new(x["result"], kinds, last.get(key)))
+            last[key] = cmdkinds.normalize(x["result"])
+        if flags and all(flags):
+            idle.add(t["i"])
+    return idle
+
+
+def _turn_classes(blocked, guarded, idle_ids):
     """(guess-build turns, idle turns) among the blocked turns."""
     guess = [t for t in blocked if any(_writes_guarded(x, guarded) for x in t["tools"])]
-    idle = [t for t in blocked if t not in guess and (not t["tools"] or all(is_poll(x) for x in t["tools"]))]
+    idle = [t for t in blocked if t not in guess and t["i"] in idle_ids]
     return guess, idle
 
 
-def blocked_report(turns, dependency, guarded):
+def blocked_report(turns, dependency, guarded, klatch_bin=None):
     """Idle and wasted turns of one agent that needs `dependency` (a path) before it can do its step.
 
-    blocked_turns: turns before the dependency is seen (all turns when it never is). idle_turns: blocked turns that only
-    wait or look (every tool call a poll, or no tool call at all). guess_build_turns: blocked turns that write a file in
-    `guarded` (the dependent step, built before its input exists). wasted_turns: idle plus guess builds. A blocked turn that
-    does anything else (reads the README, runs the tests, works on another part) is none of these."""
+    blocked_turns: turns before the dependency is seen (all turns when it never is). idle_turns: blocked turns that are idle
+    by the one shared definition (cmdkinds: every tool call a read-only coordination call whose result had no new content;
+    a text-only turn is not idle); the blocked restriction is the only thing added here. guess_build_turns: blocked turns
+    that write a file in `guarded` (the dependent step, built before its input exists). wasted_turns: idle plus guess
+    builds. A blocked turn that does anything else (reads the README, runs the tests, works on another part) is none of
+    these."""
     seen = _first_seen_turn(turns, dependency)
     blocked = [t for t in turns if seen is None or t["i"] < seen]
-    guess, idle = _turn_classes(blocked, guarded)
+    guess, idle = _turn_classes(blocked, guarded, _idle_ids(turns, klatch_bin))
     return {"turns": len(turns), "dependency": dependency, "dependency_seen": seen is not None,
             "dependency_seen_turn": seen, "blocked_turns": len(blocked), "idle_turns": len(idle),
             "guess_build_turns": len(guess), "wasted_turns": len(idle) + len(guess)}
@@ -270,6 +270,6 @@ def compute(log_dir, scn, arm, klatch_bin):
     streams = _read_streams(log_dir, scn["agents"])
     blocked = {}
     for name, spec in scn["blocked"].items():
-        blocked[name] = blocked_report(streams[name], spec["dependency"], spec["guarded"]) if name in streams else None
+        blocked[name] = blocked_report(streams[name], spec["dependency"], spec["guarded"], klatch_bin) if name in streams else None
     h = scn.get("handoff") or {}
     return {"blocked": blocked, "handoff_claims": handoff_claims(streams, arm, h.get("from"), h.get("to"), klatch_bin)}
