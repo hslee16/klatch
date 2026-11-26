@@ -619,8 +619,27 @@ export class Client {
     return (await this.request("dm", params)) as { room: string; seq: number; id: string };
   }
 
-  async read(room: string, peek = false): Promise<Message[]> {
-    return (await this.request("read", { room, peek })).messages;
+  /** Unread messages from others, advancing the cursor unless `peek`. `maxMessages` and `maxBytes` (#1390, sent as
+   * `max_messages` and `max_bytes`) bound the read: whole messages, the most important first, at most that many and at
+   * most that many bytes of JSON; the rest stay unread for the next `read`. Sent as given (a non-negative integer; the
+   * server checks and refuses what it cannot take, as an ApiError) and left out when undefined, so the read is unbounded
+   * as before. Answers the messages; `readBounded` also says how many were left. */
+  async read(room: string, peek = false, opts: { maxMessages?: number; maxBytes?: number } = {}): Promise<Message[]> {
+    return (await this.readBounded(room, peek, opts)).messages;
+  }
+
+  /** `read` with the whole answer: `omitted` is the number of messages a bounded read left unread (null when no bound
+   * was given, as the server sends no count) and `byImportance` is true when the page is not in `seq` order. */
+  async readBounded(
+    room: string,
+    peek = false,
+    opts: { maxMessages?: number; maxBytes?: number } = {},
+  ): Promise<{ messages: Message[]; omitted: number | null; byImportance: boolean }> {
+    const params: Record<string, unknown> = { room, peek };
+    if (opts.maxMessages !== undefined) params["max_messages"] = opts.maxMessages;
+    if (opts.maxBytes !== undefined) params["max_bytes"] = opts.maxBytes;
+    const r = await this.request("read", params);
+    return { messages: r.messages, omitted: r.omitted ?? null, byImportance: r.by_importance ?? false };
   }
 
   /** Look back without moving any cursor. No `last` and no `since`: the newest 20; `last` alone: the newest `last`

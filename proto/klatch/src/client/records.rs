@@ -38,6 +38,15 @@ pub struct History {
     pub more: u64,
 }
 
+/// What `read_bounded` returns: the messages, how many a bounded read left unread (`None` when no bound was given: the
+/// server sends no count then), and whether the page is in order of importance rather than `seq` order (#1405).
+#[derive(Debug, Default)]
+pub struct BoundedRead {
+    pub messages: Vec<Message>,
+    pub omitted: Option<u64>,
+    pub by_importance: bool,
+}
+
 /// A member as `who` lists it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Member {
