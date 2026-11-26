@@ -208,7 +208,7 @@ impl<'a, B: Backend + ?Sized> AcpServer<'a, B> {
         let reply = match method {
             "initialize" => Ok(initialize()),
             "session/new" => Ok(self.new_session()),
-            "session/prompt" => self.prompt(&params, cancel, &acp_reader::call_id(&id), &mut out),
+            "session/prompt" => self.prompt(&params, cancel, &id, &mut out),
             // Baseline method; its methodId must be one advertised, and none is (#869).
             "authenticate" => Err((
                 INVALID_PARAMS,
@@ -239,7 +239,7 @@ impl<'a, B: Backend + ?Sized> AcpServer<'a, B> {
         &self,
         params: &Value,
         cancel: Option<&AtomicBool>,
-        call: &str,
+        request_id: &Value,
         out: &mut Vec<Value>,
     ) -> Result<Value, (i64, String)> {
         let cancelled = || cancel.is_some_and(|c| c.load(Ordering::SeqCst));
@@ -264,11 +264,13 @@ impl<'a, B: Backend + ?Sized> AcpServer<'a, B> {
         let text: Vec<String> = blocks.iter().filter_map(block_text).collect();
         let answer = match parse_query(&text.join("\n")) {
             Ok(Query::Help) => HELP.to_string(),
-            Ok(Query::Look { method, params }) => match self.look(call, method, params) {
-                Some(text) => text,
-                // The backend ended the look at the cancel: no answer, not even a partial one (#1562).
-                None => return ended(),
-            },
+            Ok(Query::Look { method, params }) => {
+                match self.look(&acp_reader::call_id(sid, request_id), method, params) {
+                    Some(text) => text,
+                    // The backend ended the look at the cancel: no answer, not even a partial one (#1562).
+                    None => return ended(),
+                }
+            }
             Err(why) => format!("{why}\n\n{HELP}"),
         };
         // Cancelled during the look: the answer is not sent.

@@ -4,7 +4,7 @@
 pub mod acp;
 pub(crate) mod acp_reader;
 mod backend;
-mod cancellable;
+pub(crate) mod cancellable;
 mod fixed;
 mod frames;
 mod guarded;
@@ -558,6 +558,8 @@ pub(crate) fn collect(rx: &Receiver<Item>, wait: Duration, open: &mut bool) -> V
 mod acp_cancel_tests;
 #[cfg(test)]
 mod acp_tests;
+#[cfg(test)]
+mod cancel_effect_tests;
 #[cfg(test)]
 mod cancel_hook_tests;
 #[cfg(test)]

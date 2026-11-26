@@ -30,8 +30,16 @@ pub(crate) type Line = io::Result<(String, Option<Cancel>)>;
 
 /// The call id a prompt's look is made under, from the prompt's JSON-RPC request id (#1562). The reader names a look
 /// to the backend's cancel hook by it and the handler makes the look under it, so the two agree without sharing state.
-pub(crate) fn call_id(request_id: &Value) -> String {
-    format!("acp-{request_id}")
+pub(crate) fn call_id(session: &str, request_id: &Value) -> String {
+    format!("acp-{session}-{request_id}")
+}
+
+/// Whether `session` is one `session/new` has handed out so far (`seen` of them). The handler's `known` is the same rule.
+fn known_session(session: &str, seen: u64) -> bool {
+    session
+        .strip_prefix("klatch-librarian-")
+        .and_then(|n| n.parse::<u64>().ok())
+        .is_some_and(|n| n >= 1 && n <= seen)
 }
 
 /// Read `input` on its own thread. The handle is for a caller that knows the input has ended or failed.
@@ -50,6 +58,7 @@ pub(crate) fn spawn_with<R: BufRead + Send + 'static>(
     let (tx, rx) = mpsc::sync_channel(QUEUE);
     let handle = thread::spawn(move || {
         let mut outstanding: Vec<Outstanding> = Vec::new();
+        let mut sessions = 0u64; // `session/new` requests read so far, each of which hands out the next session id
         for line in input.lines() {
             let line = match line {
                 Ok(line) => line,
@@ -63,7 +72,8 @@ pub(crate) fn spawn_with<R: BufRead + Send + 'static>(
             }
             // A prompt whose handler has let go of its flag is over; keep only those still outstanding.
             outstanding.retain(|p| Arc::strong_count(&p.flag) > 1);
-            let Some(flag) = classify(&line, &mut outstanding, hook.as_ref()) else {
+            let Some(flag) = classify(&line, (&mut outstanding, &mut sessions), hook.as_ref())
+            else {
                 continue; // a cancel, dealt with
             };
             if tx.send(Ok((line, flag))).is_err() {
@@ -85,7 +95,7 @@ struct Outstanding {
 /// prompt the line carries, if it is a `session/prompt` request for a named session.
 fn classify(
     line: &str,
-    outstanding: &mut Vec<Outstanding>,
+    (outstanding, sessions): (&mut Vec<Outstanding>, &mut u64),
     hook: &dyn CancelHook,
 ) -> Option<Option<Cancel>> {
     let Ok(message) = serde_json::from_str::<Value>(line) else {
@@ -105,11 +115,17 @@ fn classify(
             }
             None
         }
-        (Some("session/prompt"), true, Some(session)) => {
+        (Some("session/new"), true, _) => {
+            *sessions += 1;
+            Some(None)
+        }
+        // A prompt for a session that does not exist gets no flag and is not recorded: the handler answers it with an
+        // error, and a cancel can never name it (#1562).
+        (Some("session/prompt"), true, Some(session)) if known_session(session, *sessions) => {
             let flag: Cancel = Arc::new(AtomicBool::new(false));
             outstanding.push(Outstanding {
                 session: session.to_string(),
-                call_id: call_id(message.get("id").unwrap_or(&Value::Null)),
+                call_id: call_id(session, message.get("id").unwrap_or(&Value::Null)),
                 flag: flag.clone(),
             });
             Some(Some(flag))

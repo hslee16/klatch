@@ -13,15 +13,16 @@ use crate::store::test_dir::{TempDb, temp_db};
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Read, Write};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
 /// How long a test waits for anything before it calls the run broken.
-const WAIT: Duration = Duration::from_secs(5);
+pub(super) const WAIT: Duration = Duration::from_secs(5);
 /// How soon after a cancel the wait must have ended. The owner is still held when this is measured.
-const PROMPT: Duration = Duration::from_secs(2);
+pub(super) const PROMPT: Duration = Duration::from_secs(2);
 
-fn shared(tag: &str) -> (SharedGateway, TempDb) {
+pub(super) fn shared(tag: &str) -> (SharedGateway, TempDb) {
     let db = temp_db(tag);
     let path = db.to_path_buf();
     let gw = SharedGateway::spawn(move || {
@@ -33,13 +34,13 @@ fn shared(tag: &str) -> (SharedGateway, TempDb) {
 }
 
 /// Hold the owner thread with a job that ends when `release` is sent (or after `WAIT`, so a failed test frees it).
-struct HeldOwner {
+pub(super) struct HeldOwner {
     release: Sender<()>,
     job: Option<std::thread::JoinHandle<()>>,
 }
 
 impl HeldOwner {
-    fn hold(gw: &SharedGateway) -> Self {
+    pub(super) fn hold(gw: &SharedGateway) -> Self {
         let (started_tx, started) = channel();
         let (release, release_rx) = channel::<()>();
         let gw = gw.clone();
@@ -55,7 +56,7 @@ impl HeldOwner {
             job: Some(job),
         }
     }
-    fn release(mut self) {
+    pub(super) fn release(mut self) {
         let _ = self.release.send(());
         if let Some(job) = self.job.take() {
             job.join().unwrap();
@@ -63,7 +64,7 @@ impl HeldOwner {
     }
 }
 
-fn look(id: &str) -> Call {
+pub(super) fn look(id: &str) -> Call {
     Call {
         id: id.into(),
         method: "who".into(),
@@ -72,7 +73,7 @@ fn look(id: &str) -> Call {
 }
 
 /// A look on its own thread; the outcome arrives on the channel.
-fn start_look(backend: &Arc<SharedBackend>, id: &str) -> Receiver<Outcome> {
+pub(super) fn start_look(backend: &Arc<SharedBackend>, id: &str) -> Receiver<Outcome> {
     let (tx, rx) = channel();
     let (backend, id) = (backend.clone(), id.to_string());
     std::thread::spawn(move || {
@@ -83,7 +84,7 @@ fn start_look(backend: &Arc<SharedBackend>, id: &str) -> Receiver<Outcome> {
 }
 
 /// Wait until the look `id` is in flight (registered), so the cancel is for a look that is inside the backend.
-fn wait_in_flight(backend: &Arc<SharedBackend>, want: usize) {
+pub(super) fn wait_in_flight(backend: &Arc<SharedBackend>, want: usize) {
     let end = Instant::now() + WAIT;
     while backend.in_flight() < want {
         assert!(Instant::now() < end, "the look never went in flight");
@@ -91,7 +92,7 @@ fn wait_in_flight(backend: &Arc<SharedBackend>, want: usize) {
     }
 }
 
-fn is_cancelled(o: &Outcome) -> bool {
+pub(super) fn is_cancelled(o: &Outcome) -> bool {
     matches!(o, Outcome::Cancelled)
 }
 
@@ -120,54 +121,56 @@ fn a_cancel_during_a_blocked_look_returns_the_cancelled_outcome_within_a_short_d
     ));
 }
 
+/// Counts every check the guard is asked to make, on the owner thread.
+struct CountingGuard(Arc<AtomicUsize>);
+
+impl crate::gateway::Guard for CountingGuard {
+    fn check(
+        &self,
+        _who: &Principal,
+        _op: &crate::gateway::Operation,
+    ) -> crate::domain::Result<()> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
 #[test]
-fn a_cancelled_request_that_had_not_started_is_never_run_by_the_owner() {
-    // The owner meets a cancelled job and does nothing: a request that was never carried out leaves no effect. A post
-    // stands in for any request with an effect: cancelled while queued it must not land; the same post uncancelled does.
-    let (gw, _db) = shared("cancel-skip");
+fn a_look_cancelled_before_the_owner_reached_it_is_never_run() {
+    // The owner meets a cancelled job and does nothing: no check, no read, no refusal or audit row for a look that was
+    // never carried out. The guard counts the checks the owner makes.
+    let db = temp_db("cancel-skip");
+    let path = db.to_path_buf();
+    let checks = Arc::new(AtomicUsize::new(0));
+    let counted = checks.clone();
+    let gw = SharedGateway::spawn(move || {
+        let store = SqliteStore::open(&path, &crate::store::insecure_test_key())?;
+        Ok(Gateway::new(store, SystemClock, CountingGuard(counted)))
+    })
+    .unwrap();
     let backend = Arc::new(gw.session_backend());
     let who = Principal::unattributed("lib");
-    let say = |id: &str, method: &str, value: Value| {
-        backend.handle(
-            &who,
-            Call {
-                id: id.into(),
-                method: method.into(),
-                value,
-            },
-        )
-    };
-    say("j", "join", json!({"room": "r"}));
-    let post = |id: &str, body: &str| Call {
-        id: id.into(),
-        method: "post".into(),
-        value: json!({"room": "r", "body": body}),
-    };
+    let plain = |id: &str| backend.handle(&who, look(id));
+    plain("warm");
+    let before = checks.load(Ordering::SeqCst);
+    plain("one");
+    let per_look = checks.load(Ordering::SeqCst) - before;
+    assert!(
+        per_look > 0,
+        "a look makes no check, so this test would see nothing"
+    );
     let owner = HeldOwner::hold(&gw);
-    let (tx, rx) = channel();
-    let b2 = backend.clone();
-    let who2 = who.clone();
-    let queued = post("p1", "marker-cancelled");
-    std::thread::spawn(move || {
-        let _ = tx.send(b2.handle_cancellable(&who2, queued, None));
-    });
+    let rx = start_look(&backend, "a");
     wait_in_flight(&backend, 1);
-    assert!(backend.canceller().cancel("p1"));
+    assert!(backend.canceller().cancel("a"));
     assert!(is_cancelled(&rx.recv_timeout(PROMPT).unwrap()));
     owner.release();
-    let kept = backend.handle_cancellable(&who, post("p2", "marker-kept"), None);
-    assert!(matches!(kept, Outcome::Done(_)));
-    let history = format!(
-        "{:?}",
-        say("h", "history", json!({"room": "r", "last": 10}))
-    );
-    assert!(
-        history.contains("marker-kept"),
-        "control post missing: {history}"
-    );
-    assert!(
-        !history.contains("marker-cancelled"),
-        "the owner ran a request that was cancelled before it started: {history}"
+    let before = checks.load(Ordering::SeqCst);
+    plain("flush"); // served after the cancelled job, so the owner has reached and passed it
+    assert_eq!(
+        checks.load(Ordering::SeqCst) - before,
+        per_look,
+        "the owner ran a look that was cancelled before it started"
     );
 }
 
@@ -331,10 +334,10 @@ fn two_hundred_cancel_cycles_leave_no_thread_behind() {
 }
 
 /// The agent's input: one chunk per line, from the test. Waits are bounded.
-struct ChanInput {
-    rx: Receiver<Vec<u8>>,
-    buf: Vec<u8>,
-    pos: usize,
+pub(super) struct ChanInput {
+    pub(super) rx: Receiver<Vec<u8>>,
+    pub(super) buf: Vec<u8>,
+    pub(super) pos: usize,
 }
 
 impl Read for ChanInput {
@@ -363,7 +366,7 @@ impl BufRead for ChanInput {
     }
 }
 
-struct LineSink(Sender<String>, Vec<u8>);
+pub(super) struct LineSink(pub(super) Sender<String>, pub(super) Vec<u8>);
 
 impl Write for LineSink {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {

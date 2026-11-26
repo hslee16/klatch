@@ -364,7 +364,11 @@ impl Backend for SharedBackend {
         call: Call,
         _harness: Option<&dyn crate::harness::Harness>,
     ) -> crate::session::Outcome {
-        // The connection's own harness (set by the daemon's edge) judges a `join`, as in `handle`; none is read from here.
+        // Only a pure look can be cancelled; a request with an effect is a plain `handle` and is never `Cancelled`.
+        // The connection's own harness (set by the daemon's edge) judges a `join`, as in `handle`.
+        if !crate::session::cancellable::is_look(&call) {
+            return crate::session::Outcome::Done(self.handle(who, call));
+        }
         self.look_cancellable(who, call)
     }
     fn canceller(&self) -> Arc<dyn crate::session::CancelHook> {
