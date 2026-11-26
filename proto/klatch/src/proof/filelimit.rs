@@ -118,9 +118,13 @@ pub fn settle<S: PolicyStore + ?Sized>(db: &Path, store: &S, now: i64) {
     let dropped = failed.len() - kept.len();
     kept.sort_unstable();
     let skip = kept.len().saturating_sub(alarm::CEILING as usize);
-    for at in &kept[skip..] {
-        alarm::failed(store, "recovery", alarm::FILE_LIMIT_DETAIL, *at);
-    }
+    alarm::backfilled(
+        store,
+        "recovery",
+        alarm::FILE_LIMIT_DETAIL,
+        &kept[skip..],
+        now,
+    );
     let mut detail =
         format!("{count} attempts while the store could not be read (the last one was approved)");
     if dropped > 0 {

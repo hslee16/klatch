@@ -215,18 +215,76 @@ fn a_time_a_little_in_the_future_is_clamped_to_now_and_a_far_one_is_dropped() {
 }
 
 #[test]
-fn a_back_dated_row_does_not_count_every_later_row_toward_the_alarm() {
+fn back_dated_rows_outside_the_window_do_not_raise_the_alarm() {
     let s = store();
     let t = 10 * WINDOW_SECS;
     for i in 0..30 {
         super::alarm::failed(&s, "", &format!("failures=1 terminal=ttys{i}/s{i}"), t);
     }
-    // 21 rows stamped 40 hours earlier: each one's window holds only the back-dated rows, so no alarm
-    for _ in 0..21 {
-        super::alarm::failed(&s, "recovery", "failures=1 via=file-limit", t - 40 * 3600);
-    }
+    // 21 rows stamped 40 hours earlier are outside the window ending now: the count stays 30
+    let old = vec![t - 40 * 3600; 21];
+    super::alarm::backfilled(&s, "recovery", "failures=1 via=file-limit", &old, t);
     assert!(rows(&s, ACTION).is_empty(), "{:?}", actions(&s));
     assert_eq!(recent(&s, t).unwrap().0, 30);
+}
+
+#[test]
+fn a_settlement_that_backfills_past_the_line_writes_exactly_one_alarm() {
+    let (d, s) = (dir(), store());
+    let now = 10 * WINDOW_SECS;
+    for i in 0..40 {
+        super::alarm::failed(
+            &s,
+            "",
+            &format!("failures=1 terminal=ttys{i}/s{i}"),
+            now - 3600,
+        );
+    }
+    assert!(rows(&s, ACTION).is_empty());
+    // 21 attempts (20 failed) stamped around two hours ago: the window holds 60 and each row alone sees fewer
+    let text: String = (0..21).map(|i| format!("{}\n", now - 7200 + i)).collect();
+    settle_lines(&s, &d, &text, now);
+    assert_eq!(recent(&s, now).unwrap().0, 60);
+    let alarm = rows(&s, ACTION);
+    assert_eq!(alarm.len(), 1, "{:?}", actions(&s));
+    assert_eq!(alarm[0].detail, "failures=60 terminals=40 window=24h");
+    assert_eq!(alarm[0].ts, now);
+    // a second settlement in the same crossing writes no second alarm
+    let text: String = (0..3).map(|i| format!("{}\n", now - 100 + i)).collect();
+    settle_lines(&s, &d, &text, now);
+    assert_eq!(rows(&s, ACTION).len(), 1);
+}
+
+#[test]
+fn a_backfill_that_stays_under_the_line_writes_no_alarm() {
+    let (d, s) = (dir(), store());
+    let now = 10 * WINDOW_SECS;
+    for i in 0..30 {
+        super::alarm::failed(
+            &s,
+            "",
+            &format!("failures=1 terminal=ttys{i}/s{i}"),
+            now - 3600,
+        );
+    }
+    let text: String = (0..20).map(|i| format!("{}\n", now - 7200 + i)).collect();
+    settle_lines(&s, &d, &text, now);
+    assert_eq!(recent(&s, now).unwrap().0, 49);
+    assert!(rows(&s, ACTION).is_empty(), "{:?}", actions(&s));
+}
+
+#[test]
+fn a_writer_with_a_clock_ahead_does_not_make_the_count_jump_past_the_line() {
+    let s = store();
+    let t = 10 * WINDOW_SECS;
+    for i in 0..2 {
+        super::alarm::failed(&s, "", &format!("failures=1 terminal=ahead{i}/s"), t + 100);
+    }
+    for i in 0..48 {
+        super::alarm::failed(&s, "", &format!("failures=1 terminal=ttys{i}/s{i}"), t);
+    }
+    super::alarm::failed(&s, "", "failures=1 terminal=ttysx/sx", t + 200);
+    assert_eq!(rows(&s, ACTION).len(), 1, "{:?}", actions(&s));
 }
 
 #[cfg(unix)]
