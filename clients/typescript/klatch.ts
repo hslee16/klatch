@@ -423,6 +423,7 @@ export class Client {
   attribution = "";
   clearance = "";
   refusals: Frame[] = [];
+  private ended = false;
   private writable: Writable;
   private socket: Socket | null;
   private frames: (Frame | null)[] = [];
@@ -573,6 +574,7 @@ export class Client {
 
   /** Send a request and return its result, or throw ApiError. Frames that arrive meanwhile are kept. */
   async request(method: string, params: Record<string, unknown> = {}): Promise<Record<string, any>> {
+    if (this.ended) throw new ProtocolError("the session is closed");
     const id = `c${++this.nextId}`;
     this.refusals = [];
     this.send({ type: "request", id, method, params });
@@ -843,6 +845,7 @@ export class Client {
   /** End the session by closing the input; returns the gateway's exit code. Over a socket there is no process: the
    * socket is shut and the daemon's end of the session is awaited (up to 10 seconds), and the answer is 0. */
   async close(): Promise<number> {
+    this.ended = true;
     this.writable.end();
     if (this.http !== null) {
       this.http.shut();

@@ -431,8 +431,8 @@ class Client:
         self._sock = sock
         reader = sock.makefile("r", encoding="utf-8", newline="\n")
         writer = sock.makefile("w", encoding="utf-8", newline="\n")
-        self._start(reader, writer, proc=None)
         try:
+            self._start(reader, writer, proc=None)
             self._identify(_identify_params(name, member, token))
         except BaseException:
             self.close()
@@ -481,6 +481,7 @@ class Client:
         self._reader, self._writer = reader, writer
         self._frames = queue.Queue()
         self._next_id = 0
+        self._closed = False
         self.refusals = []
         self._pending_messages = []
         self._caught_up = {}
@@ -531,6 +532,8 @@ class Client:
 
     def request(self, method, **params):
         """Send a request and return its result, or raise ApiError. Frames that arrive meanwhile are kept."""
+        if self._closed:
+            raise ProtocolError("the session is closed")
         self._next_id += 1
         rid = f"c{self._next_id}"
         self.refusals = []
@@ -762,6 +765,7 @@ class Client:
 
     def close(self):
         """End the session: close the input, which ends the gateway's side. Returns its exit code (over a socket or HTTP, 0)."""
+        self._closed = True
         if self._http is not None:
             return self._close_http()
         if self._proc is None:

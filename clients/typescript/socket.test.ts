@@ -259,7 +259,7 @@ describe("klatch client over the daemon's Unix socket", () => {
     it("rejects with a ProtocolError after close, and sends nothing", async () => {
       const c = await connect();
       await c.close();
-      await assert.rejects(c.request("who", { room: "r" }), ProtocolError);
+      await assert.rejects(c.request("who", { room: "r" }), (e: Error) => e instanceof ProtocolError && e.message === "the session is closed");
       assert.deepEqual(d.received, []);
     });
   });
