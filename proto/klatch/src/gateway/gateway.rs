@@ -230,9 +230,12 @@ impl<S: Store> Gateway<S> {
         let room = post.0;
         if !refs.is_empty() {
             check_room(room)?;
-            self.check_refs_before_post(who, (room, post.2), refs)?;
+            self.check_refs_before_post(who, room, refs)?;
         }
-        let posted = self.post_with(who, post, None)?;
+        // the label check on refs runs inside `post_with_refs`, after authorization and throttling: it judges a
+        // message or room ref by the label of the room that holds it, and its answer must never reach a caller that is
+        // stopped, throttled or cleared for nothing here (#1599)
+        let posted = self.post_with_refs(who, post, None, refs)?;
         if let Some(scope) = scope {
             self.store.set_ask_scope(room, posted.seq, scope)?;
         }
@@ -249,8 +252,18 @@ impl<S: Store> Gateway<S> {
     fn post_with(
         &self,
         who: &Principal,
+        post: PostArgs,
+        handoff: Option<&Handoff>,
+    ) -> Result<Posted> {
+        self.post_with_refs(who, post, handoff, &[])
+    }
+
+    fn post_with_refs(
+        &self,
+        who: &Principal,
         (room, body, label): PostArgs,
         handoff: Option<&Handoff>,
+        refs: &[crate::domain::AskRef],
     ) -> Result<Posted> {
         check_member(who)?;
         check_room(room)?;
@@ -277,6 +290,9 @@ impl<S: Store> Gateway<S> {
         let label = self.post_label(who, room, label)?;
         self.check_budget(who, room, body)?;
         self.check_rate(who, room)?;
+        if !refs.is_empty() {
+            self.check_refs_label(who, (room, Some(&label)), refs)?;
+        }
         let message = NewMessage::new((room, &who.member), who.attribution, &label, body);
         let message = match handoff {
             Some(Handoff {

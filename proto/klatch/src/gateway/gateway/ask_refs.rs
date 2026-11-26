@@ -7,14 +7,15 @@ use crate::domain::{AskRef, NEXT_STEP, RefProblem};
 impl<S: Store> Gateway<S> {
     /// Refuse `refs` that are malformed or over a cap (`invalid`, never cut), that carry a credential, that match the
     /// secret, canary or private-term rules a message body meets (every value, label and snippet is judged as message
-    /// text is), or that would launder a label (`check_refs_label`). `at` is the room and the label asked for.
+    /// text is). These read no store state that tells what exists, so they run first, as the body's own rules do, and
+    /// a canary or credential in a ref trips the room and feeds the breaker whoever asks. The label check
+    /// (`check_refs_label`) reads the store for what exists and runs only after authorization and throttling (#1599).
     pub(super) fn check_refs_before_post(
         &self,
         who: &Principal,
-        at: (&str, Option<&str>),
+        room: &str,
         refs: &[AskRef],
     ) -> Result<()> {
-        let (room, asked) = at;
         crate::domain::check_refs(refs).map_err(|problem| match problem {
             RefProblem::Invalid(why) => Error::Invalid(why),
             RefProblem::Credential(why) => {
@@ -34,14 +35,14 @@ impl<S: Store> Gateway<S> {
                 self.refuse_text(who, (room, "post"), text)?;
             }
         }
-        self.check_refs_label(who, (room, asked), refs)
+        Ok(())
     }
 
     /// A ref is posted under the ask's own label, so it cannot carry anything the ask could not: an ask under a sealed
     /// label keeps its text under the label's key and refs are stored beside it, so it carries none; and a ref that
     /// names another room (`room`, or `ask` as `ROOM#N`) must name one the ask's label covers, so a lower room cannot
     /// point at what a higher one holds. The reasons name no label.
-    fn check_refs_label(
+    pub(super) fn check_refs_label(
         &self,
         who: &Principal,
         (room, asked): (&str, Option<&str>),
