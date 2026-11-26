@@ -1,4 +1,4 @@
-//! A cycle through asks (#273, DESIGN section 25.15): A waits for B's answer and B waits for A's, so neither can
+//! A cycle through asks (#273, DESIGN item 90): A waits for B's answer and B waits for A's, so neither can
 //! answer first. It is not a claim cycle (section 25.12 watches claims on work), so nothing said so. An ask is a
 //! wait when a helper holds its `ask:<N>` claim: the asker waits on that helper. A cycle of such waits is a
 //! candidate deadlock, found from the open asks and the live claims alone, with no state: whoever looks (the
