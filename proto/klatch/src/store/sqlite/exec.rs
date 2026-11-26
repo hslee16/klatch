@@ -130,22 +130,37 @@ impl SqliteStore {
             return f();
         }
         self.conn.execute_batch("BEGIN IMMEDIATE").map_err(be)?;
+        // a panic in `f` unwinds through this guard, which closes the transaction (#1591): a later write would
+        // otherwise join the open one and never commit
+        let guard = CloseOnUnwind(self);
         let out = match f() {
             Ok(v) => self.conn.execute_batch("COMMIT").map_err(be).map(|()| v),
-            Err(e) => {
-                let _ = self.conn.execute_batch("ROLLBACK");
-                Err(e)
-            }
+            Err(e) => Err(e),
         };
+        std::mem::forget(guard);
+        self.close_failed();
         self.flush_deferred_audit();
         out
+    }
+
+    /// Roll back whatever transaction is still open: after a failed `f`, or a COMMIT that failed (BUSY, a deferred
+    /// constraint) and left it open (#1592). A no-op once the transaction has closed.
+    fn close_failed(&self) {
+        if !self.conn.is_autocommit() {
+            let _ = self.conn.execute_batch("ROLLBACK");
+        }
     }
 
     /// Keep an audit row of a refused write: now when no transaction is open, else once the outermost one has
     /// closed, so a rollback cannot take it away (#1275).
     pub(super) fn audit_refusal(&self, action: &'static str, target: &str, now: i64) {
         if self.conn.is_autocommit() {
-            let _ = self.exec(AUDIT_SQL, params![now, action, target, ""]);
+            if self
+                .exec(AUDIT_SQL, params![now, action, target, ""])
+                .is_err()
+            {
+                self.count_audit_flush_error();
+            }
         } else {
             self.deferred_audit
                 .borrow_mut()
@@ -153,14 +168,53 @@ impl SqliteStore {
         }
     }
 
+    /// Audit rows of refused writes that could not be written (#1592).
+    pub fn audit_flush_errors(&self) -> u64 {
+        self.audit_flush_errors.get()
+    }
+
+    fn count_audit_flush_error(&self) {
+        self.audit_flush_errors
+            .set(self.audit_flush_errors.get() + 1);
+    }
+
+    /// Write the queued refusal rows. One that cannot be written is counted (`audit_flush_errors`) and stays queued
+    /// for the next flush, up to `MAX_QUEUED`; past that the oldest are dropped, each already counted.
     fn flush_deferred_audit(&self) {
-        // a COMMIT that failed leaves the transaction open: the rows stay queued for the one that closes it
+        // a rollback that did not happen leaves the transaction open: the rows stay queued for the one that closes it
         if !self.conn.is_autocommit() {
             return;
         }
         let rows = std::mem::take(&mut *self.deferred_audit.borrow_mut());
+        let mut kept = Vec::new();
         for (action, target, ts) in rows {
-            let _ = self.exec(AUDIT_SQL, params![ts, action, target, ""]);
+            if self
+                .exec(AUDIT_SQL, params![ts, action, target, ""])
+                .is_err()
+            {
+                self.count_audit_flush_error();
+                kept.push((action, target, ts));
+            }
+        }
+        if !kept.is_empty() {
+            let mut q = self.deferred_audit.borrow_mut();
+            kept.append(&mut q);
+            let over = kept.len().saturating_sub(MAX_QUEUED);
+            kept.drain(..over);
+            *q = kept;
         }
     }
 }
+
+/// Closes the open `BEGIN IMMEDIATE` when `f` panics; forgotten on the normal path.
+struct CloseOnUnwind<'a>(&'a SqliteStore);
+
+impl Drop for CloseOnUnwind<'_> {
+    fn drop(&mut self) {
+        self.0.close_failed();
+        self.0.flush_deferred_audit();
+    }
+}
+
+/// How many audit rows that failed to write are held for a retry.
+const MAX_QUEUED: usize = 256;

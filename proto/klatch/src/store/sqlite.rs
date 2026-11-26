@@ -52,6 +52,8 @@ pub struct SqliteStore {
     labels: std::cell::RefCell<crate::keys::LabelKeys>,
     /// Claim events (#1386) that could not be recorded: the failure is swallowed so a claim never fails for it.
     claim_record_errors: std::cell::Cell<u64>,
+    /// Audit rows (#1592) that could not be written: counted, and kept queued for the next flush.
+    audit_flush_errors: std::cell::Cell<u64>,
     /// Audit rows (#1275) of refused writes made inside a transaction, kept as `(action, target, ts)` until the
     /// outermost transaction has closed: a refusal rolls its own transaction back, and a row written inside would go
     /// with it. Names only, never a value.

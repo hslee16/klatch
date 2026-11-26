@@ -24,6 +24,7 @@ mod cycle_names;
 mod cycle_notice;
 mod encryption;
 mod false_deadlock;
+mod immediate_txn;
 mod import;
 mod label_keys;
 mod long_tasks;

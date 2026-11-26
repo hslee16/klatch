@@ -1,0 +1,1 @@
+- The store's write transaction now closes however it ends: a panic inside it no longer leaves `BEGIN IMMEDIATE` open to swallow later writes (#1591), a COMMIT that fails is rolled back, and a refusal audit row that cannot be written is counted (`audit_flush_errors`) and retried instead of lost silently (#1592).

@@ -85,8 +85,8 @@ fn serve<S: Store + 'static>(gateway: &Rc<Gateway<S>>, job: Job, loader: Option<
     if let Some(loader) = keyed {
         gateway.use_label_keys(ring_for(gateway, loader, &job.principal.member));
     }
-    // A panic in one request fails that request (its reply channel closes) and nothing else: SQLite
-    // rolls back what was open, and the next request starts clean.
+    // A panic in one request fails that request (its reply channel closes) and nothing else: the store
+    // closes its open write transaction (a drop guard in `immediate`, #1591), and the next request starts clean.
     match job.run {
         Work::Transport(run) => {
             let mut direct = Direct::new(gateway.clone(), job.principal);
