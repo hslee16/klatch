@@ -228,8 +228,12 @@ impl<S: Store> Gateway<S> {
         check_member(who)?;
         check_ask_shape(post.1, scope, refs)?;
         let room = post.0;
-        // the ref checks run inside `post_with_refs`, after authorization and throttling: one that names a message or
-        // room judges it by the label of the room that holds it, and its answer must never reach a caller that is
+        if !refs.is_empty() {
+            check_room(room)?;
+            self.check_refs_before_post(who, room, refs)?;
+        }
+        // the label check on refs runs inside `post_with_refs`, after authorization and throttling: it judges a
+        // message or room ref by the label of the room that holds it, and its answer must never reach a caller that is
         // stopped, throttled or cleared for nothing here (#1599)
         let posted = self.post_with_refs(who, post, None, refs)?;
         if let Some(scope) = scope {
@@ -287,7 +291,7 @@ impl<S: Store> Gateway<S> {
         self.check_budget(who, room, body)?;
         self.check_rate(who, room)?;
         if !refs.is_empty() {
-            self.check_refs_before_post(who, (room, Some(&label)), refs)?;
+            self.check_refs_label(who, (room, Some(&label)), refs)?;
         }
         let message = NewMessage::new((room, &who.member), who.attribution, &label, body);
         let message = match handoff {

@@ -391,23 +391,80 @@ fn a_throttled_member_gets_the_rate_refusal_for_a_hit_and_a_miss() {
 #[test]
 fn a_member_without_clearance_for_the_room_never_reaches_the_ref_check() {
     let g = open();
-    let hit = vault_and_a_hit(&g);
-    let e = g
-        .post_ask(
+    let _ = vault_and_a_hit(&g);
+    // a message in a room labelled above the vault (the ask's label), posted while that room was still public
+    g.join(&alice(), "crown").unwrap();
+    let crown = g.post(&alice(), "crown", "crown jewels").unwrap().id;
+    g.admin_set_room_label(&admin(), "crown", "secret").unwrap();
+    let in_vault = |id: &str| {
+        g.post_ask(
             &bob(),
             ("vault", "seeking: x", None),
+            None,
+            &[r("message", id)],
+        )
+        .unwrap_err()
+    };
+    let (hit, miss) = (in_vault(&crown), in_vault("no-such-id"));
+    assert_eq!(format!("{hit:?}"), format!("{miss:?}"));
+    assert_eq!(rule_of(hit), "clearance");
+}
+
+#[test]
+fn an_over_budget_member_gets_the_same_refusal_for_a_hit_and_a_miss() {
+    let g = open();
+    let hit = vault_and_a_hit(&g);
+    for i in 0..crate::domain::budget::MAX_POSTS_PER_WINDOW {
+        g.post(&bob(), "r", &format!("m{i}")).unwrap();
+    }
+    let by_hit = g
+        .post_ask(
+            &bob(),
+            ("r", "seeking: x", None),
             None,
             &[r("message", &hit)],
         )
         .unwrap_err();
-    let miss = g
+    let by_miss = g
         .post_ask(
             &bob(),
-            ("vault", "seeking: x", None),
+            ("r", "seeking: x", None),
             None,
             &[r("message", "no-such-id")],
         )
         .unwrap_err();
-    assert_eq!(format!("{e:?}"), format!("{miss:?}"));
-    assert_eq!(rule_of(e), "clearance");
+    assert_eq!(format!("{by_hit:?}"), format!("{by_miss:?}"));
+    assert!(by_hit.to_string().contains("too many posts"), "{by_hit}");
+}
+
+#[test]
+fn a_canary_in_a_ref_snippet_trips_the_room_even_for_a_member_who_was_removed() {
+    let g = open();
+    for p in ["alice", "bob"] {
+        g.admin_set_clearance(&admin(), p, "private").unwrap();
+    }
+    g.join(&alice(), "vault").unwrap();
+    g.join(&bob(), "town").unwrap();
+    g.admin_set_room_label(&admin(), "vault", "private")
+        .unwrap();
+    let token = g
+        .store
+        .policy_list("canary:")
+        .unwrap()
+        .pop()
+        .expect("planted")
+        .0
+        .trim_start_matches("canary:")
+        .to_string();
+    g.admin_remove_member(&admin(), "town", "bob").unwrap();
+    let mut with = r("log", "ci.log");
+    with.snippet = Some(format!("saw {token}"));
+    let e = g
+        .post_ask(&bob(), ("town", "seeking: x", None), None, &[with])
+        .unwrap_err();
+    assert_eq!(rule_of(e), "canary");
+    assert_eq!(
+        g.store.room_state("town").unwrap().as_deref(),
+        Some("tripped")
+    );
 }
