@@ -715,17 +715,16 @@ mod tests {
     /// and the loop must end normally at stop. Every connect and read has a deadline.
     #[test]
     fn a_daemon_handler_that_panics_gives_its_slot_back_and_the_loop_goes_on() {
-        let dir = PathBuf::from(format!("/tmp/kp{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("d.sock");
-        let _ = std::fs::remove_file(&path);
-        let listener = bind(&path).unwrap();
+        let dir = TestDir::new("panic");
+        let path = dir.0.join("d.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        listener.set_nonblocking(true).unwrap();
         let stop = AtomicBool::new(false);
         let first = AtomicBool::new(true);
         let mut said = String::new();
         std::thread::scope(|scope| {
             let loop_ended = scope.spawn(|| {
-                accept_loop(&listener.listener, &stop, (own_uid(), 1), &|mut s, _| {
+                accept_loop(&listener, &stop, (own_uid(), 1), &|mut s, _| {
                     if first.swap(false, Ordering::SeqCst) {
                         panic!("a handler fault");
                     }
@@ -755,7 +754,58 @@ mod tests {
             said.ends_with("ok"),
             "the slot of the panicked handler was kept: {said}"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #1640: on stop every open connection is closed, so a handler blocked on its socket returns and the loop ends.
+    /// The handler's own read gives up after 4 s, so a regression fails the assertion instead of hanging.
+    #[test]
+    fn open_connections_are_closed_when_the_accept_loop_stops() {
+        let dir = TestDir::new("stop");
+        let path = dir.0.join("d.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let (stop, serving) = (AtomicBool::new(false), AtomicBool::new(false));
+        let mut closed = false;
+        std::thread::scope(|scope| {
+            let loop_ended = scope.spawn(|| {
+                accept_loop(&listener, &stop, (own_uid(), 4), &|mut s, _| {
+                    s.set_read_timeout(Some(Duration::from_secs(4))).unwrap();
+                    serving.store(true, Ordering::SeqCst);
+                    let _ = s.read(&mut [0u8; 1]);
+                });
+            });
+            let mut c = UnixStream::connect(&path).unwrap();
+            let until = std::time::Instant::now() + Duration::from_secs(5);
+            while !serving.load(Ordering::SeqCst) && std::time::Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            stop.store(true, Ordering::SeqCst);
+            c.set_read_timeout(Some(Duration::from_millis(1500)))
+                .unwrap();
+            closed = matches!(c.read(&mut [0u8; 1]), Ok(0));
+            assert!(loop_ended.join().is_ok());
+        });
+        assert!(closed, "an open connection was left open at stop");
+    }
+
+    /// A private (0700) directory that goes when the test ends, even on a failed assertion. The tests here do not use
+    /// `bind`, which sets the process-wide umask for a moment and would race the tests that create directories.
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new(tag: &str) -> TestDir {
+            use std::os::unix::fs::DirBuilderExt;
+            let dir = PathBuf::from(format!("/tmp/kp{}-{tag}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
+            TestDir(dir)
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     /// Whether `join gated` is admitted on the backend `unidentified_backend` gives a peer, with `probe` standing in for
