@@ -1,0 +1,1 @@
+- `gh-watch ensure` now waits for the watch:gh claim verdict and says why the receiver is down (refused by another holder, lapsing within 90 s, or the start failure from serve.out) instead of only `receiver: down`; the docs no longer call it idempotent (#1601).

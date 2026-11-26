@@ -292,6 +292,21 @@ for h in stale:
 ' "$repo_slug" <<< "$json"
 }
 
+# Why the receiver did not come up, from what the failed start wrote to serve.out (#1601). A refusal by another holder's
+# watch:gh claim lapses by itself: the claim lease is 90 seconds, so a rerun after that takes it (a kill -9 leaves the
+# dead receiver's claim to lapse the same way).
+ensure_say_why() {
+  local fresh
+  fresh="$(tail -c +"$(($1 + 1))" "$out_dir/serve.out" 2>/dev/null | tail -n 5)"
+  case "$fresh" in
+    *"claim in"*"not starting a second one"*)
+      echo "gh-watch: receiver not started: refused because another receiver (or a killed one) holds the watch:gh claim."
+      echo "gh-watch: the claim lapses within 90 s (its lease); run gh-watch ensure again after that. It does not retry by itself." ;;
+    *) echo "gh-watch: receiver did not start; see $out_dir/serve.out and $out_dir/gh-watch.log"
+       [ -z "$fresh" ] || printf '%s\n' "$fresh" | sed 's/^/gh-watch: serve.out: /' ;;
+  esac
+}
+
 # Starts only the receiver. Never the forwarder, never gh: the forwarder needs the human's admin:repo_hook token.
 cmd_ensure() {
   scan_args "$@"
@@ -302,11 +317,27 @@ cmd_ensure() {
       (umask 077; python3 -I -c 'import secrets; print(secrets.token_hex(32))' > "$secret_file") || die "cannot create the secret file"
       chmod 600 "$secret_file"
     fi
+    local log_before out_before
+    log_before="$(wc -c < "$out_dir/gh-watch.log" 2>/dev/null || echo 0)"
+    out_before="$(wc -c < "$out_dir/serve.out" 2>/dev/null || echo 0)"
     nohup "$here/gh-watch" serve --out-dir "$out_dir" --secret-file "$secret_file" --port "$port" ${rest[@]+"${rest[@]}"} \
       < /dev/null >> "$out_dir/serve.out" 2>&1 &
+    local child=$!
     disown 2>/dev/null
     local i=0
     while [ "$i" -lt 100 ] && ! receiver_up; do i=$((i + 1)); sleep 0.1; done
+    # The receiver binds its port BEFORE it claims watch:gh, so "up" can be momentary: a refused receiver exits 2 a moment
+    # later. With a claim to take, wait for its verdict (a claim line in the log) or for the process to end (#1601).
+    case " ${rest[*]-} " in *" --klatch-bin "*) i=0
+      local fresh_log=""
+      while [ "$i" -lt 100 ] && kill -0 "$child" 2>/dev/null; do
+        fresh_log="$(tail -c +"$((log_before + 1))" "$out_dir/gh-watch.log" 2>/dev/null)"
+        case "$fresh_log" in *"watcher claim"* | *"second receiver refused"*) break ;; esac
+        i=$((i + 1)); sleep 0.1
+      done ;;
+    esac
+    kill -0 "$child" 2>/dev/null && sleep 0.2
+    if ! receiver_up; then ensure_say_why "$out_before"; fi
   fi
   print_status; local rc=$?
   [ "$rc" -eq 4 ] && echo "The forwarder is the human's to start (it needs the admin:repo_hook token): run gh-watch forward-command and use step 4."
