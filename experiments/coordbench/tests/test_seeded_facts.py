@@ -296,8 +296,8 @@ class FakeRun(Base):
                     with open(os.path.join(d, n), errors="replace") as f:
                         self.assertNotIn("Hidden checker data", f.read(), os.path.join(d, n))
 
-    def test_recovery_and_specialists_run_through_the_harness_on_the_seeds_facts(self):
-        for name in ("recovery",):
+    def test_recovery_runs_through_the_harness_on_the_seeds_facts(self):
+        for name in ("recovery",):  # specialists has no fake script of its own
             a = self.argv("B0", 1, seed=SEED_B)
             a[a.index("--fixture") + 1] = name
             self.go(a)
