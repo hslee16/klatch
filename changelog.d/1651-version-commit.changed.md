@@ -1,0 +1,1 @@
+- `klatch --version` now names the commit the binary was built from, for example `klatch 0.2.0 (commit 3f9a1c2b7d10, protocol 1, store schema 45)`, with `-dirty` for uncommitted changes and `unknown` when built without git (#1651); the leading `klatch <version>` is unchanged.

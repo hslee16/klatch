@@ -50,6 +50,7 @@
   {
     "name": "klatch-core",
     "patterns": [
+      "proto/klatch/build.rs",
       "proto/klatch/src/anchor.rs",
       "proto/klatch/src/client.rs",
       "proto/klatch/src/codex.rs",

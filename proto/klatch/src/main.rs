@@ -291,7 +291,7 @@ enum Cmd {
 
 /// The version text: the package version, then the wire protocol and the store schema this binary speaks (a store
 /// written by a newer schema is refused, so this says whether the binary can open yours). A test build says so too,
-/// which is how the bench knows it has the right binary.
+/// which is how the bench knows it has the right binary. The build commit comes from build.rs (`unknown` without git).
 pub(crate) fn version_text() -> &'static str {
     static TEXT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     TEXT.get_or_init(|| {
@@ -301,8 +301,9 @@ pub(crate) fn version_text() -> &'static str {
             ""
         };
         format!(
-            "{} (protocol {}, store schema {}{test_build})",
+            "{} (commit {}, protocol {}, store schema {}{test_build})",
             env!("CARGO_PKG_VERSION"),
+            env!("KLATCH_BUILD_COMMIT"),
             klatch::protocol::PROTOCOL_VERSION,
             klatch::store::SCHEMA_VERSION
         )

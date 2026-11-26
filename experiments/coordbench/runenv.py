@@ -85,7 +85,7 @@ def kill_group(proc):
 
 def klatch_facts(klatch_bin, env):
     """(binary sha256, store schema, `--version` output) of the klatch under test; all None when no binary was given. The
-    binary's own identity: its version line does not name a commit, so none is read from it (#1547)."""
+    binary's own identity: its version line names the build commit (#1651), so the whole line is recorded (#1547)."""
     if not klatch_bin:
         return None, None, None
     schema_no, version = None, None
