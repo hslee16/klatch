@@ -20,6 +20,7 @@ mod claims;
 mod concurrency;
 mod conformance;
 mod credentials;
+mod cycle_names;
 mod cycle_notice;
 mod encryption;
 mod false_deadlock;

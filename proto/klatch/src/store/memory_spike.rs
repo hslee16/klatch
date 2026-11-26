@@ -49,6 +49,8 @@ fn conflict_with(claims: &[(Claim, i64)], q: &ClaimRequest, now: i64) -> Option<
             secs_left: exp - now,
             held_secs: 0,
             deadlock: false,
+            cycle: vec![],
+            via: String::new(),
         })
 }
 

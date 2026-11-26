@@ -16,6 +16,11 @@ pub enum Error {
         /// The holder is itself waiting, directly or through others, for something the requester holds, and the
         /// requester's attempt closed that cycle: the requester yields (DESIGN section 25.12).
         deadlock: bool,
+        /// On a deadlock: the members of this room on the chain, from the holder to the member that waits for the
+        /// requester (#1603). Empty otherwise.
+        cycle: Vec<String>,
+        /// On a deadlock: the requester's own held path that the last member on the chain waits for. Empty otherwise.
+        via: String,
     },
     /// A policy refused the operation. `rule` names the rule that did (for the audit record); `reason` is
     /// safe to show and never contains the content that triggered it.
@@ -27,6 +32,9 @@ pub enum Error {
     /// The store is locked by another writer past the wait limit. Transient: retrying later can succeed.
     Busy(String),
 }
+
+/// Members named on a deadlock's chain before the rest are counted (#1603).
+const MAX_CYCLE_NAMES: usize = 5;
 
 /// What a refusal's reason puts before its hint: `<why>; next step: <what to do>`.
 pub const NEXT_STEP: &str = "next step: ";
@@ -55,6 +63,8 @@ impl fmt::Display for Error {
                 secs_left,
                 held_secs,
                 deadlock,
+                cycle,
+                via,
             } => {
                 write!(
                     f,
@@ -68,10 +78,24 @@ impl fmt::Display for Error {
                     )?;
                 }
                 if *deadlock {
+                    // The member in the cycle, which is not always the one that refused first (#1603).
+                    let owner = cycle.first().unwrap_or(owner);
                     write!(
                         f,
                         "; deadlock: {owner} is waiting, directly or through others, for a path you hold, and your attempt closed the cycle, so you yield: release the claims you hold in this room, wait, then try again"
                     )?;
+                    if !via.is_empty() && !cycle.is_empty() {
+                        write!(f, " (the cycle: {owner} waits")?;
+                        let rest = &cycle[1..];
+                        if !rest.is_empty() {
+                            let shown = rest.len().min(MAX_CYCLE_NAMES);
+                            write!(f, " through {}", rest[..shown].join(", "))?;
+                            if rest.len() > shown {
+                                write!(f, " and {} more", rest.len() - shown)?;
+                            }
+                        }
+                        write!(f, " for your path {via})")?;
+                    }
                 }
                 Ok(())
             }
@@ -93,6 +117,8 @@ mod tests {
             secs_left: 42,
             held_secs: 0,
             deadlock: false,
+            cycle: vec![],
+            via: String::new(),
         };
         assert_eq!(
             e.to_string(),
@@ -108,6 +134,8 @@ mod tests {
             secs_left: 42,
             held_secs: 0,
             deadlock: true,
+            cycle: vec!["bob".into()],
+            via: "src/b".into(),
         };
         let m = e.to_string();
         assert!(
