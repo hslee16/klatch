@@ -12,10 +12,12 @@ use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 /// Where `ps` may be, in order: macOS has it in `/bin`, Linux in `/bin` or `/usr/bin`.
-pub(crate) const PS_CANDIDATES: [&str; 2] = ["/bin/ps", "/usr/bin/ps"];
+pub const PS_CANDIDATES: [&str; 2] = ["/bin/ps", "/usr/bin/ps"];
 
 /// What one `ps` run may cost.
 #[derive(Clone, Copy)]
@@ -58,6 +60,41 @@ pub(crate) fn run_ps(
     args: &[&str],
     limits: Limits,
 ) -> Option<String> {
+    run_ps_gated(program, pre, args, limits, &LIVE_READERS, MAX_LIVE_READERS)
+}
+
+/// Reader threads that have not finished (one per run, ending when the pipe closes). A descendant of `ps` that holds the
+/// pipe open keeps its reader, and its descriptor, alive, so the count is bounded (#1662).
+static LIVE_READERS: AtomicUsize = AtomicUsize::new(0);
+
+/// The most reader threads alive at once; past it a run is refused (an unreadable table, never a partial one) instead of
+/// adding a thread and a descriptor. A real `ps` closes its pipe within milliseconds, so this is never reached.
+const MAX_LIVE_READERS: usize = 16;
+
+/// How long a `ps` that exited successfully is given for its reader to hand over what it read, even when the deadline
+/// has passed in the meantime (the reader is a separate thread that may not have run yet).
+const HAND_OVER: Duration = Duration::from_millis(100);
+
+/// The output the reader thread sends, waited for until `deadline` but for at least `HAND_OVER`.
+fn recv_output(receiver: &Receiver<Vec<u8>>, deadline: Instant) -> Option<Vec<u8>> {
+    let left = deadline.saturating_duration_since(Instant::now());
+    receiver.recv_timeout(left.max(HAND_OVER)).ok()
+}
+
+/// `run_ps` with the reader count and its bound given.
+pub(crate) fn run_ps_gated(
+    program: &Path,
+    pre: &[String],
+    args: &[&str],
+    limits: Limits,
+    live: &'static AtomicUsize,
+    max_live: usize,
+) -> Option<String> {
+    if live.fetch_add(1, Ordering::SeqCst) >= max_live {
+        live.fetch_sub(1, Ordering::SeqCst);
+        return None;
+    }
+    let slot = Slot(live);
     let mut child = Command::new(program)
         .args(pre)
         .args(args)
@@ -74,6 +111,7 @@ pub(crate) fn run_ps(
     let (sender, receiver) = std::sync::mpsc::channel();
     // detached: when a descendant of `ps` keeps the pipe open past the deadline the thread is left to end with it
     std::thread::spawn(move || {
+        let _slot = slot;
         let mut out = Vec::new();
         // one byte past the cap tells an overflow from an exact fit; dropping the pipe then ends the child (SIGPIPE)
         let _ = stdout.take(cap as u64 + 1).read_to_end(&mut out);
@@ -92,13 +130,21 @@ pub(crate) fn run_ps(
         }
     };
     // the output is complete only when the pipe is closed; a child of `ps` that holds it open cannot stretch the timeout
-    let out = receiver
-        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-        .ok()?;
-    if !status?.success() || out.len() > cap {
+    let status = status?;
+    let out = recv_output(&receiver, deadline)?;
+    if !status.success() || out.len() > cap {
         return None;
     }
     String::from_utf8(out).ok()
+}
+
+/// One of the live reader slots, given back when dropped (the reader thread ends, or the run never started one).
+struct Slot(&'static AtomicUsize);
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 /// The table `ps -A -o pid=,ppid=,lstart=,comm=` printed: one process per line, the start time as five words
@@ -193,7 +239,13 @@ pub(crate) fn no_process_table_notice(candidates: &[&str]) -> Option<&'static st
 
 /// `NO_PROCESS_TABLE` when this system has no fixed `ps`.
 pub fn process_table_notice() -> Option<&'static str> {
-    no_process_table_notice(&PS_CANDIDATES)
+    process_table_notice_in(&PS_CANDIDATES)
+}
+
+/// `NO_PROCESS_TABLE` when none of `candidates` is a usable `ps` (a seam for a caller that is tested without a machine
+/// that lacks `ps`).
+pub fn process_table_notice_in(candidates: &[&str]) -> Option<&'static str> {
+    no_process_table_notice(candidates)
 }
 
 /// The process table read by running `program` (`pre` first among its arguments, for tests).

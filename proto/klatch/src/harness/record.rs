@@ -1,7 +1,7 @@
 //! The harness registry: `<pid>.json` files, one per live session. Only the `.json` files are read; the
 //! `.key` files beside them hold secrets and are never opened.
 
-use crate::harness::own_records::{read_regular_named, record_names};
+use crate::harness::own_records::{read_regular_named, scan_records};
 use crate::harness::process::squash;
 use std::path::PathBuf;
 
@@ -60,21 +60,9 @@ pub struct FsRegistry {
 
 impl Registry for FsRegistry {
     fn records(&self) -> (Vec<Record>, usize) {
-        let Some(names) = record_names(&self.dir) else {
-            return (Vec::new(), 0);
-        };
-        let mut records = Vec::new();
-        let mut malformed = 0;
-        for name in names {
-            let filed_under: u32 = name.trim_end_matches(".json").parse().unwrap_or(0);
-            // through one descriptor opened without following a symlink or blocking on a FIFO, size capped (#1567)
-            match read_regular_named(&self.dir, &name).and_then(|t| parse_record(&t)) {
-                Some(rec) if rec.pid == filed_under => records.push(rec),
-                _ => malformed += 1,
-            }
-        }
-        records.sort_by_key(|r| r.pid);
-        (records, malformed)
+        // through one descriptor opened without following a symlink or blocking on a FIFO, size capped (#1567)
+        scan_records(&self.dir, |name| read_regular_named(&self.dir, name))
+            .unwrap_or((Vec::new(), 0))
     }
 
     fn record_for(&self, pid: u32) -> Option<Record> {
