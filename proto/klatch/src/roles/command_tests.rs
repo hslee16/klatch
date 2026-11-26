@@ -229,3 +229,30 @@ fn prune_removes_the_members_not_seen_for_the_retention_for_any_member() {
         "alice was not seen for a day"
     );
 }
+
+#[test]
+fn the_audit_listing_leaves_out_the_forwarded_note_and_says_how_many_it_hid() {
+    use klatch::session::Backend;
+    let w = World::new("audit-note");
+    let t = w.admin_agent();
+    run_close(&t);
+    for _ in 0..3 {
+        w.gateway
+            .note_forwarded_ignored("requests=1 x-real-ip=1")
+            .unwrap();
+    }
+    let lines = audit_listing(&t, 20).unwrap();
+    assert!(lines.iter().any(|l| l.contains("\tclose\t")), "{lines:#?}");
+    assert!(
+        lines.iter().all(|l| !l.contains("\tforwarded-ignored\t")),
+        "{lines:#?}"
+    );
+    assert_eq!(
+        lines.last().unwrap(),
+        "3 forwarded-ignored rows hidden (operational notes; the human's `klatch admin audit --action forwarded-ignored` shows them)"
+    );
+}
+
+fn run_close(t: &Direct<SqliteStore>) {
+    act(t, ActCmd::Close { room: "r".into() }).unwrap();
+}

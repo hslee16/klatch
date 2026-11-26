@@ -355,3 +355,18 @@ fn two_prompts_with_the_same_jsonrpc_id_in_different_sessions_are_cancelled_one_
     drop(input_tx);
     served.join().unwrap().unwrap();
 }
+
+#[test]
+fn a_backend_that_does_not_override_the_forwarded_note_refuses_it_rather_than_keeping_it() {
+    let g = Gateway::new(
+        SqliteStore::open_in_memory().unwrap(),
+        SystemClock,
+        AllowAll,
+    );
+    // `AlwaysCancels` is a double that never overrides `note_forwarded_ignored` (#1649)
+    assert!(
+        AlwaysCancels(g)
+            .note_forwarded_ignored("requests=1")
+            .is_err()
+    );
+}

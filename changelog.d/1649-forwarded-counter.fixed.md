@@ -1,0 +1,1 @@
+- The forwarded-header timer no longer ends when stderr is closed, a counter snapshot never shows a name count above its request count, a counter stops at the top instead of wrapping, and a backend that does not override `note_forwarded_ignored` now refuses the note instead of reporting it kept (#1649).

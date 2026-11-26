@@ -5,7 +5,7 @@
 //! sequence numbers are the same.
 
 use super::methods::{Call, handle};
-use crate::domain::{Principal, Result};
+use crate::domain::{Error, Principal, Result};
 use crate::gateway::{Batch, Gateway, Subscription};
 use crate::protocol::ServerFrame;
 use crate::store::Store;
@@ -84,10 +84,14 @@ pub trait Backend {
     /// Keep a `member-fixed` refusal the session made for the principal (#1084): a refusal row and a look at the breaker.
     fn note_member_fixed(&self, who: &Principal);
     /// Keep the server's counts-only note of forwarded identity headers it ignored (#1490): one audit row, text of
-    /// header names and counts only (anything else is refused). Called by a timer, never per request. A backend that
-    /// keeps no audit (a test double) keeps nothing.
+    /// header names and counts only (anything else is refused). Called by a timer, never per request. There is no
+    /// default that keeps nothing: a backend that forgot to override this would have its rows read as kept (#1649, the
+    /// #485 rule), so a backend with no audit says so by refusing.
     fn note_forwarded_ignored(&self, _counts: &str) -> Result<()> {
-        Ok(())
+        Err(Error::Refused {
+            rule: "no-audit".into(),
+            reason: "this backend keeps no audit".into(),
+        })
     }
 }
 

@@ -484,6 +484,13 @@ fn policy_the_rules_a_member_was_refused_under_since_a_time_are_counted_per_memb
 }
 
 #[test]
+fn policy_the_audit_page_filters_before_the_limit_leaves_out_the_note_and_counts_what_it_hid() {
+    c::policy::the_audit_page_filters_before_the_limit_leaves_out_the_note_and_counts_what_it_hid(
+        store,
+    );
+}
+
+#[test]
 fn credentials_an_issued_credential_is_stored_with_its_hash_clearance_parent_and_expiry() {
     c::credentials::an_issued_credential_is_stored_with_its_hash_clearance_parent_and_expiry(store);
 }

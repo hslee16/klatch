@@ -1,0 +1,1 @@
+- Adds a store conformance test of the audit page (filter before limit, the note left out, the hidden count) and a test of it through the shared transport (#1654).

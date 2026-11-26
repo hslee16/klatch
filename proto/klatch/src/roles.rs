@@ -110,17 +110,38 @@ pub(crate) fn act(t: &dyn Transport, cmd: ActCmd) -> Result<()> {
 }
 
 fn audit(t: &dyn Transport, limit: usize) -> Result<()> {
-    let now = now();
-    for a in t.admin_audit(limit)? {
-        println!(
-            "{}s ago\t{}\t{}\t{}",
-            klatch::domain::secs_between(now, a.ts),
-            a.action,
-            flat(&a.target),
-            flat(&a.detail)
-        );
+    for line in audit_listing(t, limit)? {
+        println!("{line}");
     }
     Ok(())
+}
+
+/// The lines of the audit listing, newest first, the operational `forwarded-ignored` notes left out and, when there
+/// were any, one last line that says how many (#1650, as the human's `klatch admin audit` does, #1490).
+fn audit_listing(t: &dyn Transport, limit: usize) -> Result<Vec<String>> {
+    let now = now();
+    let page = t.admin_audit_page(limit, None)?;
+    let mut lines: Vec<String> = page
+        .rows
+        .iter()
+        .map(|a| {
+            format!(
+                "{}s ago\t{}\t{}\t{}",
+                klatch::domain::secs_between(now, a.ts),
+                a.action,
+                flat(&a.target),
+                flat(&a.detail)
+            )
+        })
+        .collect();
+    if page.hidden > 0 {
+        let action = klatch::store::FORWARDED_IGNORED_ACTION;
+        lines.push(format!(
+            "{} {action} rows hidden (operational notes; the human's `klatch admin audit --action {action}` shows them)",
+            page.hidden
+        ));
+    }
+    Ok(lines)
 }
 
 fn refusals(t: &dyn Transport, limit: usize) -> Result<()> {

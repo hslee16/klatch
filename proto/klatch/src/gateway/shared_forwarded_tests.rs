@@ -39,3 +39,25 @@ fn a_note_the_owner_refuses_is_an_error_to_the_caller_and_a_good_one_is_kept() {
     assert_eq!(kept.len(), 1, "{rows:?}");
     assert_eq!(kept[0].detail, "requests=2 x-real-ip=2");
 }
+
+#[test]
+fn the_audit_page_reaches_the_shared_transport_with_the_note_left_out_and_counted() {
+    let db = temp_db("fwd-shared-page");
+    let path = db.to_path_buf();
+    let gw = SharedGateway::spawn(move || {
+        let store = SqliteStore::open(&path, &crate::store::insecure_test_key())?;
+        Ok(Gateway::new(store, SystemClock, AllowAll))
+    })
+    .unwrap();
+    let t = gw.transport(Principal::verified("human"));
+    t.admin_pause(true).unwrap();
+    gw.session_backend()
+        .note_forwarded_ignored("requests=2 x-real-ip=2")
+        .unwrap();
+    let page = t.admin_audit_page(10, None).unwrap();
+    assert_eq!(page.hidden, 1);
+    assert!(page.rows.iter().all(|r| r.action != "forwarded-ignored"));
+    assert_eq!(page.rows.len(), 1, "{:?}", page.rows);
+    let only = t.admin_audit_page(10, Some("forwarded-ignored")).unwrap();
+    assert_eq!((only.rows.len(), only.hidden), (1, 0));
+}

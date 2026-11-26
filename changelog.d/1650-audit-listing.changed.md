@@ -1,0 +1,1 @@
+- `klatch role act audit` leaves out the operational `forwarded-ignored` rows and says how many it hid, and `klatch admin stats` no longer counts them as admin acts (#1650).
