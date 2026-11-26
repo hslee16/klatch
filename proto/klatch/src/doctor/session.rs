@@ -47,6 +47,18 @@ pub(super) fn check_harness(r: &mut Report) {
     }
 }
 
+/// The process table (#1629): where no `ps` is at a fixed place (NixOS, Guix) every identity check fails closed, and this
+/// says so in one fixed line. Nothing is said when there is one.
+pub(super) fn check_process_table(r: &mut Report) {
+    report_process_table(r, klatch::harness::process_table_notice());
+}
+
+pub(super) fn report_process_table(r: &mut Report, notice: Option<&'static str>) {
+    if let Some(line) = notice {
+        r.add(Status::Warn, line, None);
+    }
+}
+
 pub(super) fn check_session(r: &mut Report) {
     match klatch::member::discover_session() {
         Ok(found) => r.add(

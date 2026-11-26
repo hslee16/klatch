@@ -295,20 +295,19 @@ fn a_ps_that_hangs_is_killed_after_the_timeout_and_gives_unknown() {
 #[test]
 fn output_past_the_cap_is_unreadable_even_when_it_parses_and_exits_cleanly() {
     let d = dir("cap");
-    fs_write(&d.join("t"), TABLE);
+    // 400 rows, each of a different pid (a repeated pid is not a table) and all of one length
+    let row = "100 1 Fri Nov  6 03:04:05 2026 claude\n";
     let body = format!(
-        "i=0\nwhile [ $i -lt 400 ]; do cat '{}' 2>/dev/null; i=$((i+1)); done\nexit 0\n",
-        d.join("t").display()
+        "i=0\nwhile [ $i -lt 400 ]; do echo \"$((i+100)) 1 Fri Nov  6 03:04:05 2026 claude\"; i=$((i+1)); done\nexit 0\n"
     );
     let mut ps = fake_ps(&d, &body);
     // a cap on a row boundary: the cut output still parses, so only the cap refuses it
-    ps.limits.cap = TABLE.len() * 3;
-    assert_eq!(within_seconds(move || ps.lookup(10)), Lookup::Unreadable);
+    ps.limits.cap = row.len() * 3;
     // the same output under a roomy cap is a table: only the cap made it unreadable
     let mut roomy = fake_ps(&d, &body);
     roomy.limits.cap = 1 << 24;
     assert!(matches!(
-        within_seconds(move || roomy.lookup(10)),
+        within_seconds(move || roomy.lookup(100)),
         Lookup::Found(_)
     ));
 }
@@ -391,4 +390,90 @@ fn recording_a_codex_session_spawns_ps_once_for_the_walk_and_the_prune() {
         !out.join("20.json").exists() && !out.join("30.json").exists(),
         "the stale ones were pruned"
     );
+}
+
+#[test]
+fn a_duplicate_pid_makes_the_whole_table_unreadable() {
+    let dup = format!("{TABLE}   10     1 Sat Nov  7 11:11:11 2026 codex\n");
+    assert_eq!(
+        parse_table(&dup),
+        None,
+        "a later row must not override an earlier one"
+    );
+    // a second row for the same pid is a duplicate whether or not it names a program
+    let blank = format!("{TABLE}   10     1 Sat Nov  7 11:11:11 2026\n");
+    assert_eq!(
+        parse_table(&blank),
+        None,
+        "a nameless duplicate is a duplicate"
+    );
+}
+
+#[test]
+fn a_program_that_leaves_a_child_holding_the_pipe_does_not_defeat_the_timeout() {
+    let d = dir("forker");
+    fs_write(&d.join("t"), TABLE);
+    // prints a good table and exits at once, but leaves a sleeper that holds the output pipe open
+    let mut ps = fake_ps(
+        &d,
+        &format!("sleep 8 &\ncat '{}'\nexit 0\n", d.join("t").display()),
+    );
+    ps.limits.timeout = Duration::from_millis(300);
+    let started = Instant::now();
+    let got = within_seconds(move || ps.lookup(10));
+    assert_eq!(
+        got,
+        Lookup::Unreadable,
+        "output that never ended is not a table"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "the timeout took {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn the_test_program_needs_both_variables_and_an_absolute_path() {
+    let os = |s: &str| Some(std::ffi::OsString::from(s));
+    assert_eq!(
+        test_program_from(os("/tmp/ps"), os("1")),
+        Some(PathBuf::from("/tmp/ps"))
+    );
+    assert_eq!(
+        test_program_from(os("/tmp/ps"), None),
+        None,
+        "no second variable"
+    );
+    assert_eq!(test_program_from(None, os("1")), None);
+    assert_eq!(test_program_from(os("ps"), os("1")), None, "a bare name");
+    assert_eq!(
+        test_program_from(os("../ps"), os("1")),
+        None,
+        "a relative path"
+    );
+}
+
+#[test]
+fn this_process_does_not_read_the_test_program_without_the_second_variable() {
+    // the real reader of the environment: the variable of the seam alone (it is not set by any test of this crate)
+    assert!(std::env::var_os("KLATCH_TEST_PS").is_none());
+    assert!(std::env::var_os(SEAMS_VAR).is_none());
+    assert_eq!(test_program(), None);
+}
+
+#[test]
+fn the_missing_process_table_is_one_fixed_line_and_a_present_one_says_nothing() {
+    assert_eq!(
+        no_process_table_notice(&["/nonexistent/ps"]),
+        Some(NO_PROCESS_TABLE)
+    );
+    assert_eq!(
+        no_process_table_notice(&["ps"]),
+        Some(NO_PROCESS_TABLE),
+        "a bare name is not a ps"
+    );
+    assert_eq!(no_process_table_notice(&PS_CANDIDATES), None);
+    assert!(!NO_PROCESS_TABLE.contains('\n') && !NO_PROCESS_TABLE.contains('\u{2014}'));
+    assert!(NO_PROCESS_TABLE.contains("/bin/ps") && NO_PROCESS_TABLE.contains("/usr/bin/ps"));
 }

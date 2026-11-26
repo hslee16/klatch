@@ -71,11 +71,13 @@ pub(crate) fn run_ps(
         .ok()?;
     let stdout = child.stdout.take()?;
     let cap = limits.cap;
-    let reader = std::thread::spawn(move || {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    // detached: when a descendant of `ps` keeps the pipe open past the deadline the thread is left to end with it
+    std::thread::spawn(move || {
         let mut out = Vec::new();
         // one byte past the cap tells an overflow from an exact fit; dropping the pipe then ends the child (SIGPIPE)
         let _ = stdout.take(cap as u64 + 1).read_to_end(&mut out);
-        out
+        let _ = sender.send(out);
     });
     let deadline = Instant::now() + limits.timeout;
     let status = loop {
@@ -89,7 +91,10 @@ pub(crate) fn run_ps(
             }
         }
     };
-    let out = reader.join().ok()?;
+    // the output is complete only when the pipe is closed; a child of `ps` that holds it open cannot stretch the timeout
+    let out = receiver
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .ok()?;
     if !status?.success() || out.len() > cap {
         return None;
     }
@@ -98,15 +103,20 @@ pub(crate) fn run_ps(
 
 /// The table `ps -A -o pid=,ppid=,lstart=,comm=` printed: one process per line, the start time as five words
 /// (`Fri Nov  6 03:04:05 2026`) and the program name the rest of the line (it may hold spaces), whitespace collapsed
-/// as a read of each field alone would have it. A row with no program name is left out (that pid is missing). `None` when there is no row or any row does not parse.
+/// as a read of each field alone would have it. A row with no program name is left out (that pid is missing). `None` when there is no row, any row does not parse or a pid has two rows.
 pub(crate) fn parse_table(text: &str) -> Option<HashMap<u32, ProcInfo>> {
     let mut table = HashMap::new();
+    let mut seen = std::collections::HashSet::new();
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
         let words: Vec<&str> = line.split_whitespace().collect();
         if words.len() < 7 {
             return None;
         }
         let (pid, ppid) = (words[0].parse().ok()?, words[1].parse().ok()?);
+        if !seen.insert(pid) {
+            // two rows for one pid: which one is true is not knowable, so the table is not believed (#1629)
+            return None;
+        }
         let command = words[7..].join(" ");
         if command.is_empty() {
             // `ps -o comm=` for this pid printed nothing: the per-pid read called such a process missing
@@ -140,19 +150,48 @@ impl ProcessTable for Snapshot {
     }
 }
 
+/// The variable that must be set, besides `KLATCH_TEST_PS`, for the stand-in to be read (the way `KLATCH_TEST_SHORT_LIMITS`
+/// is a second condition on a debug build): a debug binary a person runs for real never reads `KLATCH_TEST_PS` by default.
+pub(crate) const SEAMS_VAR: &str = "KLATCH_TEST_SEAMS";
+
+/// The stand-in `ps` named by `ps_var` when `seams` is set too and the value is an absolute path.
+fn test_program_from(
+    ps_var: Option<std::ffi::OsString>,
+    seams: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    seams?;
+    ps_var.map(PathBuf::from).filter(|p| p.is_absolute())
+}
+
 /// A `ps` stand-in named by `KLATCH_TEST_PS`, so an integration test can count or fake the calls (it cannot put a `ps` on
-/// PATH any more, #1568). Only in a build with debug assertions: a release build has no such variable, and the value must
-/// be an absolute path.
+/// PATH any more, #1568). Only in a build with debug assertions, and only with `KLATCH_TEST_SEAMS` set as well: a release
+/// build has no such variable, and the value must be an absolute path.
 #[cfg(debug_assertions)]
 fn test_program() -> Option<PathBuf> {
-    std::env::var_os("KLATCH_TEST_PS")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
+    test_program_from(
+        std::env::var_os("KLATCH_TEST_PS"),
+        std::env::var_os(SEAMS_VAR),
+    )
 }
 
 #[cfg(not(debug_assertions))]
 fn test_program() -> Option<PathBuf> {
     None
+}
+
+/// What doctor says when no `ps` is at a fixed place (NixOS, Guix): every identity check then fails closed.
+pub const NO_PROCESS_TABLE: &str = "process table: no ps at /bin/ps or /usr/bin/ps, so no session can be verified (klatch never searches PATH for ps)";
+
+/// `NO_PROCESS_TABLE` when none of `candidates` is a usable `ps`, else `None`.
+pub(crate) fn no_process_table_notice(candidates: &[&str]) -> Option<&'static str> {
+    fixed_ps_in(candidates)
+        .is_none()
+        .then_some(NO_PROCESS_TABLE)
+}
+
+/// `NO_PROCESS_TABLE` when this system has no fixed `ps`.
+pub fn process_table_notice() -> Option<&'static str> {
+    no_process_table_notice(&PS_CANDIDATES)
 }
 
 /// The process table read by running `program` (`pre` first among its arguments, for tests).

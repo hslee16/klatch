@@ -1,7 +1,7 @@
 //! The harness registry: `<pid>.json` files, one per live session. Only the `.json` files are read; the
 //! `.key` files beside them hold secrets and are never opened.
 
-use crate::harness::own_records::{MAX_ENTRIES, read_regular_named};
+use crate::harness::own_records::{read_regular_named, record_names};
 use crate::harness::process::squash;
 use std::path::PathBuf;
 
@@ -60,16 +60,12 @@ pub struct FsRegistry {
 
 impl Registry for FsRegistry {
     fn records(&self) -> (Vec<Record>, usize) {
-        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+        let Some(names) = record_names(&self.dir) else {
             return (Vec::new(), 0);
         };
         let mut records = Vec::new();
         let mut malformed = 0;
-        let names = entries
-            .flatten()
-            .filter_map(|e| e.file_name().into_string().ok())
-            .filter(|n| is_record_file(n));
-        for name in names.take(MAX_ENTRIES) {
+        for name in names {
             let filed_under: u32 = name.trim_end_matches(".json").parse().unwrap_or(0);
             // through one descriptor opened without following a symlink or blocking on a FIFO, size capped (#1567)
             match read_regular_named(&self.dir, &name).and_then(|t| parse_record(&t)) {
@@ -264,5 +260,45 @@ mod tests {
             reg_at(&d).records(),
             (vec![reg_at(&d).record_for(19479).unwrap()], 0)
         );
+    }
+
+    #[test]
+    fn with_more_records_than_the_bound_a_live_session_is_not_hidden_by_old_ones() {
+        let d = tmp("newest");
+        let max = crate::harness::own_records::MAX_ENTRIES;
+        let n = max + 44;
+        let now = std::time::SystemTime::now();
+        for i in 0..n {
+            let pid = 1000 + i;
+            let file = d.join(format!("{pid}.json"));
+            std::fs::write(&file, GOOD.replace("19479", &pid.to_string())).unwrap();
+            // a shuffled age, whole minutes apart: directory order says nothing about it
+            let rank = (i * 7919) % n;
+            let when = now - std::time::Duration::from_secs(100_000 - 60 * rank as u64);
+            std::fs::File::options()
+                .write(true)
+                .open(&file)
+                .unwrap()
+                .set_modified(when)
+                .unwrap();
+        }
+        let (records, _) = reg_at(&d).records();
+        assert_eq!(records.len(), max);
+        let newest: Vec<u32> = (0..n)
+            .filter(|i| (i * 7919) % n >= n - max)
+            .map(|i| 1000 + i as u32)
+            .collect();
+        let got: Vec<u32> = records.iter().map(|r| r.pid).collect();
+        assert_eq!(got, newest, "a live (newest) record was not read");
+    }
+
+    #[test]
+    fn junk_entries_do_not_hide_a_record() {
+        let d = tmp("junk");
+        for i in 0..3000 {
+            std::fs::write(d.join(format!("junk-{i}.txt")), "x").unwrap();
+        }
+        std::fs::write(d.join("19479.json"), GOOD).unwrap();
+        assert_eq!(reg_at(&d).records().0.len(), 1);
     }
 }
