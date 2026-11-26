@@ -8,7 +8,9 @@ use std::process::Command;
 
 fn git(args: &[&str]) -> Option<String> {
     let out = Command::new("git").args(args).output().ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 fn commit() -> String {
@@ -17,10 +19,12 @@ fn commit() -> String {
     if dir.is_empty() || Path::new(&dir).join(".cargo_vcs_info.json").exists() {
         return "unknown".into();
     }
-    let Some(sha) = git(&["-C", &dir, "rev-parse", "--short=12", "HEAD"]).filter(|s| !s.is_empty()) else {
+    let Some(sha) = git(&["-C", &dir, "rev-parse", "--short=12", "HEAD"]).filter(|s| !s.is_empty())
+    else {
         return "unknown".into();
     };
-    let dirty = git(&["-C", &dir, "status", "--porcelain", "--untracked-files=no"]).is_some_and(|s| !s.is_empty());
+    let dirty = git(&["-C", &dir, "status", "--porcelain", "--untracked-files=no"])
+        .is_some_and(|s| !s.is_empty());
     if dirty { format!("{sha}-dirty") } else { sha }
 }
 
@@ -47,7 +51,11 @@ fn main() {
     }
     // A packager without git (or with a vendored tree) can state the commit itself; it is data, never a command.
     let c = match std::env::var("KLATCH_BUILD_COMMIT") {
-        Ok(v) if !v.trim().is_empty() => v.trim().chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect(),
+        Ok(v) if !v.trim().is_empty() => v
+            .trim()
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect(),
         _ => commit(),
     };
     println!("cargo:rustc-env=KLATCH_BUILD_COMMIT={c}");

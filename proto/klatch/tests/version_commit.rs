@@ -12,7 +12,10 @@ fn version_line() -> String {
 
 /// The commit field: a short hex sha with an optional `-dirty` marker, or `unknown` when git was not available.
 fn commit_field(line: &str) -> String {
-    let rest = line.split("(commit ").nth(1).unwrap_or_else(|| panic!("no commit in: {line}"));
+    let rest = line
+        .split("(commit ")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no commit in: {line}"));
     rest.split([',', ')']).next().unwrap().to_string()
 }
 
@@ -20,8 +23,14 @@ fn commit_field(line: &str) -> String {
 fn version_names_the_build_commit_and_keeps_the_leading_version() {
     let line = version_line();
     let version = env!("CARGO_PKG_VERSION");
-    assert!(line.starts_with(&format!("klatch {version} (commit ")), "{line}");
-    assert!(line.contains(", protocol ") && line.contains(", store schema "), "{line}");
+    assert!(
+        line.starts_with(&format!("klatch {version} (commit ")),
+        "{line}"
+    );
+    assert!(
+        line.contains(", protocol ") && line.contains(", store schema "),
+        "{line}"
+    );
     let c = commit_field(&line);
     let sha = c.strip_suffix("-dirty").unwrap_or(&c);
     let ok = sha == "unknown" || (sha.len() >= 7 && sha.chars().all(|ch| ch.is_ascii_hexdigit()));
@@ -31,7 +40,9 @@ fn version_names_the_build_commit_and_keeps_the_leading_version() {
 #[test]
 fn in_a_git_checkout_the_commit_is_the_real_head() {
     let manifest = env!("CARGO_MANIFEST_DIR");
-    let head = Command::new("git").args(["-C", manifest, "rev-parse", "--short=12", "HEAD"]).output();
+    let head = Command::new("git")
+        .args(["-C", manifest, "rev-parse", "--short=12", "HEAD"])
+        .output();
     let Ok(head) = head else { return };
     if !head.status.success() {
         return;
@@ -39,5 +50,8 @@ fn in_a_git_checkout_the_commit_is_the_real_head() {
     let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
     let c = commit_field(&version_line());
     let sha = c.strip_suffix("-dirty").unwrap_or(&c);
-    assert!(head.starts_with(sha) || sha.starts_with(&head), "head {head} but --version says {c}");
+    assert!(
+        head.starts_with(sha) || sha.starts_with(&head),
+        "head {head} but --version says {c}"
+    );
 }
