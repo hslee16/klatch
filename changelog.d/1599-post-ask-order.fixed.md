@@ -1,0 +1,1 @@
+- An ask that carries refs is now authorized and throttled before any ref is judged: a member who is removed, stopped, throttled or not cleared for the room gets that refusal whether the ref names a message that exists or not, so the label check on a message or room ref is no longer an unthrottled probe for what exists (#1599).

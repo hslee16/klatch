@@ -340,3 +340,74 @@ fn a_message_ref_into_the_asks_own_room_is_not_judged_against_the_ask_label() {
     );
     assert!(asked.is_ok(), "{asked:?}");
 }
+
+/// A vault room above the label, one message in it, and a public room `r` bob and alice are in (#1599).
+fn vault_and_a_hit(g: &Gateway<SpyStore>) -> String {
+    g.join(&alice(), "r").unwrap();
+    g.join(&bob(), "r").unwrap();
+    g.admin_set_room_label(&admin(), "vault", "private")
+        .unwrap();
+    g.admin_set_clearance(&admin(), "alice", "private").unwrap();
+    g.join(&alice(), "vault").unwrap();
+    g.post(&alice(), "vault", "hidden").unwrap().id
+}
+
+fn probe(g: &Gateway<SpyStore>, id: &str) -> String {
+    let e = g
+        .post_ask(&bob(), ("r", "seeking: x", None), None, &[r("message", id)])
+        .unwrap_err();
+    rule_of(e)
+}
+
+#[test]
+fn a_removed_member_gets_the_same_refusal_for_a_hit_and_a_miss() {
+    let g = open();
+    let hit = vault_and_a_hit(&g);
+    g.admin_remove_member(&admin(), "r", "bob").unwrap();
+    assert_eq!(probe(&g, &hit), "admin-block");
+    assert_eq!(probe(&g, "no-such-id"), "admin-block");
+    assert_eq!(probe(&g, "no-such-id"), probe(&g, &hit));
+}
+
+#[test]
+fn a_paused_gateway_gives_the_same_refusal_for_a_hit_and_a_miss() {
+    let g = open();
+    let hit = vault_and_a_hit(&g);
+    g.admin_pause(&admin(), true).unwrap();
+    assert_eq!(probe(&g, &hit), "admin-pause");
+    assert_eq!(probe(&g, "no-such-id"), "admin-pause");
+}
+
+#[test]
+fn a_throttled_member_gets_the_rate_refusal_for_a_hit_and_a_miss() {
+    let g = open();
+    let hit = vault_and_a_hit(&g);
+    g.admin_set_rate_limit(&admin(), Some((1, 3600))).unwrap();
+    g.post(&bob(), "r", "one").unwrap();
+    assert_eq!(probe(&g, &hit), "rate-limit");
+    assert_eq!(probe(&g, "no-such-id"), "rate-limit");
+}
+
+#[test]
+fn a_member_without_clearance_for_the_room_never_reaches_the_ref_check() {
+    let g = open();
+    let hit = vault_and_a_hit(&g);
+    let e = g
+        .post_ask(
+            &bob(),
+            ("vault", "seeking: x", None),
+            None,
+            &[r("message", &hit)],
+        )
+        .unwrap_err();
+    let miss = g
+        .post_ask(
+            &bob(),
+            ("vault", "seeking: x", None),
+            None,
+            &[r("message", "no-such-id")],
+        )
+        .unwrap_err();
+    assert_eq!(format!("{e:?}"), format!("{miss:?}"));
+    assert_eq!(rule_of(e), "clearance");
+}
