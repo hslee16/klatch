@@ -15,6 +15,7 @@
   "test_command": "python3 -m unittest discover -s tests -t .",
   "checker": "history",
   "generator_sources": ["build_history.py", "gen_code.py", "gen_facts.py", "gen_room.py"],
+  "seeded_facts": {"default_seed": 20261124, "outputs": ["history.json", "room.json", "reference", "variants"], "checker_files": ["facts.json"]},
   "est_cost_usd_haiku": 0.3,
   "fake": "fake.json"
 }

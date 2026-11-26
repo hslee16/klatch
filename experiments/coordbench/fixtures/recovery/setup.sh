@@ -3,7 +3,7 @@
 # package with four stub modules, a visible test file per module, README.md and docs/FORMATS.md. The harness does the git
 # init, the first commit and the push to the per-run bare origin; this script makes no git calls and touches nothing
 # outside DEST. Only template/ is copied: reference/ (the solution the checker is validated against) stays out of every
-# checkout. SEED is unused: the fixture is the same in every run.
+# checkout. SEED is unused here: the hidden facts are in private/, reference/ and the seed or fake files, which the harness draws from the run's seed (gen_facts.py, #1531).
 set -euo pipefail
 dest="${1:?usage: setup.sh DEST SEED}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

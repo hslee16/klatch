@@ -133,6 +133,17 @@ fixture in the repository layout so a checkout never contains them). A fixture i
 result (`fixture.sha256`, defined in section 7.1 under `fixture_hash_version`). A fixture is frozen for a milestone (section 11,
 contamination).
 
+Hidden facts are drawn from the run seed (#1531). The arbitrary facts that a fixture hides from the agents (F4 specialists, F6
+recovery and F9 history: constants, an index map, decisions in a record) are not committed once for every run: the fixture's
+`gen_facts.py` draws them from the run's seed (`generate(seed)`), so a fact learned or leaked in one run is not valid in the next
+and a model that has seen a fixture cannot recall it. The harness writes each run's files (private files, reference, seed and
+room files, the prebuilt history through setup.sh's SEED, the fake script) and the checker's facts under a directory of the run's
+scratch that no agent can read (random name, mode 0300 while agents run, guarded by the sandbox and the post-run scan), and the
+checker reads its facts from the file named by `COORDBENCH_FACTS`; the facts are never in a path an agent can read, except that
+an agent has its own role's private file in its own clone. The arms of one block share the run seed, so they get the same facts.
+The committed files are the default seed's copy (`gen_facts.py --check`), used by `--committed-facts`, a flag only the fake
+driver accepts, so a paid run always draws from its seed.
+
 The numbers each scenario records are the metrics of section 5. "Primary" below is the metric the scenario's claim rests
 on; the others are secondary.
 
@@ -441,7 +452,7 @@ one in `supersedes`. `<milestone>` is `m0`, `epic-<ticket>`, or `release-<versio
   "arm_text_version": "1",
   "arm_text_sha256": "...",
   "fixture": {"name": "onefile", "sha256": "...", "checker_sha256": "..."},
-  "fixture_hash_version": 2,
+  "fixture_hash_version": 3,
   "prompt_sha256": {"a": "...", "b": "...", "c": "..."},
   "seed": 4207,
   "metric_version": 2,
@@ -481,13 +492,19 @@ primary). `integration_ok` is present only for a scenario that names `integratio
 estimate record described under the metric. `report.py` never pools versions: older records appear as `SCENARIO [metric vN]`,
 the scaling table uses the newest only, and a comparison of analyses of different versions says so.
 
-`fixture_hash_version` (#1516, #1510) is 2 for records made with this definition; a record without the field is version 1. The
+`fixture_hash_version` (#1516, #1510, #1531) is 3 for records made with this definition; a record without the field is version 1,
+and version 2 is the definition below without the rule for seeded fixtures (the last two sentences of this paragraph). The
 hash `fixture.sha256` covers the files of the fixture directory an agent can receive or that decide the outcome (setup.sh,
 template/, task texts, private/, seed and history files, fixture.json, and reference/, which no agent gets but which the checker
 is validated against), plus, for a generated fixture, the generator's output (template, reference, tasks, scenario map) and,
 for a prebuilt history, the commit ids made in B0 and B1. It does not cover generator sources (declared under
 `generator_sources` in fixture.json; their output is committed and `--check`ed or hashed), `__pycache__`, `*.pyc` or editor
-leftovers, so refactoring a generator changes no hash. `fixture.checker_sha256` hashes the hidden checker directory;
+leftovers, so refactoring a generator changes no hash. A fixture with seeded hidden facts (specialists, recovery, history; section 3)
+differs: the files that carry the facts (`seeded_facts.outputs` in fixture.json) are not hashed because they differ per seed, its
+generator sources are hashed because they define what a seed makes, and the prebuilt history's commit ids are left out; the facts
+a run had are `fixture.seed` and `fixture.facts_sha256` (a hash of every file the seed generates), so a run is reproducible from
+(`fixture.sha256`, `fixture.seed`). A record of a fixture without seeded facts has neither field, and an old record has neither
+(the validator and the report tolerate their absence). `fixture.checker_sha256` hashes the hidden checker directory;
 `prompt_sha256` hashes each agent's built prompt with the run's own paths and room as placeholders. Version 1 hashed the
 whole directory including generator sources and bytecode and had neither of the other two. `report.py` never pools versions
 (`SCENARIO [fixture hash vN]`) and flags a comparison across versions.

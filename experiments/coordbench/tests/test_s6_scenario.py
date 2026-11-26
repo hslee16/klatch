@@ -107,6 +107,7 @@ class S6Base(Base):
     def argv(self, arms="B0", runs=1, **kw):
         a = super().argv(arms, runs, **kw)
         a[a.index("--fixture") + 1] = "recovery"
+        a.append("--committed-facts")  # these scripts name the committed default-seed facts (#1531)
         return a
 
     def records(self):

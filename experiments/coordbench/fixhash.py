@@ -1,6 +1,7 @@
 """What the fixture hash covers (#1516, #1510) and what the report does with the hash version of a record.
 
-FIXTURE_HASH_VERSION 2 (records of version 1 have no `fixture_hash_version` field):
+FIXTURE_HASH_VERSION 3 (#1531; records of version 1 have no `fixture_hash_version` field, version 2 is the definition below
+without the rule for seeded fixtures at the end of this docstring):
 
   covered     every file of the fixture directory an agent can receive or that decides the outcome: setup.sh, template/, the
               task texts, private/, seed and history files, fixture.json (with the declared `generator_sources`), and
@@ -13,17 +14,27 @@ FIXTURE_HASH_VERSION 2 (records of version 1 have no `fixture_hash_version` fiel
               refactoring a generator changes no hash unless it changes what it makes; `__pycache__`, `*.pyc`, `*.pyo` and
               editor leftovers (`.DS_Store`, `*~`, `*.swp`, `#*#`, `.#*`)
   checker     the hidden checker directory checks/<name>/ is hashed apart as `fixture.checker_sha256` (same skip rules)
+  seeded      (#1531) a fixture with a `seeded_facts` key in fixture.json (specialists, recovery, history) draws its hidden facts from
+              the run's seed (SPEC section 3, "hidden facts are drawn from the run seed"): the files that carry them (its
+              `seeded_facts.outputs`: private files, reference, seed and room files, the history file, the fake script) are NOT
+              hashed, because they differ per seed, and its generator sources ARE hashed (they are the definition of what a
+              seed makes, so a comment edit in one changes the hash); the prebuilt history's commit ids are left out (they
+              differ per seed). The checker hash leaves out the committed default-seed facts file (`seeded_facts.checker_files`).
+              What a run's facts were is the record's `fixture.seed` and `fixture.facts_sha256` (sha256 of every file the
+              seed generates, see Fixture.facts_sha256): a run is reproducible from (fixture hash, fixture.seed)
   prompts     `prompt_sha256` {agent: sha256 of the agent's built prompt}, with the run's own working directory, binary path,
               room and restart command left as placeholders, so it says which arm text and task an agent was given
 
-Version 1 hashed the whole directory, generator sources and bytecode included, and not the checker. The report never pools
+Version 1 hashed the whole directory, generator sources and bytecode included, and not the checker. Version 2 to 3: for the three
+seeded fixtures only, the hash changed meaning as described under "seeded"; every other fixture hashes the same bytes, so only
+its version number changed, and the report does not pool the versions. The report never pools
 records of different versions (split_scenarios), exactly like metric_version (metricver.py)."""
 import hashlib
 import os
 
 import metricver
 
-FIXTURE_HASH_VERSION = 2
+FIXTURE_HASH_VERSION = 3
 
 SKIP_DIRS = ("__pycache__",)
 SKIP_SUFFIXES = (".pyc", ".pyo", "~", ".swp", ".swo", ".swx")
@@ -37,13 +48,14 @@ def skipped(name):
 
 
 def tree_update(h, root, omit=()):
-    """Feed relative paths and bytes of the files under root (sorted; skipped files and the paths in omit left out) into h."""
+    """Feed relative paths and bytes of the files under root (sorted; skipped files and the paths in omit, a file or a directory
+    with all it holds, left out) into h."""
     for d, dirs, files in os.walk(root):
         dirs[:] = sorted(x for x in dirs if x not in SKIP_DIRS)
         for n in sorted(files):
             p = os.path.join(d, n)
             rel = os.path.relpath(p, root)
-            if skipped(n) or rel in omit:
+            if skipped(n) or any(rel == o or rel.startswith(o + os.sep) for o in omit):
                 continue
             h.update(rel.encode() + b"\0")
             with open(p, "rb") as f:

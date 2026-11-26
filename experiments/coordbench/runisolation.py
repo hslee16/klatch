@@ -8,6 +8,7 @@ Layout of the run scratch directory (mode 0300 while agents run, see isolation.p
     <scratch>/agents/<token>   the ONE CLAUDE_CONFIG_DIR of every agent of a B1 or B1-roles run (#1520, see shared_config)
     <scratch>/origin.git, klatch-home, klatch-keys, bin (the restart script), restart, pwned (S10)
 """
+import copy
 import os
 import shutil
 import stat
@@ -37,6 +38,25 @@ class IsolationSupport:
         self.iso_mode = getattr(self.a, "isolation", "sandbox")
         self.iso_result = None
         self.shared_cfg = None
+        self.facts_dir = None
+
+    def prepare_facts(self):
+        """#1531: a fixture with seeded hidden facts gets this run's facts (drawn from the run's seed) written under a directory of the
+        scratch with a random name, which is hidden from listing while the agents run (hide_run), guarded like the rest of the
+        scratch (guard_dirs, the sandbox and the scan), and never inside an agent's clone, home, tmp or the log directory. The
+        private files, the seed and room files and the fake script come from it; the checker's facts file is passed through the
+        environment (Fixture.run_checker). Nothing is written for a fixture whose facts are not seeded."""
+        self.setup_seed = self.seed
+        if not self.fx.seeded:
+            return
+        self.facts_dir = os.path.join(self.scratch, "facts-" + isolation.token())
+        os.makedirs(self.facts_dir, mode=0o700)
+        seed = self.fx.facts_seed(self.seed, getattr(self.a, "committed_facts", False))
+        self.setup_seed = seed
+        self.fx = self.fx.with_facts(seed, self.facts_dir)
+        if self.driver.name == "fake" and not getattr(self.a, "fake_script", None) and self.fx.fake_script:
+            self.driver = copy.copy(self.driver)
+            self.driver.script_path = os.path.abspath(self.fx.fake_script)
 
     # layout --------------------------------------------------------------------------------------------------
 
@@ -130,12 +150,16 @@ class IsolationSupport:
         harness's own git and checker runs are not slowed by a hidden parent."""
         os.makedirs(self.agents_root(), exist_ok=True)
         isolation.hide(self.agents_root())
+        if self.facts_dir:
+            isolation.hide(self.facts_dir)
         if not self.driver.lists_logs:
             isolation.hide(self.log_dir)
 
     def show_run(self):
         isolation.restore(self.agents_root())
         isolation.restore(self.log_dir)
+        if self.facts_dir:
+            isolation.restore(self.facts_dir)
 
     # who may name what ---------------------------------------------------------------------------------------
 

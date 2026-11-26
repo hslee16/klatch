@@ -26,7 +26,8 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SEED = 20261124
-FACTS_PATH = os.path.join(HERE, "facts.json")
+DEFAULT_FACTS_PATH = os.path.join(HERE, "facts.json")
+FACTS_PATH = os.environ.get("COORDBENCH_FACTS") or DEFAULT_FACTS_PATH  # #1531: the run's facts, written outside the agents' reach
 MODULE_DIR = "parcelkit"
 FACT_IDS = {"TAG": "fact-file-name", "PAGE_ROWS": "fact-page-size", "TARE_G": "fact-tare"}
 UNIT_ORDER = ["ticket-7-works", "fact-file-name", "fact-page-size", "fact-tare"]

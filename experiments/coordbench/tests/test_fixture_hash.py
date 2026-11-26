@@ -52,8 +52,8 @@ class Copy(unittest.TestCase):
 
 
 class WhatTheHashCovers(Copy):
-    def test_the_version_is_two(self):
-        self.assertEqual(fixhash.FIXTURE_HASH_VERSION, 2)
+    def test_the_version_is_three(self):
+        self.assertEqual(fixhash.FIXTURE_HASH_VERSION, 3)  # #1531: the rule for fixtures with seeded facts
 
     def test_bytecode_and_editor_leftovers_do_not_change_the_hash(self):
         for name, variant in (("trivial", None), ("chain", None), ("scale", "n2")):
@@ -90,9 +90,8 @@ class WhatTheHashCovers(Copy):
         self.assertFalse(os.path.exists(os.path.join(self.fixtures, "scale", "__pycache__")))
 
     def test_a_comment_edit_in_a_generator_source_does_not_change_the_hash(self):
-        for name, variant, sources in (("chain", None, ["gen.py"]), ("specialists", None, ["gen_facts.py"]),
-                                       ("history", None, ["gen_facts.py", "gen_code.py", "gen_room.py", "build_history.py"]),
-                                       ("recovery", None, ["gen_facts.py"]), ("scale", "n2", ["gen.py"])):
+        # the three fixtures with seeded facts hash their generator sources instead (#1531, test_seeded_facts.py)
+        for name, variant, sources in (("chain", None, ["gen.py"]), ("scale", "n2", ["gen.py"])):
             before = self.fx(name, variant).sha256()
             for s in sources:
                 self.edit("fixtures", name, s, append="\n# a comment that changes no output\n")
@@ -100,7 +99,7 @@ class WhatTheHashCovers(Copy):
 
     def test_changing_a_committed_generated_file_changes_the_hash(self):
         for name, rel in (("chain", "template/data.json"), ("specialists", "private/a/facts.json"),
-                          ("history", "history.json"), ("recovery", "fake.json.in")):
+                          ("recovery", "fake.json.in")):  # history.json and the other seeded files are not hashed (#1531)
             path = os.path.join(self.fixtures, name, rel)
             if not os.path.exists(path):
                 continue
