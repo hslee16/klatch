@@ -60,6 +60,7 @@
       "proto/klatch/src/lib.rs",
       "proto/klatch/src/main.rs",
       "proto/klatch/src/mediator.rs",
+      "proto/klatch/src/mediator/**",
       "proto/klatch/src/roles.rs",
       "proto/klatch/src/router.rs",
       "proto/klatch/src/run.rs",
