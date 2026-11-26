@@ -329,8 +329,10 @@ cmd_ensure() {
     # The receiver binds its port BEFORE it claims watch:gh, so "up" can be momentary: a refused receiver exits 2 a moment
     # later. With a claim to take, wait for its verdict (a claim line in the log) or for the process to end (#1601).
     case " ${rest[*]-} " in *" --klatch-bin "*) i=0
-      while [ "$i" -lt 100 ] && kill -0 "$child" 2>/dev/null \
-          && ! tail -c +"$((log_before + 1))" "$out_dir/gh-watch.log" 2>/dev/null | grep -q -E 'watcher claim|second receiver refused'; do
+      local fresh_log=""
+      while [ "$i" -lt 100 ] && kill -0 "$child" 2>/dev/null; do
+        fresh_log="$(tail -c +"$((log_before + 1))" "$out_dir/gh-watch.log" 2>/dev/null)"
+        case "$fresh_log" in *"watcher claim"* | *"second receiver refused"*) break ;; esac
         i=$((i + 1)); sleep 0.1
       done ;;
     esac
