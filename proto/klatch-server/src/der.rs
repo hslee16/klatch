@@ -172,3 +172,48 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     era * 146_097 + doe - 719_468
 }
+
+/// `[0]` constructed: the optional `version` of a `tbsCertificate`.
+const VERSION: u8 = 0xa0;
+const BIT_STRING: u8 = 0x03;
+
+/// The subject name (its DER content) of an X.509 certificate, for matching a CRL's issuer (#1623): `Certificate ::=
+/// SEQUENCE { tbsCertificate SEQUENCE { version [0] OPTIONAL, serialNumber INTEGER, signature AlgorithmIdentifier,
+/// issuer Name, validity SEQUENCE, subject Name, ... }, signatureAlgorithm SEQUENCE, signatureValue BIT STRING }`. The
+/// bytes returned are what rustls-webpki compares with a CRL's issuer (byte for byte). A fixed walk, never into a child
+/// that is not the subject, so it recurses nowhere and allocates nothing. Any other shape is `None`: a certificate that
+/// is not where X.509 puts its fields, with anything after it, or with a length that is not definite and minimal.
+/// It reads the NAME only: it never checks a signature, a validity or a key usage, because a name match is not a trust
+/// decision (the certificates this is read from are never trust anchors).
+pub fn subject_of(cert: &[u8]) -> Option<&[u8]> {
+    let (tag, body, after) = tlv(cert)?;
+    if tag != SEQUENCE || !after.is_empty() {
+        return None;
+    }
+    let (tag, tbs, outer_rest) = tlv(body)?;
+    if tag != SEQUENCE {
+        return None;
+    }
+    let (tag, _, outer_rest) = tlv(outer_rest)?;
+    let (sig_tag, _, outer_rest) = tlv(outer_rest)?;
+    if tag != SEQUENCE || sig_tag != BIT_STRING || !outer_rest.is_empty() {
+        return None;
+    }
+    let (mut tag, _, mut rest) = tlv(tbs)?;
+    if tag == VERSION {
+        (tag, _, rest) = tlv(rest)?;
+    }
+    if tag != INTEGER {
+        return None;
+    }
+    // signature, issuer and validity: three SEQUENCEs, then the subject
+    for _ in 0..3 {
+        let (tag, _, next) = tlv(rest)?;
+        if tag != SEQUENCE {
+            return None;
+        }
+        rest = next;
+    }
+    let (tag, subject, _) = tlv(rest)?;
+    (tag == SEQUENCE).then_some(subject)
+}
