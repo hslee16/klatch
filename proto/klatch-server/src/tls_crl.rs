@@ -23,7 +23,7 @@
 //! `nextUpdate` has passed (it is enforced: its issuer's clients are refused), one due within seven days (`SOON_SECS`),
 //! and one whose issuer is the subject of no CA in the client CA file (`ca_subjects`, the trust anchors' subjects, byte
 //! for byte as webpki compares): it still applies to clients that present an intermediate CA of that name, which is
-//! how an intermediate's CRL works with a root-only CA file, so it is not refused. There is no periodic re-check
+//! how an intermediate's CRL works with a root-only CA file, so it is not refused. With `--tls-client-intermediates` (#1623: certificates whose SUBJECT NAMES only match CRL issuers, never trust anchors, never used to build or verify a chain) that warning becomes a refusal for an issuer that is neither a CA subject nor a listed subject. There is no periodic re-check
 //! (SIGHUP reloads, #1492).
 //!
 //! **Policy** (rustls `WebPkiClientVerifier`, set in `tls.rs`):
@@ -74,10 +74,18 @@ pub enum Stage {
 pub fn read_crls_at(
     path: &Path,
     ca_subjects: &[&[u8]],
+    intermediates: Option<&[&[u8]]>,
     now: i64,
     stage: Stage,
 ) -> Result<(Vec<CertificateRevocationListDer<'static>>, Option<i64>)> {
-    read_crls_as(path, ca_subjects, now, stage, crate::tls::euid())
+    read_crls_as(
+        path,
+        ca_subjects,
+        intermediates,
+        now,
+        stage,
+        crate::tls::euid(),
+    )
 }
 
 /// [`read_crls_at`] for a server running as `euid`, which the caller names so that the owner check at the call site can be
@@ -85,6 +93,7 @@ pub fn read_crls_at(
 pub(crate) fn read_crls_as(
     path: &Path,
     ca_subjects: &[&[u8]],
+    intermediates: Option<&[&[u8]]>,
     now: i64,
     stage: Stage,
     euid: u32,
@@ -150,7 +159,7 @@ pub(crate) fn read_crls_as(
         bail!("the client CRL file {shown} holds no CRL (a PEM block X509 CRL)");
     }
     check_one_per_issuer(&crls, path)?;
-    let notices = check_cas_and_times(&crls, ca_subjects, now, path)?;
+    let notices = check_cas_and_times(&crls, ca_subjects, intermediates, now, path)?;
     let reload = matches!(stage, Stage::Reload { .. });
     for (n, notice) in &notices {
         // an expiry at a reload is an alert: it is a lock-out the operator just caused or kept
@@ -208,6 +217,7 @@ pub enum Notice {
 fn check_cas_and_times(
     crls: &[CertificateRevocationListDer<'_>],
     ca_subjects: &[&[u8]],
+    intermediates: Option<&[&[u8]]>,
     now: i64,
     path: &Path,
 ) -> Result<Vec<(usize, Notice)>> {
@@ -233,7 +243,14 @@ fn check_cas_and_times(
             ),
         };
         if !ca_subjects.contains(&issuer) {
-            notices.push((n, Notice::NoCa));
+            match intermediates {
+                // the strict option (#1623): an issuer that is no anchor and no listed intermediate is refused
+                Some(listed) if !listed.contains(&issuer) => bail!(
+                    "the client CRL file {shown} holds a CRL (number {n}) whose issuer matches no CA in the client CA file and no certificate in the client intermediates file: it would do nothing; list its issuer certificate in the client intermediates file, or remove the CRL"
+                ),
+                Some(_) => {}
+                None => notices.push((n, Notice::NoCa)),
+            }
         }
         if at <= now {
             notices.push((n, Notice::Expired));
@@ -386,7 +403,7 @@ mod tests {
         crls: &[CertificateRevocationListDer<'_>],
         subjects: &[&[u8]],
     ) -> Result<Vec<(usize, Notice)>> {
-        check_cas_and_times(crls, subjects, NOW, Path::new("/x/crl.pem"))
+        check_cas_and_times(crls, subjects, None, NOW, Path::new("/x/crl.pem"))
     }
 
     #[test]
@@ -436,6 +453,37 @@ mod tests {
             check(&both, &[b"ca"]).unwrap(),
             vec![(1, Notice::NoCa), (1, Notice::Expired)]
         );
+    }
+
+    #[test]
+    fn with_listed_intermediates_a_crl_of_an_unknown_issuer_is_refused_and_a_listed_or_anchor_issuer_is_not()
+     {
+        let path = Path::new("/x/crl.pem");
+        let crls = [due(b"inter", Some(30 * 86_400))];
+        let strict = |cas: &[&[u8]], listed: &[&[u8]]| {
+            check_cas_and_times(&crls, cas, Some(listed), NOW, path)
+        };
+        // listed: no warning and no refusal; an anchor of the CA file: the same, whatever is listed
+        assert!(strict(&[b"ca"], &[b"inter"]).unwrap().is_empty());
+        assert!(strict(&[b"inter"], &[b"other"]).unwrap().is_empty());
+        // neither: refused, in words, with the CRL's number and no name
+        for (cas, listed) in [
+            (&[&b"ca"[..]][..], &[&b"other"[..]][..]),
+            (&[], &[]),
+            (&[b"ca"], &[b"inte"]),
+        ] {
+            let err = strict(cas, listed).expect_err("refused").to_string();
+            assert!(err.contains("(number 1) whose issuer matches no CA in the client CA file and no certificate in the client intermediates file"), "{err}");
+            assert!(
+                !err.contains("inter\u{0}") && !err.contains("other"),
+                "{err}"
+            );
+        }
+        // the whole name is compared, not a prefix
+        assert!(strict(&[b"ca"], &[b"inter-and-more"]).is_err());
+        // without the option the same CRL only warns (the behaviour of #1625 is unchanged)
+        let warned = check_cas_and_times(&crls, &[b"ca"], None, NOW, path).unwrap();
+        assert_eq!(warned, vec![(1, Notice::NoCa)]);
     }
 
     #[test]

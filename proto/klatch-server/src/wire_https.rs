@@ -133,6 +133,7 @@ fn limits_of(raw: &Raw, max_connections: usize, short_limits: bool) -> Result<Li
 pub fn parse_with(args: &[&str], short_limits: bool) -> Result<Options> {
     let (mut listen, mut cert, mut key, mut ca) = (None, None, None, None);
     let mut crl: Option<PathBuf> = None;
+    let mut intermediates: Option<PathBuf> = None;
     let mut max_connections = wire_http::DEFAULT_MAX_CONNECTIONS;
     let mut allow_off_loopback = false;
     let mut raw = Raw::default();
@@ -154,6 +155,14 @@ pub fn parse_with(args: &[&str], short_limits: bool) -> Result<Options> {
                 if crl.replace(path).is_some() {
                     bail!(
                         "--tls-client-crl is given more than once: name one file (it may hold several CRLs)"
+                    );
+                }
+            }
+            "--tls-client-intermediates" => {
+                let path = PathBuf::from(value("--tls-client-intermediates")?);
+                if intermediates.replace(path).is_some() {
+                    bail!(
+                        "--tls-client-intermediates is given more than once: name one file (it may hold several certificates)"
                     );
                 }
             }
@@ -182,6 +191,16 @@ pub fn parse_with(args: &[&str], short_limits: bool) -> Result<Options> {
         }
     }
     let limits = limits_of(&raw, max_connections, short_limits)?;
+    if intermediates.is_some() && ca.is_none() {
+        bail!(
+            "--tls-client-intermediates needs --tls-client-ca: the file only matches the issuers of CRLs of a client CA, and mutual TLS has no mode without one"
+        );
+    }
+    if intermediates.is_some() && crl.is_none() {
+        bail!(
+            "--tls-client-intermediates needs --tls-client-crl: it only matches the issuers of CRLs, so without a CRL it would do nothing"
+        );
+    }
     if crl.is_some() && ca.is_none() {
         bail!(
             "--tls-client-crl needs --tls-client-ca: a CRL revokes client certificates of a client CA, and mutual TLS has no mode without one"
@@ -198,6 +217,7 @@ pub fn parse_with(args: &[&str], short_limits: bool) -> Result<Options> {
                 "https needs --tls-client-ca (a CA file, PEM, for client certificates): mutual TLS has no mode without one",
             )?,
             client_crl: crl,
+            client_intermediates: intermediates,
         },
         allow_off_loopback,
         ws: ws.finish(max_connections, short_limits)?,

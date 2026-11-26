@@ -72,6 +72,9 @@ pub struct TlsFiles {
     pub client_ca: PathBuf,
     /// CRLs for client certificates (`--tls-client-crl`, #1491); `None` checks no revocation list.
     pub client_crl: Option<PathBuf>,
+    /// Certificates whose subject names only match the issuers of those CRLs (`--tls-client-intermediates`, #1623); `None`
+    /// keeps the warning for a CRL of an unknown issuer. NEVER trust anchors: see [`read_intermediate_subjects`].
+    pub client_intermediates: Option<PathBuf>,
 }
 
 /// The most a certificate or CA file may hold: 4 MiB. A chain of certificates is a few KiB; more is a mistake.
@@ -199,6 +202,44 @@ pub fn client_roots(path: &Path) -> Result<RootCertStore> {
     Ok(roots)
 }
 
+/// The most certificates the intermediates file may hold (one per intermediate CA an operator has CRLs for).
+const MAX_INTERMEDIATES: usize = 16;
+
+/// The subject names (the DER content of each Name, which is what rustls-webpki compares with a CRL's issuer) of the
+/// certificates in the intermediates file (`--tls-client-intermediates`, #1623).
+///
+/// **These certificates are NEVER trust anchors and are used for nothing but this name match.** Only the bytes of each
+/// subject leave this function: no certificate is added to a root store, handed to the verifier, used to build a path or
+/// to verify anything, and nothing here checks a signature, a validity or a key usage (a name match is not a trust
+/// decision, and checking would pretend it were). The file is read with the checks of the client CA file (a regular file
+/// opened without following a link or blocking, owned by this user or root, not writable by group or other, at most
+/// 4 MiB), must be valid PEM and hold at least one and at most 16 certificates, each with a readable subject, or the
+/// server does not start (and a reload keeps the old configuration). The error names the file, never its content.
+pub fn read_intermediate_subjects(path: &Path) -> Result<Vec<Vec<u8>>> {
+    const WHAT: &str = "client intermediates file";
+    let shown = path.display();
+    let bytes = read_pem(path, WHAT, true)?;
+    let mut subjects = Vec::new();
+    for cert in CertificateDer::pem_slice_iter(&bytes) {
+        let cert = cert.map_err(|_| anyhow::anyhow!("the {WHAT} {shown} is not valid PEM"))?;
+        if subjects.len() == MAX_INTERMEDIATES {
+            bail!(
+                "the {WHAT} {shown} holds more than {MAX_INTERMEDIATES} certificates: at most {MAX_INTERMEDIATES} are accepted"
+            );
+        }
+        let subject = crate::der::subject_of(cert.as_ref()).ok_or_else(|| {
+            anyhow::anyhow!(
+                "the {WHAT} {shown} holds a certificate whose subject cannot be read: it is not a valid X.509 certificate"
+            )
+        })?;
+        subjects.push(subject.to_vec());
+    }
+    if subjects.is_empty() {
+        bail!("the {WHAT} {shown} holds no certificate");
+    }
+    Ok(subjects)
+}
+
 /// The server configuration for these files and client roots at a stage (start, or a reload that refuses a CRL file older
 /// than the one in force), or the reason the server must not start; with the earliest `nextUpdate` of the CRLs it adopted
 /// (`None` without a CRL file): what the next reload compares against. Client authentication is mandatory and nothing in
@@ -218,8 +259,22 @@ pub fn build_config_at(
     if let Some(path) = &files.client_crl {
         // the CA subjects a CRL's issuer must match (#1614): taken from the roots the verifier was built on
         let subjects: Vec<&[u8]> = roots_subjects.iter().map(|s| s.as_ref()).collect();
+        // the optional intermediates' subject names (#1623): matched against CRL issuers, nothing else
+        let inter_subjects = match &files.client_intermediates {
+            Some(file) => Some(read_intermediate_subjects(file)?),
+            None => None,
+        };
+        let inters: Option<Vec<&[u8]>> = inter_subjects
+            .as_ref()
+            .map(|v| v.iter().map(|s| s.as_ref()).collect());
         // expiry enforced, unknown status allowed: the reasons are in `tls_crl.rs`
-        let (crls, earliest) = tls_crl::read_crls_at(path, &subjects, tls_crl::now_unix()?, stage)?;
+        let (crls, earliest) = tls_crl::read_crls_at(
+            path,
+            &subjects,
+            inters.as_deref(),
+            tls_crl::now_unix()?,
+            stage,
+        )?;
         due = earliest;
         builder = builder
             .with_crls(crls)
@@ -376,6 +431,7 @@ mod tests {
             key: dir.join("k.pem"),
             client_ca: dir.join("ca.pem"),
             client_crl: None,
+            client_intermediates: None,
         };
         std::fs::write(&files.cert, cert.pem()).unwrap();
         std::fs::write(&files.key, key.serialize_pem()).unwrap();

@@ -86,6 +86,19 @@ pub struct Leaf {
     chain: Vec<CertificateDer<'static>>,
 }
 
+impl Leaf {
+    /// The same certificate and key, sent without the intermediates above it (a client that omits its chain).
+    pub fn without_chain(&self) -> Leaf {
+        Leaf {
+            cert_pem: self.cert_pem.clone(),
+            key_pem: self.key_pem.clone(),
+            cert: self.cert.clone(),
+            key: self.key.clone(),
+            chain: Vec::new(),
+        }
+    }
+}
+
 impl Ca {
     pub fn new(name: &str) -> Ca {
         Ca::new_serial(name, None)
@@ -133,10 +146,32 @@ impl Ca {
         usages: Vec<KeyUsagePurpose>,
         serial: Option<u64>,
     ) -> Ca {
+        self.intermediate_with(name, usages, serial, None)
+    }
+
+    /// An intermediate CA whose certificate expired yesterday (relative to now, never a literal date).
+    pub fn expired_intermediate(&self, name: &str, usages: Vec<KeyUsagePurpose>) -> Ca {
+        use std::time::{Duration as D, SystemTime};
+        let now = SystemTime::now();
+        let day = D::from_secs(86_400);
+        self.intermediate_with(name, usages, None, Some((now - 3 * day, now - day)))
+    }
+
+    fn intermediate_with(
+        &self,
+        name: &str,
+        usages: Vec<KeyUsagePurpose>,
+        serial: Option<u64>,
+        valid: Option<(std::time::SystemTime, std::time::SystemTime)>,
+    ) -> Ca {
         let mut params = CertificateParams::new(Vec::new()).unwrap();
         params.serial_number = serial.map(SerialNumber::from);
         params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         params.key_usages = usages;
+        if let Some((from, to)) = valid {
+            params.not_before = from.into();
+            params.not_after = to.into();
+        }
         params.distinguished_name.push(DnType::CommonName, name);
         let key = KeyPair::generate().unwrap();
         let issuer = Issuer::new(self.params.clone(), &self.key);

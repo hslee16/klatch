@@ -69,6 +69,7 @@ impl<T> Current<T> {
 enum Kind {
     CaFile,
     CrlFile,
+    IntermediatesFile,
     KeyFile,
     Certificate,
     NoFit,
@@ -82,6 +83,7 @@ impl Kind {
         match self {
             Kind::CaFile => "client CA file",
             Kind::CrlFile => "client CRL file",
+            Kind::IntermediatesFile => "client intermediates file",
             Kind::KeyFile => "server key file",
             Kind::Certificate => "server certificate",
             Kind::NoFit => "key and certificate do not fit",
@@ -104,10 +106,13 @@ fn failure_line(kind: Kind) -> String {
 fn success_line(files: &TlsFiles) -> String {
     format!(
         "klatch-server: https: reload ok: new connections use the new server certificate and key, the client CA file{}; connections already open keep theirs",
-        if files.client_crl.is_some() {
-            " and the client CRL file"
-        } else {
-            ""
+        match (
+            files.client_crl.is_some(),
+            files.client_intermediates.is_some()
+        ) {
+            (true, true) => ", the client CRL file and the client intermediates file",
+            (true, false) => " and the client CRL file",
+            _ => "",
         }
     )
 }
@@ -121,6 +126,7 @@ fn classify(error: &anyhow::Error, files: &TlsFiles) -> Kind {
         Some(&files.key),
         Some(&files.client_ca),
         files.client_crl.as_ref(),
+        files.client_intermediates.as_ref(),
     ];
     for p in paths.into_iter().flatten() {
         text = text.replace(&p.display().to_string(), "");
@@ -129,6 +135,8 @@ fn classify(error: &anyhow::Error, files: &TlsFiles) -> Kind {
         Kind::NoFit
     } else if text.contains("client CRL file") {
         Kind::CrlFile
+    } else if text.contains("client intermediates file") {
+        Kind::IntermediatesFile
     } else if text.contains("client CA file") {
         Kind::CaFile
     } else if text.contains("key file") {
@@ -275,6 +283,7 @@ mod tests {
             key: PathBuf::from("/d/k.pem"),
             client_ca: PathBuf::from("/d/ca.pem"),
             client_crl: Some(PathBuf::from("/d/crl.pem")),
+            client_intermediates: None,
         }
     }
 

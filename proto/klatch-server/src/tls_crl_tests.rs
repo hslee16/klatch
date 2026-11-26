@@ -27,7 +27,7 @@ fn a_file_owned_by_another_user_than_the_one_the_server_runs_as_is_refused_befor
         return;
     }
     let stranger = owner.wrapping_add(1);
-    let err = read_crls_as(&path, &[], 0, Stage::Start, stranger)
+    let err = read_crls_as(&path, &[], None, 0, Stage::Start, stranger)
         .expect_err("another user's file was read");
     let text = err.to_string();
     assert!(
@@ -36,7 +36,7 @@ fn a_file_owned_by_another_user_than_the_one_the_server_runs_as_is_refused_befor
     );
     assert!(text.contains(&path.display().to_string()), "{text}");
     // the file's own owner passes the check, and is stopped later, by what the file holds
-    let own = read_crls_as(&path, &[], 0, Stage::Start, owner).expect_err("not a CRL");
+    let own = read_crls_as(&path, &[], None, 0, Stage::Start, owner).expect_err("not a CRL");
     assert!(!own.to_string().contains("not owned"), "{own}");
     assert!(
         own.to_string().contains("not valid PEM") || own.to_string().contains("holds no CRL"),
