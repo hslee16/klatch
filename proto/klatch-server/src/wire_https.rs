@@ -249,40 +249,42 @@ pub fn run(opts: &Options) -> Result<()> {
     // SIGHUP reloads the TLS files on a thread of its own (`tls_reload.rs`); each connection takes the configuration
     // current when its handshake starts and keeps it
     let current = Current::new(config);
-    std::thread::scope(|scope| {
-        scope.spawn(|| {
-            tls_reload::watch(
+    crate::forwarded_report::while_reporting(&shared.forwarded, &shared.backend, || {
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                tls_reload::watch(
+                    &crate::daemon::STOP,
+                    &crate::daemon::RELOAD,
+                    opts,
+                    &current,
+                    crl_due,
+                )
+            });
+            // the descriptors and threads of the process are bounded by the sessions plus the handshake pool; the session cap
+            // itself is `sessions` (a connection takes a place there only after its handshake), so a flood of handshakes
+            // cannot take the place of a session
+            loopback::serve_concurrent(
+                &listener,
                 &crate::daemon::STOP,
-                &crate::daemon::RELOAD,
-                opts,
-                &current,
-                crl_due,
-            )
-        });
-        // the descriptors and threads of the process are bounded by the sessions plus the handshake pool; the session cap
-        // itself is `sessions` (a connection takes a place there only after its handshake), so a flood of handshakes
-        // cannot take the place of a session
-        loopback::serve_concurrent(
-            &listener,
-            &crate::daemon::STOP,
-            opts.max_connections
-                .saturating_add(opts.limits.max_handshakes),
-            loopback::Callbacks {
-                handler: &|sock: Stream| {
-                    let config = current.get();
-                    let at = Listener {
-                        config: &config,
-                        limits: &opts.limits,
-                        handshakes: &handshakes,
-                        sessions: &sessions,
-                    };
-                    tls::serve_tls(sock, &at, |app| wire_http::serve_connection(app, &shared))
+                opts.max_connections
+                    .saturating_add(opts.limits.max_handshakes),
+                loopback::Callbacks {
+                    handler: &|sock: Stream| {
+                        let config = current.get();
+                        let at = Listener {
+                            config: &config,
+                            limits: &opts.limits,
+                            handshakes: &handshakes,
+                            sessions: &sessions,
+                        };
+                        tls::serve_tls(sock, &at, |app| wire_http::serve_connection(app, &shared))
+                    },
+                    excess: &drop,
                 },
-                excess: &drop,
-            },
-        );
-        // however the accept loop ended (a signal, or it could not start), the watcher must end with it
-        crate::daemon::STOP.store(true, std::sync::atomic::Ordering::SeqCst);
+            );
+            // however the accept loop ended (a signal, or it could not start), the watcher must end with it
+            crate::daemon::STOP.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
     });
     drop(shared);
     drop(gateway);

@@ -354,6 +354,11 @@ impl Backend for SharedBackend {
             .gateway
             .call_backend(move |b| b.note_member_fixed(&who));
     }
+    fn note_forwarded_ignored(&self, counts: &str) -> Result<()> {
+        let counts = counts.to_owned();
+        self.gateway
+            .call_backend(move |b| b.note_forwarded_ignored(&counts))?
+    }
 }
 
 fn gone() -> Error {

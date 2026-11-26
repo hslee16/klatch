@@ -9,8 +9,9 @@
 //! cannot store or log an address, a user or a certificate. `tests/route_audit.rs` holds that line: this is the only
 //! source file allowed to spell these names, and it must not name a header type or a value accessor.
 //!
-//! The counts live in memory, for the life of one server process, and appear as one counts-only line on stderr when the
-//! server stops. They are not durable; a live read surface and durable storage are ticketed (#1490).
+//! The counts live in memory, for the life of one server process. `forwarded_report.rs` shows them (a counts-only line
+//! on stderr while the server runs and when it stops) and keeps them (one audit row per interval, from a timer, never
+//! from a request) so they survive a restart (#1490).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -66,20 +67,64 @@ impl Ignored {
         }
     }
 
-    /// The counts-only line: requests, then each name that was seen with its count. No value, no address.
+    /// The counts as they stand: plain numbers, safe to keep, compare and render.
+    pub(crate) fn snapshot(&self) -> Counts {
+        Counts {
+            requests: self.requests.load(Ordering::Relaxed),
+            by_name: std::array::from_fn(|i| self.by_name[i].load(Ordering::Relaxed)),
+        }
+    }
+
+    /// The counts-only line at shutdown: requests, then each name that was seen with its count. No value, no address.
     pub(crate) fn summary(&self) -> String {
-        let mut line = format!(
-            "klatch-server: forwarded identity headers ignored: requests={}",
-            self.requests.load(Ordering::Relaxed)
-        );
-        for (i, count) in self.by_name.iter().enumerate() {
-            let n = count.load(Ordering::Relaxed);
-            if n > 0 {
-                let name = NAMES.get(i).copied().unwrap_or(SSL_LABEL);
-                line.push_str(&format!(" {name}={n}"));
-            }
+        format!(
+            "klatch-server: forwarded identity headers ignored: {}",
+            self.snapshot().render()
+        )
+    }
+}
+
+/// A reading of the counters: numbers only, no name text but the fixed list's.
+#[derive(Clone, Default, PartialEq, Eq, Debug)]
+pub(crate) struct Counts {
+    requests: u64,
+    by_name: [u64; NAMES.len() + 1],
+}
+
+impl Counts {
+    /// Nothing counted.
+    pub(crate) fn is_zero(&self) -> bool {
+        self.requests == 0
+    }
+
+    /// What was counted since `earlier` (an earlier reading of the same counters): each number minus its old value.
+    pub(crate) fn since(&self, earlier: &Counts) -> Counts {
+        Counts {
+            requests: self.requests.saturating_sub(earlier.requests),
+            by_name: std::array::from_fn(|i| self.by_name[i].saturating_sub(earlier.by_name[i])),
+        }
+    }
+
+    /// `requests=N name=K ...`: each name that was seen, in the fixed order. Lower case letters, digits, `=`, `-`,
+    /// `*` and spaces only, so it is safe to log and to keep as a row.
+    pub(crate) fn render(&self) -> String {
+        let mut line = format!("requests={}", self.requests);
+        for (i, n) in self.by_name.iter().enumerate().filter(|(_, n)| **n > 0) {
+            let name = NAMES.get(i).copied().unwrap_or(SSL_LABEL);
+            line.push_str(&format!(" {name}={n}"));
         }
         line
+    }
+
+    /// A reading with `n` requests, all under the first listed name (for tests of what counts do, not of what they name).
+    #[cfg(test)]
+    pub(crate) fn of(n: u64) -> Counts {
+        let mut c = Counts {
+            requests: n,
+            ..Counts::default()
+        };
+        c.by_name[0] = n;
+        c
     }
 }
 
