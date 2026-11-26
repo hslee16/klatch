@@ -149,9 +149,26 @@ class RealExport(Base):
     def run_k(self, arm="K2", **kw):
         s = self.script(a=A, b=B)
         code, out, err = self.go(self.argv(arm, runs=1, fake_script=s, **kw))
-        self.assertEqual(code, 0, out + err)
+        self.assertEqual(code, 0, out + err + self.crash_detail())
         (r,) = self.records(arm)
         return r
+
+    def crash_detail(self):
+        """What a failed run left: each record's outcome and notes (the crash reason) and the tail of its log files, so a
+        failure under load says why, not only 'crash, units 1/2' (#1639)."""
+        lines = []
+        for r in self.records():
+            lines.append("record %s: outcome=%s valid=%s notes=%s" % (r["run_id"], r["outcome"], r["valid"], r["notes"]))
+        for d, _, names in os.walk(self.logs):
+            for n in sorted(names):
+                try:
+                    with open(os.path.join(d, n), errors="replace") as f:
+                        tail = f.read()[-1500:]
+                except OSError:
+                    continue
+                if tail.strip():
+                    lines.append("--- %s ---\n%s" % (os.path.join(d, n), tail))
+        return "\n" + "\n".join(lines)
 
     def test_a_k_run_writes_the_store_export_and_fills_the_null_metrics(self):
         r = self.run_k()
@@ -200,7 +217,7 @@ class RealExport(Base):
     def test_a_missing_tool_keeps_the_nulls_and_a_note_and_the_run_stays_valid(self):
         r = self.run_k(arm="K1", bench_bin="/nonexistent/klatch-bench")
         self.assertTrue(r["valid"])
-        self.assertEqual(r["outcome"], "ok")
+        self.assertEqual(r["outcome"], "ok", r["notes"] + self.crash_detail())
         self.assertIsNone(r["artifacts"]["store_export"])
         self.assertIsNone(r["metrics"]["claim_conflicts"])
         self.assertIn("store export", r["notes"])

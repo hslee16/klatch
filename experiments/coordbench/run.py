@@ -243,6 +243,8 @@ class Suite:
             print("%s: %s, units %d/%d, %.4f USD, %.1f s%s" % (
                 run_id, rec["outcome"], rec["metrics"]["units_completed"], rec["metrics"]["units_total"],
                 rec["spend"]["usd"], rec["wall_s"], "" if rec["valid"] else " (INVALID: %s)" % rec["notes"]))
+            if rec["outcome"] != "ok" and rec["valid"] and rec["notes"]:
+                print("%s: why: %s" % (run_id, rec["notes"]))  # a crash's reason, not only the summary line (#1639)
             sys.stdout.flush()
         self.write_meta(started, now_iso(), not_run)
         print("done: %d of %d runs, %.4f USD, results in %s" % (self.executed, len(self.plan), self.spent, self.results_root))
