@@ -1,0 +1,1 @@
+- A restarted mediator no longer repeats its stale ask proposal: the line used to hold the ask's growing age, so it now names only the start of its schedule stage (60s, 10m, 1h, 6h, 24h) and is the same until the next stage; an ask nobody takes draws at most five lines ever and none after the 24h one (#1570).

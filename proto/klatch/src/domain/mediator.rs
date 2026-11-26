@@ -22,6 +22,16 @@ impl Proposal {
     }
 }
 
+/// A stale ask's proposal schedule (#1570): the age in seconds at which each stage starts and how the line names it.
+/// Five stages at most, so an ask nobody takes draws at most five lines ever and none after the last.
+pub const STALE_STAGES: [(u64, &str); 5] = [
+    (60, "60s"),
+    (600, "10m"),
+    (3600, "1h"),
+    (21_600, "6h"),
+    (86_400, "24h"),
+];
+
 /// The most proposals one pass makes, so a flood of stuck cases cannot become a flood of posts.
 pub const MAX_PROPOSALS: usize = 5;
 
@@ -43,6 +53,9 @@ pub struct Proposal {
     /// that grows while the case stands (#1205). `None` means the whole text is matched. Only ever a template start
     /// with member and room names in it, never member text.
     pub lead: Option<String>,
+    /// How far the case has moved while it stands: a later stage is a new proposal for the same key, an equal one is
+    /// the same proposal (#1570). Only a stale ask has one (its schedule step); every other proposal is stage 0.
+    pub stage: u64,
     /// A room to create and invite into, when the case is a cycle through asks.
     pub room: Option<String>,
     pub invites: Vec<String>,
@@ -88,6 +101,7 @@ fn post(key: String, text: String) -> Proposal {
         key,
         text,
         lead: None,
+        stage: 0,
         room: None,
         invites: Vec::new(),
     }
@@ -102,13 +116,27 @@ fn propose(view: &View, e: &StuckEvent) -> Option<Proposal> {
             ask,
             asker,
             age_secs,
-        } => post(
-            key,
-            format!(
-                "mediator proposal: ask #{ask} by @{asker} has had no taker for {age_secs}s. @{asker} could narrow or \
-                 repeat it, or a member could claim ask:{ask}. {TAIL}"
-            ),
-        ),
+        } => {
+            // the age grows while the ask stands, so the line holds only the start of its stage (never the age) and
+            // the stage is the schedule step reached: the same line until the next step, and none after the last
+            let age = u64::try_from(*age_secs).unwrap_or(0);
+            let stage = STALE_STAGES
+                .iter()
+                .skip(1)
+                .filter(|(from, _)| age >= *from)
+                .count();
+            let floor = STALE_STAGES[stage].1;
+            Proposal {
+                stage: stage as u64,
+                ..post(
+                    key,
+                    format!(
+                        "mediator proposal: ask #{ask} by @{asker} has had no taker for at least {floor}. @{asker} \
+                         could narrow or repeat it, or a member could claim ask:{ask}. {TAIL}"
+                    ),
+                )
+            }
+        }
         StuckEvent::LongExchange {
             room,
             members,
@@ -186,6 +214,7 @@ fn ask_cycle(view: &View, key: String, members: &[String], asks: &[i64]) -> Opti
     Some(Proposal {
         key,
         lead: None,
+        stage: 0,
         text: format!(
             "mediator proposal: ask cycle, {} each wait on another's answer. By a fixed rule @{} yields: \
              post what you have for the ask you hold, release it, then wait. Settle it in {room} (klatch join \
@@ -306,7 +335,7 @@ mod tests {
         ];
         let ps = run(&evs, &[member("ann"), member("bo")]);
         assert_eq!(ps.len(), 2);
-        assert_text(&ps[0], &["ask #3 by @ann", "200s"]);
+        assert_text(&ps[0], &["ask #3 by @ann", "at least 60s."]);
         assert_text(&ps[1], &["ask #5 by @bo", "by 2 members"]);
         assert!(ps.iter().all(|p| p.room.is_none() && p.invites.is_empty()));
     }
@@ -438,6 +467,42 @@ mod tests {
             )
             .is_empty()
         );
+    }
+
+    #[test]
+    fn a_stale_ask_line_follows_a_fixed_schedule_of_five_stages_and_never_holds_the_age() {
+        let at = |age_secs| {
+            run(
+                &[StuckEvent::StaleAsk {
+                    ask: 3,
+                    asker: "ann".into(),
+                    age_secs,
+                }],
+                &[],
+            )
+            .remove(0)
+        };
+        let (a, b) = (at(61), at(599));
+        assert_eq!((&a.text, a.stage), (&b.text, b.stage));
+        assert!(a.text.contains("no taker for at least 60s."));
+        assert!(!a.text.contains("61s") && !b.text.contains("599s"));
+        for (age, stage, floor) in [
+            (600, 1, "10m"),
+            (3599, 1, "10m"),
+            (3600, 2, "1h"),
+            (21_599, 2, "1h"),
+            (21_600, 3, "6h"),
+            (86_399, 3, "6h"),
+            (86_400, 4, "24h"),
+            (30 * 86_400, 4, "24h"),
+        ] {
+            let p = at(age);
+            assert_eq!(p.stage, stage, "age {age}");
+            assert!(p.text.contains(&format!("at least {floor}.")), "{}", p.text);
+        }
+        assert_eq!(at(86_400).text, at(30 * 86_400).text);
+        // a line of another kind is stage 0
+        assert_eq!(run(&[cycle()], &[member("ann"), member("bo")])[0].stage, 0);
     }
 
     #[test]
