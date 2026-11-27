@@ -32,7 +32,7 @@ mod machine_status;
 mod mediator;
 mod merge_claim;
 mod passive_claim;
-mod pre_edit;
+pub(crate) mod pre_edit;
 mod priority;
 mod session_budget;
 pub use merge_claim::{MERGE_CLAIM, MERGE_CLAIM_MAX_SECS, MERGE_PARK_MAX_SECS, is_merge_claim};

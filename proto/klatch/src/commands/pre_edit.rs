@@ -81,12 +81,10 @@ pub(super) fn pre_edit(ctx: &Ctx, claims: bool) -> Result<()> {
         scope: &scope,
         now: ctx.now,
     };
-    let mut line = pre_edit_warning(&spellings(&call), &held, &who);
-    // Nothing is held by someone else: cover the path before the edit. A refusal here is only a race with another
-    // member's claim; the claim is never taken over a warning, so the warning path takes none and records no wait.
-    if line.is_none() && claims {
-        line = claim_first(t, input);
-    }
+    // Nothing is held by someone else: cover the path before the edit. A warning is never replaced by the claim's
+    // outcome and takes no claim (a refused claim would only record a wait), so the claim is tried only without one.
+    let line = pre_edit_warning(&spellings(&call), &held, &who)
+        .or_else(|| claims.then(|| claim_first(t, input)).flatten());
     if let Some(line) = line {
         // the line goes into the context, so it counts toward the session's bytes (#1406)
         let _ = t.record_hook_run("PreToolUse", line.len());
@@ -106,4 +104,43 @@ fn claim_first(t: &dyn Transport, input: &serde_json::Value) -> Option<String> {
         Ok(PassiveOutcome::Refused(r)) => Some(pre_edit_refusal_line(path, &r)),
         _ => None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use klatch::domain::Principal;
+    use klatch::gateway::{AllowAll, Clock, Direct, Gateway};
+    use klatch::store::SqliteStore;
+    use std::rc::Rc;
+
+    struct Fixed;
+    impl Clock for Fixed {
+        fn now(&self) -> i64 {
+            1000
+        }
+    }
+
+    #[test]
+    fn a_store_or_gateway_error_inside_the_step_is_an_error_for_main_to_show_and_never_a_panic_or_a_block()
+     {
+        let g = Rc::new(Gateway::new(
+            SqliteStore::open_in_memory().unwrap(),
+            Fixed,
+            AllowAll,
+        ));
+        // a member name the gateway refuses: its `rooms` call fails inside the step
+        let t = Direct::new(g, Principal::unattributed("not a valid name!"));
+        let input = serde_json::json!({"tool_name": "Edit", "cwd": "/w",
+            "tool_input": {"file_path": "/w/src/a.rs"}});
+        let ctx = Ctx {
+            t: &t,
+            me: "not a valid name!",
+            now: 1000,
+            stdin_session: None,
+            discovered: false,
+            stdin: Some(&input),
+        };
+        assert!(pre_edit(&ctx, true).is_err());
+    }
 }
