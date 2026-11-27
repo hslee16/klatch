@@ -1,7 +1,7 @@
 //! The harness registry: `<pid>.json` files, one per live session. Only the `.json` files are read; the
 //! `.key` files beside them hold secrets and are never opened.
 
-use crate::harness::own_records::{read_regular_named, scan_records};
+use crate::harness::own_records::{Scan, read_regular_named, scan_records};
 use crate::harness::process::squash;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -70,11 +70,16 @@ impl FsRegistry {
     /// The third value is whether a bound cut the listing (#1706): the records are then a part of the directory, and a
     /// caller that acts on what is absent from them, or on one record among several, acts on an incomplete view.
     pub fn records_alive(&self, alive: Option<&HashSet<u32>>) -> (Vec<Record>, usize, bool) {
+        self.scan_alive(alive).map_or((Vec::new(), 0, false), |s| {
+            (s.records, s.malformed, s.truncated)
+        })
+    }
+
+    /// The whole of one pass (see `records_alive`), the claims of dead pids read past the record bound included
+    /// (#1712). `None` when the directory cannot be listed.
+    pub(crate) fn scan_alive(&self, alive: Option<&HashSet<u32>>) -> Option<Scan> {
         // through one descriptor opened without following a symlink or blocking on a FIFO, size capped (#1567)
         scan_records(&self.dir, alive, |name| read_regular_named(&self.dir, name))
-            .map_or((Vec::new(), 0, false), |s| {
-                (s.records, s.malformed, s.truncated)
-            })
     }
 }
 
