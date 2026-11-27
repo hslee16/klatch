@@ -1,0 +1,2 @@
+- The no-hooks pointer scan opens each settings file once without blocking and checks the open handle, so a FIFO or an oversized file swapped in after a check cannot hang it or exceed the 1 MiB cap; a symlinked `.claude` directory is no longer followed (#1749).
+- Tests now pin the exact pointer text, assert the headless-worker case with a real identity bundle, and assert the post succeeded in the broken-settings and symlink cases; the same-user hide and fake trade-off is documented (#1749).

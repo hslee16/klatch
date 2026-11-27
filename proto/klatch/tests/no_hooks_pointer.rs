@@ -149,7 +149,8 @@ fn a_headless_worker_with_its_own_identity_file_gets_no_pointer() {
         bundle.to_str().unwrap(),
     ]);
     assert!(issued.status.success(), "{}", err(&issued));
-    let mut c = f.h.command_at("w-1", &["post", "lobby", "ready"], &f.project, &f.home);
+    let mut c =
+        f.h.command_at("w-1", &["post", "lobby", "ready"], &f.project, &f.home);
     c.env_remove("KLATCH_NAME")
         .env_remove("KLATCH_KEY_DIR")
         .env("KLATCH_IDENTITY_FILE", &bundle);

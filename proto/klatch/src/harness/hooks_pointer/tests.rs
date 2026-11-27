@@ -237,5 +237,25 @@ fn a_file_that_grows_past_the_cap_between_check_and_read_is_skipped() {
     let ok = std::io::Cursor::new(b"{}".to_vec());
     assert_eq!(scan::read_capped(ok).as_deref(), Some("{}"));
     let exact = std::io::repeat(b' ').take(scan::MAX_BYTES);
-    assert!(scan::read_capped(exact).is_some(), "exactly the cap is allowed");
+    assert!(
+        scan::read_capped(exact).is_some(),
+        "exactly the cap is allowed"
+    );
+    // and it stops reading at the cap (plus one byte to tell), so an endless source cannot exhaust memory or hang
+    struct Counting(std::rc::Rc<std::cell::Cell<u64>>);
+    impl std::io::Read for Counting {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            assert!(self.0.get() <= scan::MAX_BYTES + 1, "read past the cap");
+            buf.fill(b' ');
+            self.0.set(self.0.get() + buf.len() as u64);
+            Ok(buf.len())
+        }
+    }
+    let served = std::rc::Rc::new(std::cell::Cell::new(0));
+    assert_eq!(scan::read_capped(Counting(served.clone())), None);
+    assert!(
+        served.get() <= scan::MAX_BYTES + 1 + 8192 * 2,
+        "{}",
+        served.get()
+    );
 }

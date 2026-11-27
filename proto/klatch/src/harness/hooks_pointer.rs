@@ -2,6 +2,13 @@
 //! `.claude/settings.local.json` of one checkout, so a worktree, another project or a headless worker never gets the
 //! room digest. When such a member posts for the first time without having read the room, it is told once how a
 //! person can turn the hooks on. Read only, bounded, installs nothing and prints no path.
+//!
+//! Trade-off, stated plainly: this is a courtesy, not a security boundary. Anything running as the same user can hide
+//! the pointer (plant a settings file that looks like klatch hooks, or one that cannot be read with certainty) or fake it
+//! (print the same text itself). That is accepted: the same user can already edit the settings, the store and this
+//! binary. What the code guarantees is only that reading never hangs, never reads more than 1 MiB, never follows a
+//! `.claude` directory link or a file link out of the project, and never prints a path. The text is fixed and pinned by
+//! a test, so it carries no data from any settings file.
 
 use std::path::{Path, PathBuf};
 
@@ -30,7 +37,11 @@ pub fn no_hooks_pointer(cwd: &Path, home: Option<&Path>, headless: bool) -> Opti
     }
     if let Some(h) = home {
         // the user scope may link out of the project by design; it is read as the owner's own file
-        seen.push(scan::look(&h.join(".claude").join("settings.json"), h, true)?);
+        seen.push(scan::look(
+            &h.join(".claude").join("settings.json"),
+            h,
+            true,
+        )?);
     }
     (!seen.contains(&scan::Seen::Hooks)).then_some(POINTER)
 }
