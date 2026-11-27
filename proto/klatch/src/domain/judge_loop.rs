@@ -107,8 +107,14 @@ impl<R: Judge, J: Judge> Judge for Narrowed<R, J> {
         match verdict {
             denied @ Verdict::Deny(_) => (denied, None),
             _ => match self.inner.judge_noted(item) {
-                // the inner judge had no view: keep the rules' flag so the audit still names the rule
-                (Verdict::Defer, None) => (Verdict::Defer, flagged),
+                // the screen's flag leads, so the audit still names the rule beside the model's own note
+                (Verdict::Defer, note) => (
+                    Verdict::Defer,
+                    match (flagged, note) {
+                        (Some(f), Some(n)) => Some(format!("{f}; {n}")),
+                        (f, n) => f.or(n),
+                    },
+                ),
                 other => other,
             },
         }

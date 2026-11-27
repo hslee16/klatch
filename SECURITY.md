@@ -311,10 +311,10 @@ and a scrub term found only backwards) is a deferral with a note that names the 
 `screen:personal-contact`, `screen:personal-identifier`, `screen:internal-host`, `screen:confidential-matter`,
 `scrub:<name>:reversed`; never the text): the item stays queued, the audit records the note, and a reviewer can allow or
 deny it. In the default configuration (no `--hosted-judge`) nothing crosses until a reviewer rules, whether or not the
-rules flagged the item; a flag tells the reviewer where to look. With `--hosted-judge` the rules run first under
+rules flagged the item; a flag tells the reviewer where to look: the note is kept on the waiting queue row, the reviewer's `review next` shows it after the fixed reason (`crosses; rules flag (data): screen:injection`, plain characters only, capped at 120, derived from the rule name and never from message text), and `klatch admin review-queue` lists the row as `waiting [screen:injection]`; the admin audit has it too, which the reviewer role cannot read. With `--hosted-judge` the rules run first under
 `Narrowed`: a credential or scrub deny stands and the model never sees that item; a screen hit is passed to the model
-judge, which may allow it, redact it, deny it or defer, and a model that defers leaves the item queued with the screen's
-note. A model that allows a flagged item releases it. Text the rules do not match is deferred in both configurations;
+judge, which may allow it, redact it, deny it or defer, and a model that defers leaves the item queued, with the screen's
+note first and the model's own after it. A model that allows a flagged item releases it. Text the rules do not match is deferred in both configurations;
 the rules never allow and never redact. The measurements below count "not flagged" as "would cross" (the
 not-stopped-by-rules reading, `not_stopped_rate`), because that is how the bench scores a judge that has no other gate.
 A flagged item is not a blocked one: under the production reading (`would_cross_without_reviewer_rate`) every item the

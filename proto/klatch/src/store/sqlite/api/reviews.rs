@@ -18,6 +18,10 @@ impl ReviewStore for SqliteStore {
         self.set_review_text_row(id, text)
     }
 
+    fn set_review_flag(&self, id: i64, note: &str) -> Result<()> {
+        self.set_review_flag_row(id, note)
+    }
+
     fn reviews(&self, limit: usize) -> Result<Vec<QueuedReview>> {
         self.review_rows("1=1 ORDER BY id DESC", limit)
     }

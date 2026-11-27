@@ -390,3 +390,21 @@ fn street_words_need_capitals_hosts_need_a_host_shape_and_ignore_needs_a_qualifi
         ("disregard your guidelines", "internal", "public"),
     ]);
 }
+
+#[test]
+fn an_international_number_is_flagged_before_a_word_before_punctuation_and_at_the_end() {
+    must_hold(&[
+        ("call +1 415 555 0142 tomorrow", "internal", "public"),
+        ("+44 20 7946 0958 for details", "internal", "public"),
+        ("call +1 415 555 0142.", "internal", "public"),
+        ("at +1 415 555 0142, thanks", "internal", "public"),
+        ("(mobile +49 151 2345 6789) is hers", "internal", "public"),
+        ("call +1 415 555 0142", "internal", "public"),
+    ]);
+    must_pass(&[
+        ("version +1 2 3 is the next one", "internal", "public"),
+        ("delta +123 in 45 minutes", "internal", "public"),
+        ("offset +1 415 55 for the row", "internal", "public"),
+        ("a+1 415 555 0142x", "internal", "public"),
+    ]);
+}

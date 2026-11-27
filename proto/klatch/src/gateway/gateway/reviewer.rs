@@ -41,7 +41,11 @@ impl<S: Store> Gateway<S> {
             if self.check_clearance(who, &q.room).is_err() {
                 continue;
             }
-            if let Some(item) = load_item(&self.store, &q)? {
+            if let Some(mut item) = load_item(&self.store, &q)? {
+                if !q.detail.is_empty() {
+                    // why the rules flagged it: plain data from the rules, not an instruction to the reviewer
+                    item.reason = format!("{}; rules flag (data): {}", item.reason, q.detail);
+                }
                 return Ok(Some(item));
             }
         }

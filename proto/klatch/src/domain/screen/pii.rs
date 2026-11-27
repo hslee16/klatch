@@ -195,10 +195,15 @@ fn international(b: &[u8], i: usize) -> bool {
         n += usize::from(b[j].is_ascii_digit());
         j += 1;
     }
-    j > i + 1
+    // the span ends at its last digit: a space or a full stop after the number is not part of it
+    let mut e = j;
+    while e > i + 1 && !b[e - 1].is_ascii_digit() {
+        e -= 1;
+    }
+    e > i + 1
         && b[i + 1].is_ascii_digit()
         && n >= 9
-        && !b.get(j).is_some_and(u8::is_ascii_alphanumeric)
+        && !b.get(e).is_some_and(u8::is_ascii_alphanumeric)
 }
 
 const STREET_SUFFIX: &[&str] = &[

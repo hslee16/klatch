@@ -73,6 +73,15 @@ fn or_else<'a>(value: &'a str, fallback: &'a str) -> &'a str {
     if value.is_empty() { fallback } else { value }
 }
 
+/// The verdict word, or `waiting` with the rules' flag when there is one (a waiting row's detail is that flag).
+fn waiting_or_verdict(r: &klatch::store::QueuedReview) -> String {
+    match (r.verdict.is_empty(), r.detail.is_empty()) {
+        (true, false) => format!("waiting [{}]", flat(&r.detail)),
+        (true, true) => "waiting".to_string(),
+        _ => r.verdict.clone(),
+    }
+}
+
 pub(super) fn review_queue(t: &dyn Transport, limit: usize) -> Result<()> {
     let now = now();
     for r in t.review_queue(limit)? {
@@ -83,7 +92,7 @@ pub(super) fn review_queue(t: &dyn Transport, limit: usize) -> Result<()> {
             flat(&r.room),
             r.seq,
             or_else(&r.to_room, &r.to_label),
-            or_else(&r.verdict, "waiting"),
+            waiting_or_verdict(&r),
             or_else(&r.applied, "-"),
             flat(&r.requester)
         );
