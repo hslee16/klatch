@@ -60,7 +60,7 @@ fn shape_kind(text: &str) -> Option<&'static str> {
 }
 
 /// The text without zero-width and other invisible format characters.
-fn strip_invisible(text: &str) -> String {
+pub(super) fn strip_invisible(text: &str) -> String {
     text.chars()
         .filter(|c| {
             !matches!(
@@ -205,7 +205,7 @@ fn joined_lines(text: &str) -> Option<String> {
 }
 
 /// Tokens of 16 to 4096 bytes with the byte offset each starts at (at most 256 of them).
-fn long_tokens(text: &str) -> Vec<(usize, &str)> {
+pub(super) fn long_tokens(text: &str) -> Vec<(usize, &str)> {
     let sep = |c: char| {
         c.is_whitespace()
             || matches!(
@@ -235,7 +235,7 @@ fn long_tokens(text: &str) -> Vec<(usize, &str)> {
     out
 }
 
-fn printable(bytes: Vec<u8>) -> Option<String> {
+pub(super) fn printable(bytes: Vec<u8>) -> Option<String> {
     let text = String::from_utf8(bytes).ok()?;
     (text.len() >= 12
         && text
@@ -244,7 +244,7 @@ fn printable(bytes: Vec<u8>) -> Option<String> {
     .then_some(text)
 }
 
-fn base64_decode(v: &str) -> Option<Vec<u8>> {
+pub(super) fn base64_decode(v: &str) -> Option<Vec<u8>> {
     let v = v.trim_end_matches('=');
     if v.len() % 4 == 1 {
         return None;
@@ -271,7 +271,7 @@ fn base64_decode(v: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-fn hex_decode(v: &str) -> Option<Vec<u8>> {
+pub(super) fn hex_decode(v: &str) -> Option<Vec<u8>> {
     if !v.len().is_multiple_of(2) || !v.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
     }

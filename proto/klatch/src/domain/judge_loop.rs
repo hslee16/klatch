@@ -2,8 +2,9 @@
 //! applies a recorded verdict only after checking labels again, and a judge here can only narrow what the floors
 //! allow, never widen it.
 //!
-//! - `RulesJudge`: the local first gate (credential scanner, then the scrub list). It denies on a match and
-//!   otherwise defers; it never vouches for text, so clean text waits for a reviewer or a configured judge.
+//! - `RulesJudge`: the local first gate. The credential scanner and the scrub list deny on a match (final). The screen of
+//!   #1413 (personal data, injection phrasings, internal hosts, confidentiality phrases) defers with a note that
+//!   names the rule, so the item stays for the reviewer or the model judge; it otherwise defers; it never vouches for text, so clean text waits for a reviewer or a configured judge.
 //! - `Narrowed`: the rules run first, and a deny from them stands whatever the inner judge would say. The inner
 //!   judge is not shown text the rules denied.
 //! - `Breaker`: a judge that keeps failing (it defers or panics) cannot allow by default. After `limit` failures in
@@ -11,7 +12,7 @@
 //!
 //! Nothing here touches the network. A hosted judge is off unless an operator builds one (see `HostedJudge`).
 
-use super::{Judge, LabelChain, ReviewItem, Verdict, credential_kind};
+use super::{Judge, LabelChain, ReviewItem, Screened, Verdict, credential_kind, screen};
 use std::cell::Cell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -40,10 +41,20 @@ impl RulesJudge {
 
 impl Judge for RulesJudge {
     fn judge(&self, item: &ReviewItem) -> Verdict {
+        self.judge_noted(item).0
+    }
+
+    /// The floors (credential scanner, scrub list) deny. A hit of the screen (#1413) is a heuristic, so it is a
+    /// deferral with a note naming the rule (`screen:injection`, never the text): the item stays queued for the
+    /// reviewer, or reaches the model judge when one is configured, and the audit records the rule.
+    fn judge_noted(&self, item: &ReviewItem) -> (Verdict, Option<String>) {
         if let Some(kind) = credential_kind(&item.text) {
-            return Verdict::Deny(format!(
-                "credentials: the text looks like it contains {kind}"
-            ));
+            return (
+                Verdict::Deny(format!(
+                    "credentials: the text looks like it contains {kind}"
+                )),
+                None,
+            );
         }
         if !self
             .chain
@@ -55,10 +66,20 @@ impl Judge for RulesJudge {
                 .iter()
                 .find(|(_, term)| lower.contains(&term.to_lowercase()))
             {
-                return Verdict::Deny(format!("scrub:{name}"));
+                return (Verdict::Deny(format!("scrub:{name}")), None);
             }
         }
-        Verdict::Defer
+        match screen(
+            &item.text,
+            &item.from_label,
+            &item.to_label,
+            &self.chain,
+            &self.terms,
+        ) {
+            Some(Screened::Deny(reason)) => (Verdict::Deny(reason), None),
+            Some(Screened::Hold(reason)) => (Verdict::Defer, Some(reason)),
+            None => (Verdict::Defer, None),
+        }
     }
 }
 
@@ -82,9 +103,20 @@ impl<R: Judge, J: Judge> Judge for Narrowed<R, J> {
         }
     }
     fn judge_noted(&self, item: &ReviewItem) -> (Verdict, Option<String>) {
-        match self.rules.judge(item) {
+        let (verdict, flagged) = self.rules.judge_noted(item);
+        match verdict {
             denied @ Verdict::Deny(_) => (denied, None),
-            _ => self.inner.judge_noted(item),
+            _ => match self.inner.judge_noted(item) {
+                // the screen's flag leads, so the audit still names the rule beside the model's own note
+                (Verdict::Defer, note) => (
+                    Verdict::Defer,
+                    match (flagged, note) {
+                        (Some(f), Some(n)) => Some(format!("{f}; {n}")),
+                        (f, n) => f.or(n),
+                    },
+                ),
+                other => other,
+            },
         }
     }
 }

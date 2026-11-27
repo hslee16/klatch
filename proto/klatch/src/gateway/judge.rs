@@ -60,6 +60,7 @@ pub fn drain<S: Store>(store: &S, judge: &dyn Judge, now: i64) -> Result<Drained
         };
         if let (Verdict::Defer, Some(note)) = (&verdict, &note) {
             audit_deferral(store, &q, note, now)?;
+            store.set_review_flag(q.id, &flag_text(note))?;
         }
         match &verdict {
             Verdict::Defer => out.deferred += 1,
@@ -72,6 +73,21 @@ pub fn drain<S: Store>(store: &S, judge: &dyn Judge, now: i64) -> Result<Drained
         }
     }
     Ok(out)
+}
+
+/// The most a reviewer is shown of a judge's deferral note.
+const FLAG_MAX: usize = 120;
+
+/// A deferral note as a reviewer reads it: plain letters, digits and `:_-;. ` only, capped. The note is derived from the
+/// screen's rule name (or a hosted judge's own fixed words), never from message text, but a reviewer reads it as an
+/// instruction-shaped line, so anything else is dropped.
+pub(crate) fn flag_text(note: &str) -> String {
+    note.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '_' | '-' | ';' | '.' | ' '))
+        .take(FLAG_MAX)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 /// Audit a deliberate deferral (a hosted verdict below its confidence band, #1013) once per queued item: the item
@@ -246,6 +262,37 @@ mod tests {
         let out = drain(&s, &flaky, 11).unwrap();
         assert_eq!((out.decided(), out.deferred), (0, 1));
         assert_eq!(s.pending_reviews(10).unwrap().len(), 1);
+    }
+
+    /// Defers on purpose with a note, as the rules judge does for a screen hit.
+    struct Flagging(&'static str);
+    impl Judge for Flagging {
+        fn judge(&self, _: &ReviewItem) -> Verdict {
+            Verdict::Defer
+        }
+        fn judge_noted(&self, _: &ReviewItem) -> (Verdict, Option<String>) {
+            (Verdict::Defer, Some(self.0.into()))
+        }
+    }
+
+    #[test]
+    fn a_deferral_note_is_kept_on_the_waiting_row_cleaned_and_replaced_by_the_verdict() {
+        let s = queued();
+        drain(&s, &Flagging("screen:injection\n<b>x</b>"), 10).unwrap();
+        let q = &s.pending_reviews(10).unwrap()[0];
+        assert_eq!(q.detail, "screen:injectionbxb");
+        assert_eq!(flag_text(&"y".repeat(1000)).len(), FLAG_MAX);
+        // a verdict replaces it, and a flag on a resolved row changes nothing
+        let id = q.id;
+        assert!(
+            s.resolve_review(
+                &crate::store::ReviewResolution::new(id, "deny", "by r: no"),
+                11
+            )
+            .unwrap()
+        );
+        s.set_review_flag(id, "late").unwrap();
+        assert_eq!(s.reviews(10).unwrap()[0].detail, "by r: no");
     }
 
     #[test]

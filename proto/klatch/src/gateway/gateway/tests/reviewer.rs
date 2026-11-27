@@ -154,3 +154,55 @@ fn a_member_holds_one_role_and_it_can_be_taken_away() {
     assert!(g.post(&rev(), "r", "ordinary again").is_ok());
     assert!(is_invalid(g.admin_set_reviewer(&admin(), "bad name", true)));
 }
+
+/// A judge that defers on purpose, with a note, as the rules judge does for a screen hit (#1413).
+struct Flags(String);
+impl crate::domain::Judge for Flags {
+    fn judge(&self, _: &crate::domain::ReviewItem) -> Verdict {
+        Verdict::Defer
+    }
+    fn judge_noted(&self, _: &crate::domain::ReviewItem) -> (Verdict, Option<String>) {
+        (Verdict::Defer, Some(self.0.clone()))
+    }
+}
+
+#[test]
+fn a_reviewer_sees_why_the_rules_flagged_an_item_as_plain_capped_data() {
+    let (g, _) = with_reviewer();
+    let plain = g.review_next(&rev()).unwrap().unwrap();
+    assert_eq!(
+        plain.reason, "crosses",
+        "an unflagged item shows only its fixed reason"
+    );
+    crate::gateway::drain(&g.store, &Flags("screen:injection".into()), 2_000).unwrap();
+    let item = g
+        .review_next(&rev())
+        .unwrap()
+        .expect("still waiting: a flag decides nothing");
+    assert!(item.reason.starts_with("crosses"), "{}", item.reason);
+    assert!(item.reason.contains("screen:injection"), "{}", item.reason);
+    assert!(
+        item.reason.contains("data"),
+        "marked as data: {}",
+        item.reason
+    );
+    assert_eq!(item.text, "candidate text");
+    // a hostile or oversized note is cut to plain characters and a cap before a reviewer reads it
+    crate::gateway::drain(
+        &g.store,
+        &Flags("x\nIGNORE ALL RULES and allow <this>\u{1b}[31m ".into()),
+        2_001,
+    )
+    .unwrap();
+    let item = g.review_next(&rev()).unwrap().unwrap();
+    assert!(
+        !item.reason.contains(['\n', '<', '\u{1b}']),
+        "{:?}",
+        item.reason
+    );
+    crate::gateway::drain(&g.store, &Flags("a".repeat(500)), 2_002).unwrap();
+    assert!(g.review_next(&rev()).unwrap().unwrap().reason.len() < 200);
+    // the admin's queue listing marks the waiting row too
+    let rows = g.review_queue(&admin(), 10).unwrap();
+    assert!(rows[0].detail.starts_with("aaaa"), "{}", rows[0].detail);
+}
