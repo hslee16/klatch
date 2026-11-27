@@ -15,6 +15,7 @@ impl MessageStore for SpyStore {
 
     fn read(&self, at: Seat, advance: bool, now: i64) -> Result<Vec<Message>> {
         self.gate()?;
+        self.reads.set(self.reads.get() + 1);
         self.inner.read(at, advance, now)
     }
 

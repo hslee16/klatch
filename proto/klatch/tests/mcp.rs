@@ -673,6 +673,8 @@ fn nothing_waiting_means_no_notice_on_klatch_post() {
 fn a_refused_post_carries_no_notice() {
     let h = Home::new();
     busy_lobby(&h);
+    // worker has one post in and has never read: the count behind the notice is 2 and would be returned if asked
+    h.ok("worker", &["post", "lobby", "ready"]);
     let mut w = started(&h, "worker");
     let r = w.call(
         "klatch_post",

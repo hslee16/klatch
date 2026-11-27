@@ -571,6 +571,8 @@ mod cancel_hook_tests;
 #[cfg(test)]
 mod facilitator_tests;
 #[cfg(test)]
+mod never_read_tests;
+#[cfg(test)]
 mod role_tests;
 #[cfg(test)]
 mod run_act_tests;

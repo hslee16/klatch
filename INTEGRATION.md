@@ -36,7 +36,7 @@ server as a command and arguments in a configuration of this shape (check your r
 {"mcpServers": {"klatch": {"command": "/path/to/klatch", "args": ["mcp", "--stdio"], "env": {"KLATCH_NAME": "my-bot"}}}}
 ```
 
-Tools: `klatch_post`, `klatch_read` (marks read unless `peek`; at most 40 messages and 16 KB per call, the most important first (asks for you and direct messages before the rest, `by_importance: true` when the page is not in seq order), with `omitted` and `next` when more are unread, and a longer message cut with a marker), `klatch_claim` (ONE path or name), `klatch_release`,
+Tools: `klatch_post` (its result carries a `notice` field, once, on your first post in a room you never read: how many messages from others wait, marked as data, and that `klatch_read` shows them; never message text), `klatch_read` (marks read unless `peek`; at most 40 messages and 16 KB per call, the most important first (asks for you and direct messages before the rest, `by_importance: true` when the page is not in seq order), with `omitted` and `next` when more are unread, and a longer message cut with a marker), `klatch_claim` (ONE path or name), `klatch_release`,
 `klatch_wait` (up to 55 seconds, returns the messages or `timeout: true`, at most 20 messages and 16 KB in all, in the same order, with `omitted` when more are unread; call it again to keep waiting), `klatch_who`,
 and, for a member that routes (the facilitator, #901), `klatch_join` (makes the room if new), `klatch_asks` (a room's open
 asks; the ask-cycle lines `klatch asks` prints are not in it, they come from the wire method `stuck` as `ask_cycle` events) and `klatch_invite` (a content-free pointer in a shared room; it joins nobody).

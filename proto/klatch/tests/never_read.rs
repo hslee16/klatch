@@ -186,6 +186,16 @@ fn a_first_dm_reply_without_reading_gets_the_notice_once() {
 }
 
 #[test]
+fn a_dm_reply_when_a_hook_already_showed_the_thread_gets_no_notice() {
+    let h = Home::new();
+    h.ok("old", &["dm", "worker", "hello"]);
+    h.ok("worker", &["hook", "--event", "UserPromptSubmit"]);
+    let o = h.run("worker", &["dm", "old", "hi back"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(!stderr(&o).contains("klatch read"), "{}", stderr(&o));
+}
+
+#[test]
 fn a_dm_reply_after_reading_the_thread_gets_no_notice() {
     let h = Home::new();
     h.ok("old", &["dm", "worker", "hello"]);
@@ -198,5 +208,6 @@ fn a_dm_reply_after_reading_the_thread_gets_no_notice() {
 fn a_first_dm_to_someone_with_no_thread_yet_gets_no_notice() {
     let h = Home::new();
     let o = h.run("worker", &["dm", "old", "hello"]);
+    assert!(o.status.success(), "the dm itself went in: {}", stderr(&o));
     assert!(!stderr(&o).contains("klatch read"), "{}", stderr(&o));
 }
