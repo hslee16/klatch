@@ -18,7 +18,12 @@ fn variants_are_proof_keys_and_other_keys_are_not() {
     for k in VARIANTS {
         assert!(is_proof_key(k), "{k:?} must be reserved");
     }
-    for k in ["label:admin-passphrase", "admin", "admin-unlock", "sealed:x"] {
+    for k in [
+        "label:admin-passphrase",
+        "admin",
+        "admin-unlock",
+        "sealed:x",
+    ] {
         assert!(!is_proof_key(k), "{k:?} must stay writable");
     }
 }
