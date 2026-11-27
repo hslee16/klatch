@@ -22,12 +22,51 @@ pub fn path_for(db: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// The most bytes of the file that are read (about 5000 attempts; the wait schedule makes that unreachable by
+/// guessing, so a larger file is damage or an attack, and never a free attempt).
+const MAX_FILE_BYTES: u64 = 64 * 1024;
+
+/// Open the file without following a symlink and without blocking (a FIFO there cannot stall the open), so that
+/// what is read and appended is the file itself, never what a link points at. `create` makes it when it is absent.
+/// Opened for reading and appending: the check and the append go through one descriptor under one lock (`charge`).
+fn open_plain(path: &Path, create: bool) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .append(create)
+        .create(create)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(path)
+}
+
+/// At most `MAX_FILE_BYTES` of an open file, and whether it held more. `None` when the descriptor is not a regular file.
+fn read_capped(file: &mut std::fs::File) -> Option<(Vec<u8>, bool)> {
+    use std::io::Read;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes).ok()?;
+    let more = bytes.len() as u64 > MAX_FILE_BYTES;
+    bytes.truncate(MAX_FILE_BYTES as usize);
+    Some((bytes, more))
+}
+
+/// The attempts of an open file: an unreadable, irregular or oversized one reads as one attempt now and a count of
+/// `u32::MAX`, so it is a wait and never a free attempt.
+fn times_of(file: &mut std::fs::File, now: i64) -> (u32, Vec<i64>) {
+    match read_capped(file) {
+        Some((bytes, false)) => lines_to_times(&bytes, now),
+        _ => (u32::MAX, vec![now]),
+    }
+}
+
 /// The time of every attempt in the file, in file order (the last line is the newest attempt whatever the clock said);
 /// a line that is not a time reads as an attempt at `now`, and a file that is not UTF-8 still has the lines it has.
-/// An unreadable file reads as one attempt and a count of `u32::MAX`, so it is a wait and never a free attempt.
+/// A file that cannot be read safely (a symlink, a FIFO, one over `MAX_FILE_BYTES`) reads as `times_of` says.
 fn read_times(db: &Path, now: i64) -> (u32, Vec<i64>) {
-    match std::fs::read(path_for(db)) {
-        Ok(bytes) => lines_to_times(&bytes, now),
+    match open_plain(&path_for(db), false) {
+        Ok(mut f) => times_of(&mut f, now),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => (0, Vec::new()),
         Err(_) => (u32::MAX, vec![now]),
     }
@@ -41,13 +80,21 @@ fn lines_to_times(bytes: &[u8], now: i64) -> (u32, Vec<i64>) {
     (u32::try_from(times.len()).unwrap_or(u32::MAX), times)
 }
 
+/// How many attempts are recorded for the store at `db` and not yet settled (`klatch doctor` shows it). A file that
+/// cannot be read safely counts as `u32::MAX`.
+pub fn attempts(db: &Path) -> u32 {
+    read_times(db, 0).0
+}
+
 /// `(attempts so far, time of the last one)`.
+#[cfg(test)]
 fn read(db: &Path, now: i64) -> (u32, i64) {
     let (count, times) = read_times(db, now);
     (count, times.iter().copied().max().unwrap_or(0))
 }
 
-/// Seconds the next attempt must wait, 0 when it may be made now.
+/// Seconds the next attempt must wait, 0 when it may be made now (`charge` decides under its lock; this is the read-only view).
+#[cfg(test)]
 pub fn wait_secs(db: &Path, now: i64) -> i64 {
     let (count, last) = read(db, now);
     limit::remaining(count, last, now)
@@ -55,18 +102,20 @@ pub fn wait_secs(db: &Path, now: i64) -> i64 {
 
 /// Charge one attempt. `Err(secs)` means the wait is not over and nothing was charged; `Err` with a message in
 /// the other arm means the file could not be written, which refuses the attempt (never grants one).
+///
+/// The check and the append are one step: the file is locked (`flock`, through std) from before it is read until the
+/// attempt is appended, so callers racing at the moment one attempt is due cannot both pass (#1636). The lock is
+/// advisory and held only by `charge`; whoever writes the file by hand is the owner, who can delete it anyway.
 pub fn charge(db: &Path, now: i64) -> Result<(), Charge> {
-    let wait = wait_secs(db, now);
+    let io = |e: std::io::Error| Charge::Io(e.to_string());
+    let mut f = open_plain(&path_for(db), true).map_err(io)?;
+    f.lock().map_err(io)?;
+    let (count, times) = times_of(&mut f, now);
+    let wait = limit::remaining(count, times.iter().copied().max().unwrap_or(0), now);
     if wait > 0 {
         return Err(Charge::Wait(wait));
     }
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path_for(db))
-        .map_err(|e| Charge::Io(e.to_string()))?;
-    f.write_all(format!("{now}\n").as_bytes())
-        .map_err(|e| Charge::Io(e.to_string()))
+    f.write_all(format!("{now}\n").as_bytes()).map_err(io)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -98,7 +147,11 @@ pub fn settle<S: PolicyStore + ?Sized>(db: &Path, store: &S, now: i64) {
     if std::fs::rename(&file, &settling).is_err() {
         return;
     }
-    let read = std::fs::read(&settling);
+    let read = open_plain(&settling, false)
+        .ok()
+        .and_then(|mut f| read_capped(&mut f))
+        .map(|(bytes, _)| bytes)
+        .ok_or(());
     if std::fs::remove_file(&settling).is_err() {
         return;
     }
@@ -195,5 +248,85 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_symlink_is_neither_read_nor_appended_through() {
+        let d = dir();
+        let db = d.join("rooms.db");
+        let target = d.join("elsewhere");
+        std::fs::write(&target, "").unwrap();
+        std::os::unix::fs::symlink(&target, path_for(&db)).unwrap();
+        assert!(matches!(charge(&db, 1000), Err(Charge::Io(_))));
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"",
+            "nothing written through the link"
+        );
+        assert!(
+            wait_secs(&db, 1000) > 0,
+            "a link reads as a wait, never a free attempt"
+        );
+    }
+
+    #[test]
+    fn a_file_over_the_cap_is_a_wait_not_a_read_of_all_of_it() {
+        let d = dir();
+        let db = d.join("rooms.db");
+        std::fs::write(path_for(&db), "1\n".repeat(200_000)).unwrap();
+        assert!(wait_secs(&db, 10_000_000) > 0);
+        assert!(matches!(charge(&db, 10_000_000), Err(Charge::Wait(_))));
+    }
+
+    #[test]
+    fn racing_callers_at_the_moment_one_attempt_is_due_get_exactly_one() {
+        for round in 0..5 {
+            let d = dir();
+            let db = std::sync::Arc::new(d.join("rooms.db"));
+            std::fs::write(path_for(&db), "1\n2\n").unwrap();
+            let handles: Vec<_> = (0..32)
+                .map(|_| {
+                    let db = db.clone();
+                    std::thread::spawn(move || charge(&db, 1000 + round).is_ok())
+                })
+                .collect();
+            let passed = handles
+                .into_iter()
+                .filter(|_| true)
+                .map(|h| h.join().unwrap())
+                .filter(|&ok| ok)
+                .count();
+            assert_eq!(passed, 1, "round {round}");
+        }
+    }
+
+    #[test]
+    fn a_time_of_i64_max_in_the_file_is_a_wait_and_does_not_overflow() {
+        let d = dir();
+        let db = d.join("rooms.db");
+        std::fs::write(path_for(&db), format!("1\n2\n3\n{}\n", i64::MAX)).unwrap();
+        assert!(wait_secs(&db, 1000) > 0);
+    }
+
+    #[test]
+    fn attempts_counts_the_file_for_the_doctor() {
+        let d = dir();
+        let db = d.join("rooms.db");
+        assert_eq!(attempts(&db), 0);
+        charge(&db, 10).unwrap();
+        charge(&db, 11).unwrap();
+        assert_eq!(attempts(&db), 2);
+    }
+
+    #[test]
+    fn the_failure_note_names_the_count_and_the_file() {
+        let d = dir();
+        let db = d.join("rooms.db");
+        charge(&db, 10).unwrap();
+        charge(&db, 11).unwrap();
+        let note = super::super::failed_attempt_note(&db);
+        assert!(note.contains("2 recovery attempts"), "{note}");
+        assert!(note.contains("recovery-fails"), "{note}");
+        assert_eq!(super::super::recovery_attempts_recorded(&db), 2);
     }
 }

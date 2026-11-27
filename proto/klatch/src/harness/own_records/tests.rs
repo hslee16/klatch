@@ -470,3 +470,23 @@ fn a_name_swapped_to_a_symlink_while_it_is_read_never_gives_the_text_behind_the_
         "the text behind a swapped-in symlink was believed ({reads} reads)"
     );
 }
+
+#[test]
+fn a_fifo_as_the_recovery_attempts_file_never_blocks_the_count_or_the_charge() {
+    // (here because the unsafe hygiene allowlist covers this directory; the code under test is proof::filelimit, #1636)
+    let d = dir("recovery-fifo");
+    let db = d.join("rooms.db");
+    let file = crate::proof::recovery_attempts_file(&db);
+    let c = std::ffi::CString::new(file.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+    let asked = db.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(crate::proof::recovery_attempts_recorded(&asked));
+    });
+    let got = rx.recv_timeout(Duration::from_secs(10));
+    if got.is_err() {
+        let _ = std::fs::OpenOptions::new().write(true).open(&file);
+    }
+    assert_eq!(got, Ok(u32::MAX), "a FIFO stalled the open");
+}
