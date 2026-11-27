@@ -5,7 +5,8 @@ use crate::store::{NewReview, QueuedReview, ReviewResolution};
 
 pub trait ReviewStore {
     /// The review queue (#48). Queue a message for a judge, oldest first back out, and record one verdict per item.
-    /// A message already waiting for the same label is not queued twice (the existing id is returned). The default
+    /// A crossing already waiting for the same message, label, requester and target room is not queued twice (the existing
+    /// id is returned); another member's, or another room's, is its own item (#1743). The default
     /// store has no queue, and says so rather than dropping the item.
     fn enqueue_review(&self, _item: &NewReview, _now: i64) -> Result<i64> {
         Err(crate::domain::Error::Backend(

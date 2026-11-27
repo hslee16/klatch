@@ -21,6 +21,7 @@ enum Fault {
     PendingKeepsResolved,
     SecondVerdictWins,
     SameMessageQueuesTwice,
+    DedupeIgnoresRequesterAndRoom,
     ListingIsOldestFirst,
     CrossingLosesItsRequester,
     DenyIsDueToApply,
@@ -260,6 +261,8 @@ impl ReviewStore for Faulty {
                 r.room == item.room
                     && r.seq == item.seq
                     && r.to_label == item.to_label
+                    && (self.fault == Fault::DedupeIgnoresRequesterAndRoom
+                        || (r.requester == item.requester && r.to_room == item.to_room))
                     && r.verdict.is_empty()
             })
         {
@@ -422,6 +425,7 @@ fn cases() -> Vec<(&'static str, Check, Fault)> {
         ("pending only while pending", c::reviews::queued_items_come_back_oldest_first_and_only_while_pending::<Faulty>, PendingKeepsResolved),
         ("verdict once", c::reviews::a_verdict_is_recorded_once::<Faulty>, SecondVerdictWins),
         ("queued once per label", c::reviews::the_limit_bounds_one_drain_and_the_same_message_queues_once_per_label::<Faulty>, SameMessageQueuesTwice),
+        ("dedupe key is the whole crossing", c::reviews::an_enqueue_matches_a_waiting_item_only_for_the_same_requester_and_target_room::<Faulty>, DedupeIgnoresRequesterAndRoom),
         ("listing newest first", c::reviews::the_listing_is_newest_first_and_keeps_resolved_items::<Faulty>, ListingIsOldestFirst),
         ("crossing keeps requester", c::reviews::a_crossing_item_keeps_its_target_requester_and_outcome::<Faulty>, CrossingLosesItsRequester),
         ("deny is never due", c::reviews::a_deny_or_a_plain_item_is_never_due_to_be_applied::<Faulty>, DenyIsDueToApply),
