@@ -1,5 +1,6 @@
 //! `klatch doctor` lists the archive files under the klatch directory and checks that each opens with the store key and
-//! has not been tampered with (#487). It reads counts only, and creates nothing.
+//! has not been tampered with (#487). It reads counts only, and creates no store or key
+//! (SQLite may make `-wal` and `-shm` beside a WAL store it reads, #1701).
 mod common;
 
 use common::*;

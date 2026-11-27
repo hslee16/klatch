@@ -236,6 +236,59 @@ impl SqliteStore {
             .set(self.audit_rows_dropped.get() + 1);
     }
 
+    /// A refusal the throttle left unwritten (#1701): counted, and added to the summary row of its minute (#1709), so
+    /// the audit shows that a flood happened and how big it was. Inside a transaction the count waits for the flush.
+    pub(super) fn note_throttled(&self, now: i64) {
+        self.count_audit_row_dropped();
+        *self
+            .throttled
+            .borrow_mut()
+            .entry(now - now.rem_euclid(60))
+            .or_default() += 1;
+        if self.conn.is_autocommit() {
+            self.flush_throttled();
+        }
+    }
+
+    /// Add `n` to the summary row of the minute starting at `minute`, making it if there is none. The row names no
+    /// key and holds only a count. One immediate transaction around the update and the insert, so two processes
+    /// cannot both make the row for one minute.
+    fn write_summary(&self, minute: i64, n: u64) -> Result<()> {
+        #[cfg(test)]
+        if self.fail_summaries.get() > 0 {
+            self.fail_summaries.set(self.fail_summaries.get() - 1);
+            return Err(crate::domain::Error::Backend("injected".into()));
+        }
+        self.immediate(|| {
+            let changed = self.exec(
+                "UPDATE admin_audit SET detail=(CAST(substr(detail,1,instr(detail,' ')-1) AS INTEGER)+?3)||' refusals throttled' \
+                 WHERE action=?1 AND target='' AND ts=?2",
+                params![THROTTLED_ACTION, minute, n as i64],
+            )?;
+            if changed == 0 {
+                self.exec(
+                    AUDIT_SQL,
+                    params![
+                        minute,
+                        THROTTLED_ACTION,
+                        "",
+                        format!("{n} refusals throttled")
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    fn flush_throttled(&self) {
+        let pending = std::mem::take(&mut *self.throttled.borrow_mut());
+        for (minute, n) in pending {
+            if self.write_summary(minute, n).is_err() {
+                *self.throttled.borrow_mut().entry(minute).or_default() += n;
+            }
+        }
+    }
+
     fn count_audit_flush_error(&self) {
         self.audit_flush_errors
             .set(self.audit_flush_errors.get() + 1);
@@ -263,6 +316,7 @@ impl SqliteStore {
             }
         }
         self.requeue(kept);
+        self.flush_throttled();
     }
 
     /// Queue a row newer than everything queued: it goes last, and the oldest go if the queue is full.
@@ -301,6 +355,9 @@ impl Drop for CloseOnUnwind<'_> {
         self.0.flush_deferred_audit();
     }
 }
+
+/// The action of the summary row of a minute whose refusals were throttled (#1709).
+const THROTTLED_ACTION: &str = "policy-refusals-throttled";
 
 /// How many audit rows that failed to write are held for a retry.
 const MAX_QUEUED: usize = 256;

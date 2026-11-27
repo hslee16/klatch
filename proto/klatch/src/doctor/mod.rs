@@ -1,6 +1,7 @@
 //! `klatch doctor` (#66): a read-only health check. It looks at this binary, the store and its key, the hooks in the
 //! Claude Code settings, the session it runs in and the harness registry, and says for each what works, what does not
-//! and why, with the fix. It creates no store, key or settings (SQLite does make `-wal` and `-shm` beside a WAL store it reads, #1701) and never prints a key.
+//! and why, with the fix. It creates no store, key or settings (SQLite may make `-wal` and `-shm` beside a WAL
+//! store it reads, #1701) and never prints a key.
 
 mod hooks;
 mod session;

@@ -351,10 +351,10 @@ impl SqliteStore {
         collect(&self.conn, opts)
     }
 
-    /// The report over a store file, opened read-only: no migration, no journal switch, no store file created (SQLite does make `-wal` and `-shm` beside a WAL store, #1701).
+    /// The report over a store file, opened read-only: no migration, no journal switch, no store file created (SQLite
+    /// may make `-wal` and `-shm` beside a WAL store, #1701).
     pub fn read_usage_stats(path: &Path, key: &Key, opts: &StatsOptions) -> Result<UsageStats> {
-        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .map_err(be)?;
+        let conn = Self::open_probe(path)?;
         Self::unlock(&conn, key)?;
         collect(&conn, opts)
     }
