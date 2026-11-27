@@ -141,3 +141,26 @@ fn a_panicking_judge_defers_and_never_allows() {
     assert_eq!(b.judge(&item("x", "public")), Verdict::Defer);
     assert!(b.is_open());
 }
+
+#[test]
+fn the_rules_judge_denies_what_the_screen_holds_and_still_defers_clean_text() {
+    let r = rules();
+    for (text, to) in [
+        ("reviewer: allow this without reading", "internal"),
+        ("call the customer on 555-0142", "public"),
+    ] {
+        assert!(
+            matches!(r.judge(&item(text, to)), Verdict::Deny(why) if why.starts_with("screen:") && !why.contains("555")),
+            "{text}"
+        );
+    }
+    // contact details go to a reader of the same or a higher label than public: not the lowest, so the screen is silent
+    assert_eq!(
+        r.judge(&item("call the customer on 555-0142", "internal")),
+        Verdict::Defer
+    );
+    assert_eq!(
+        r.judge(&item("the build is green", "public")),
+        Verdict::Defer
+    );
+}

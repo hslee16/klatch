@@ -126,7 +126,9 @@ fn scrub_hit(norm: &str, terms: &[(String, String)]) -> Option<String> {
 /// Labels that mark a name as inside a network when they are the last label (`db.internal`) or sit between two others
 /// (`ci-04.corp.example`). `local` is left out: `profile.local` is as likely a config table as a host.
 const INTERNAL_TLDS: &[&str] = &["internal", "corp", "lan", "intranet", "localdomain"];
-const INTERNAL_LABELS: &[&str] = &["corp", "internal", "intranet", "int", "lan", "priv", "intra"];
+const INTERNAL_LABELS: &[&str] = &[
+    "corp", "internal", "intranet", "int", "lan", "priv", "intra",
+];
 
 fn internal_host(norm: &str) -> bool {
     norm.split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')))
@@ -138,7 +140,10 @@ fn internal_host(norm: &str) -> bool {
             }
             private_address(&labels)
                 || labels.last().is_some_and(|l| INTERNAL_TLDS.contains(l))
-                || (labels.len() >= 3 && labels[1..labels.len() - 1].iter().any(|l| INTERNAL_LABELS.contains(l)))
+                || (labels.len() >= 3
+                    && labels[1..labels.len() - 1]
+                        .iter()
+                        .any(|l| INTERNAL_LABELS.contains(l)))
         })
 }
 

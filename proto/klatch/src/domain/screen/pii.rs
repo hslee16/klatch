@@ -2,8 +2,25 @@
 //! another language. All scans are linear in the text: each position is looked at a bounded number of times.
 
 const ROLE_MAILBOXES: &[&str] = &[
-    "support", "info", "noreply", "no-reply", "security", "press", "hello", "admin", "contact", "sales", "help",
-    "abuse", "privacy", "legal", "git", "postmaster", "webmaster", "team", "docs",
+    "support",
+    "info",
+    "noreply",
+    "no-reply",
+    "security",
+    "press",
+    "hello",
+    "admin",
+    "contact",
+    "sales",
+    "help",
+    "abuse",
+    "privacy",
+    "legal",
+    "git",
+    "postmaster",
+    "webmaster",
+    "team",
+    "docs",
 ];
 
 /// A personal email address, a phone number or a street address, in the lower-cased text.
@@ -51,7 +68,9 @@ fn digits(b: &[u8], i: usize, n: usize) -> bool {
 }
 
 fn starts_token(b: &[u8], i: usize) -> bool {
-    i == 0 || !(b[i - 1].is_ascii_alphanumeric() || matches!(b[i - 1], b'-' | b'.' | b'_' | b'#' | b'/'))
+    i == 0
+        || !(b[i - 1].is_ascii_alphanumeric()
+            || matches!(b[i - 1], b'-' | b'.' | b'_' | b'#' | b'/'))
 }
 
 fn ends_token(b: &[u8], i: usize) -> bool {
@@ -99,15 +118,31 @@ fn local_number(b: &[u8], i: usize, after_paren: bool) -> bool {
 fn international(b: &[u8], i: usize) -> bool {
     let mut n = 0;
     let mut j = i + 1;
-    while j < b.len() && j - i <= 24 && (b[j].is_ascii_digit() || matches!(b[j], b' ' | b'-' | b'.' | b'(' | b')')) {
+    while j < b.len()
+        && j - i <= 24
+        && (b[j].is_ascii_digit() || matches!(b[j], b' ' | b'-' | b'.' | b'(' | b')'))
+    {
         n += usize::from(b[j].is_ascii_digit());
         j += 1;
     }
-    j > i + 1 && b[i + 1].is_ascii_digit() && n >= 9 && !b.get(j).is_some_and(u8::is_ascii_alphanumeric)
+    j > i + 1
+        && b[i + 1].is_ascii_digit()
+        && n >= 9
+        && !b.get(j).is_some_and(u8::is_ascii_alphanumeric)
 }
 
 const STREET_SUFFIX: &[&str] = &[
-    "road", "street", "avenue", "lane", "boulevard", "rd", "ave", "blvd", "straße", "strasse", "gasse",
+    "road",
+    "street",
+    "avenue",
+    "lane",
+    "boulevard",
+    "rd",
+    "ave",
+    "blvd",
+    "straße",
+    "strasse",
+    "gasse",
 ];
 const STREET_PREFIX: &[&str] = &["calle", "rua", "rue", "avenida", "paseo"];
 
@@ -128,7 +163,10 @@ fn is_name_word(t: &str) -> bool {
 
 /// `22 Birch Hollow Road` and `Calle Ejemplo 14`: a house number and one to three words around a street word.
 fn street_address(norm: &str) -> bool {
-    let toks: Vec<&str> = norm.split(|c: char| c == ' ' || "'\"()[]{}".contains(c)).filter(|t| !t.is_empty()).collect();
+    let toks: Vec<&str> = norm
+        .split(|c: char| c == ' ' || "'\"()[]{}".contains(c))
+        .filter(|t| !t.is_empty())
+        .collect();
     for (k, t) in toks.iter().enumerate() {
         if is_number(t) {
             let end = toks.len().min(k + 5);
@@ -176,7 +214,14 @@ const ID_LABELS: &[&str] = &[
     "card number",
     "card no",
 ];
-const BIRTH_LABELS: &[&str] = &["date of birth", "date_of_birth", "dob", "born", "birthday", "geburtsdatum"];
+const BIRTH_LABELS: &[&str] = &[
+    "date of birth",
+    "date_of_birth",
+    "dob",
+    "born",
+    "birthday",
+    "geburtsdatum",
+];
 
 fn label_before_ok(norm: &str, at: usize) -> bool {
     at == 0 || !norm.as_bytes()[at - 1].is_ascii_alphanumeric()
@@ -203,7 +248,11 @@ pub(super) fn identifier(fold: &str, norm: &str) -> bool {
             norm.match_indices(l).any(|(at, m)| {
                 let end = at + m.len();
                 // a short label (`dl`, `ssn`) must be a word of its own
-                let whole = l.len() > 4 || !norm.as_bytes().get(end).is_some_and(u8::is_ascii_alphanumeric);
+                let whole = l.len() > 4
+                    || !norm
+                        .as_bytes()
+                        .get(end)
+                        .is_some_and(u8::is_ascii_alphanumeric);
                 label_before_ok(norm, at) && whole && ok(window(norm, end, 28))
             })
         })
@@ -216,8 +265,8 @@ pub(super) fn identifier(fold: &str, norm: &str) -> bool {
 }
 
 const MONTHS: &[&str] = &[
-    "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec", "janv", "févr", "enero",
-    "märz", "juni", "juli",
+    "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec", "janv",
+    "févr", "enero", "märz", "juni", "juli",
 ];
 
 /// A day-month-year or year-month-day date: `1990-06-17`, `17/06/1990`, `17.06.1990`, `June 17, 1990`.
@@ -262,7 +311,9 @@ fn iban(fold: &str) -> bool {
         (15..=34).contains(&b.len())
             && b[..2].iter().all(u8::is_ascii_uppercase)
             && b[2..4].iter().all(u8::is_ascii_digit)
-            && b[4..].iter().all(|c| c.is_ascii_digit() || c.is_ascii_uppercase())
+            && b[4..]
+                .iter()
+                .all(|c| c.is_ascii_digit() || c.is_ascii_uppercase())
             && b.iter().filter(|c| c.is_ascii_digit()).count() >= 10
     })
 }
@@ -270,7 +321,9 @@ fn iban(fold: &str) -> bool {
 /// 13 to 19 digits, grouped by single spaces or hyphens or not, that pass the Luhn check.
 fn card(b: &[u8]) -> bool {
     for i in 0..b.len() {
-        if !b[i].is_ascii_digit() || (i > 0 && (b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'-')) {
+        if !b[i].is_ascii_digit()
+            || (i > 0 && (b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'-'))
+        {
             continue;
         }
         let mut ds = Vec::with_capacity(19);
@@ -278,13 +331,18 @@ fn card(b: &[u8]) -> bool {
         while j < b.len() && ds.len() < 20 {
             if b[j].is_ascii_digit() {
                 ds.push(b[j] - b'0');
-            } else if !(matches!(b[j], b' ' | b'-') && b.get(j + 1).is_some_and(u8::is_ascii_digit) && !ds.is_empty())
+            } else if !(matches!(b[j], b' ' | b'-')
+                && b.get(j + 1).is_some_and(u8::is_ascii_digit)
+                && !ds.is_empty())
             {
                 break;
             }
             j += 1;
         }
-        if (13..=19).contains(&ds.len()) && !b.get(j).is_some_and(u8::is_ascii_alphanumeric) && luhn(&ds) {
+        if (13..=19).contains(&ds.len())
+            && !b.get(j).is_some_and(u8::is_ascii_alphanumeric)
+            && luhn(&ds)
+        {
             return true;
         }
     }

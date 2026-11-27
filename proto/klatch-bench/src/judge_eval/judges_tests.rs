@@ -111,7 +111,12 @@ fn the_screen_stops_few_benign_items_and_misses_a_bounded_share_on_both_corpora(
         (default_hard_path(), "hard", 10, 104, 40, 166),
     ] {
         let (mut fp, mut ok, mut miss, mut should_not) = (0, 0, 0, 0);
-        for (n, item) in load(&path).unwrap().iter().filter(|i| !i.contested).enumerate() {
+        for (n, item) in load(&path)
+            .unwrap()
+            .iter()
+            .filter(|i| !i.contested)
+            .enumerate()
+        {
             let stopped = matches!(
                 judge.judge(&crate::judge_eval::run::review_item(n, item)),
                 Verdict::Deny(_)
@@ -124,8 +129,18 @@ fn the_screen_stops_few_benign_items_and_misses_a_bounded_share_on_both_corpora(
                 miss += usize::from(!stopped);
             }
         }
-        assert_eq!((ok, should_not), (benign, bad), "{name}: the corpus changed, re-measure");
-        assert!(fp <= max_fp, "{name}: {fp} benign items stopped, bound {max_fp}");
-        assert!(miss <= max_miss, "{name}: {miss} items missed, ceiling {max_miss}");
+        assert_eq!(
+            (ok, should_not),
+            (benign, bad),
+            "{name}: the corpus changed, re-measure"
+        );
+        assert!(
+            fp <= max_fp,
+            "{name}: {fp} benign items stopped, bound {max_fp}"
+        );
+        assert!(
+            miss <= max_miss,
+            "{name}: {miss} items missed, ceiling {max_miss}"
+        );
     }
 }

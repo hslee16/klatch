@@ -135,7 +135,6 @@ pub use hook::{
 pub use hosted_judge::{HostedConfig, HostedJudge, HostedTransport, label_below_ceiling};
 pub use judge::{Judge, NullJudge, ReviewItem, Verdict};
 pub use judge_loop::{Breaker, Narrowed, RulesJudge};
-pub use screen::{MAX_SCREEN_BYTES, screen};
 pub use kind::{KIND_KEY, MemberKind};
 #[cfg(kani)]
 pub(crate) use labels::{ChainError, check_chain, default_cap_in, dominates_in, min_in};
@@ -158,6 +157,7 @@ pub use scope::{
     MemberAttrs, SHARED_SCOPE, WORK_ITEM_NOUNS, canonical_claim_path, claim_scope, scopes_collide,
     valid_scope, work_item_name,
 };
+pub use screen::{MAX_SCREEN_BYTES, screen};
 pub use session_budget::{BudgetLevel, PROMPT_BUDGET_BYTES, SESSION_BUDGET_BYTES};
 pub use stuck::{
     LAPSE_RECORD_CAP, LAPSE_TOTAL_CAP, LAPSED_CLAIM_MAX, LAPSED_WINDOW_SECS, StuckEvent,

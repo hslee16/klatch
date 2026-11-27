@@ -59,7 +59,13 @@ impl Judge for RulesJudge {
                 return Verdict::Deny(format!("scrub:{name}"));
             }
         }
-        match screen(&item.text, &item.from_label, &item.to_label, &self.chain, &self.terms) {
+        match screen(
+            &item.text,
+            &item.from_label,
+            &item.to_label,
+            &self.chain,
+            &self.terms,
+        ) {
             Some(reason) => Verdict::Deny(reason),
             None => Verdict::Defer,
         }

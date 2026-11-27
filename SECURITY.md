@@ -252,8 +252,10 @@ Supported versions: the newest release only, the current practice and not a poli
   who runs klatch can read every room, a dm included (`klatch admin export`), so an agent must not promise its user
   that a dm is hidden from them. klatch runs as you (DESIGN section 23): a hostile process of yours can read a dm like
   any message, except text in a sealed label, which stays encrypted everywhere but the reading agent's context. Making a dm needs no room-creation grant (decisions #631 and #672).
-- **The default channel-safety screening misses most of what it is measured on.** Its measured miss rate (items the rules did not stop, scored as if nothing else gated them) is about half
-  or more ("Channel-safety screening" below). It is a safety net, not a boundary.
+- **The default channel-safety screening is a safety net with a measured miss rate.** On text held out from the rules'
+  tuning its miss rate (items the rules did not stop, scored as if nothing else gated them) is 25.5 percent on the main
+  corpus and 36.1 percent on the hard one, and it stops 1 of 79 and 4 of 38 clean items ("Channel-safety screening"
+  below). It is not a boundary.
 - **Claims** are advisory to every route into a file other than the claim hook.
 - **Session end.** The session-end hook cannot mark a member done when its credential idle-expired (#1027).
 - **Hand-opened Claude Code sessions** are discovered through the harness registry; Linux behaviour is unobserved (#171,
@@ -282,60 +284,82 @@ scrubber list refuse a post and a crossing request that match them (the scrubber
 scanner at every label). Then a judge decides the queued crossing.
 
 **What the default judge does.** The default is the local rules judge (`klatch judge run`; no model, no network, no
-cost). It has two checks. (1) The credential scanner: private key blocks; keys and tokens of well-known shapes (npm,
-AWS access keys, GitHub, Slack, Stripe, Google API keys, bearer tokens, JSON web tokens); a password inside a URL or a
-command; a value next to a label such as a password or secret field; and the same wrapped to dodge a scan
-(zero-width characters, a value spaced out or cut over lines, base64 or hex, written backwards). It does not depend on
-a label. (2) The scrubber: the private terms the administrator listed, matched as a case-insensitive substring, only
-when the readers are below the agent cap (`private` by default). A match is a deny that names the rule, never the
-text. That is the whole of its label awareness. It never redacts, and in `klatch judge run` it never allows: text
-it does not match is left queued for the quarantined reviewer, so with no reviewer such text does not cross. The
-measurements below count "not matched" as "would cross" (the not-stopped-by-rules reading, `not_stopped_rate`), because
-that is how the bench scores a judge that has no other gate. Under the production reading (`would_cross_without_reviewer_rate`)
-those items are held, so the rules judge itself lets 0 of them cross; that figure says the rules vouch for nothing, not
-that held items are safe, since a reviewer who allows one releases it. Counting held items as reaching a reviewer, 80.7 to
-86.2 percent of all items in the runs below are deferred to one (the 2026-11-26 results README has both readings and
-the share per corpus and split).
+cost, no new dependency). It has these checks, in this order, and the first to match decides. (1) The credential scanner:
+private key blocks; keys and tokens of well-known shapes (npm, AWS access keys, GitHub, Slack, Stripe, Google API keys,
+bearer tokens, JSON web tokens); a password inside a URL or a command; a value next to a label such as a password or
+secret field; and the same wrapped to dodge a scan (zero-width characters, a value spaced out or cut over lines, base64
+or hex, written backwards). It does not depend on a label. (2) The scrubber: the private terms the administrator
+listed, matched as a case-insensitive substring and also through lookalike letters (a Cyrillic o in a Latin word),
+invisible characters, a line break or extra space between words, and the text reversed (terms of six or more characters),
+only when the readers are below the agent cap (`private` by default). (3) The screen (#1413,
+`proto/klatch/src/domain/screen/`), all hand-written linear scans with no backtracking and a 64 KiB bound (text over it
+gets only checks 1 and 2): text that addresses the judge, reviewer, filter or moderator to change its verdict (an
+instruction to ignore its rules, a forged verdict, a directive to allow or approve, a note to "the reviewer", a mode
+switch, also in Spanish, French, German, Italian, Chinese, Japanese and Russian, also written with invisible characters or
+lookalike letters, or hex or base64 encoded); personal identifiers next to their label at any label (date of birth,
+national, social security, passport, licence, account and card numbers, an IBAN, a card number that passes the Luhn
+check) and a password next to a password word in a language the scanner has no label for; personal contact details (an
+email address, a phone number, a street address) and internal host names (`*.corp.*`, `*.internal`) or private addresses
+only when the readers are the lowest label (`public` by default), since an internal reader may see a colleague's work
+details; and a short list of confidentiality phrases (layoffs, an embargo, "keep it quiet", medical leave, a term sheet,
+a settlement, an unpatched flaw and similar) when the crossing goes outward or from `private` or above. A match is a
+deny that names the rule, never the text. It never redacts, and in `klatch judge run` it never allows: text it does not
+match is left queued for the quarantined reviewer, so with no reviewer such text does not cross. The measurements below
+count "not matched" as "would cross" (the not-stopped-by-rules reading, `not_stopped_rate`), because that is how the
+bench scores a judge that has no other gate. Under the production reading (`would_cross_without_reviewer_rate`) those
+items are held, so the rules judge itself lets 0 of them cross; that figure says the rules vouch for nothing, not that held
+items are safe, since a reviewer who allows one releases it. Counting held items as reaching a reviewer, most items
+still reach one (80.7 to 86.2 percent of all items in the 2026-11-26 runs, before the screen, which stops more; the
+share per corpus and split is in `proto/klatch-bench/judge-eval/results/2026-11-26/README.md`).
 
-**How often it misses (measured, synthetic corpus).** "Miss" is an item labelled as one that should not cross
-(deny or redact) that the judge did not stop. The corpus is synthetic and labelled by one reviewer (an independent
-labeller is #924); real traffic will differ, in either direction. The numbers below are the current code, run on
-2026-11-23 for scenario S10 part 2 (commit 33bff7e8; no model call, no cost; the frozen test split is scored, not
-tuned on).
+**How often it misses (measured, synthetic corpus).** "Miss" is an item labelled as one that should not cross (deny or
+redact) that the judge did not stop. The corpus is synthetic and labelled by one reviewer (an independent labeller is
+#924); real traffic will differ, in either direction. Run on 2026-11-27 for #1413 (no model call, no cost). **The rules
+were written by reading the dev misses and frozen before the test split was run once; the test split was not studied and
+no rule changed after it was scored.** So the dev column is tuned and optimistic by construction, and the test column is
+the figure to believe. The "before" figures are the 2026-11-26 run of the code without the screen.
 
-| corpus | split | missed (should not cross; not-stopped-by-rules reading) | false positives (clean items stopped) |
-|---|---|---|---|
-| main (333 items) | dev | 41 of 79, 51.9 percent (95 percent interval 41.1 to 62.6) | 0 of 118 (interval 0 to 3.2 percent) |
-| main | test | 30 of 55, 54.5 percent (41.5 to 67.0) | 0 of 79 (0 to 4.6 percent) |
-| hard (271 items) | dev | 72 of 94, 76.6 percent (67.1 to 84.0) | 0 of 66 (0 to 5.5 percent) |
-| hard | test | 56 of 72, 77.8 percent (66.9 to 85.8) | 0 of 38 (0 to 9.2 percent) |
+| corpus | split | missed before | missed now (not-stopped reading, 95 percent interval) | clean items stopped now |
+|---|---|---|---|---|
+| main (333 items) | dev (tuned on) | 41 of 79, 51.9 percent | 5 of 79, 6.3 percent (2.7 to 14.0) | 1 of 118, 0.8 percent (0.1 to 4.6) |
+| main | test (held out) | 30 of 55, 54.5 percent | **14 of 55, 25.5 percent (15.8 to 38.3)** | 1 of 79, 1.3 percent (0.2 to 6.8) |
+| hard (271 items) | dev (tuned on) | 72 of 94, 76.6 percent | 10 of 94, 10.6 percent (5.9 to 18.5) | 4 of 66, 6.1 percent (2.4 to 14.6) |
+| hard | test (held out) | 56 of 72, 77.8 percent | **26 of 72, 36.1 percent (26.0 to 47.6)** | 4 of 38, 10.5 percent (4.2 to 24.1) |
 
-Each cell is the old reading; the production reading of every row is 0 of the same denominator, and the same run is
-re-reported under both readings in `proto/klatch-bench/judge-eval/results/2026-11-26/` (#1546). Sources: `experiments/coordbench/results-docs/s10-judge-rules.json` and `s10-judge-rules-hard.json`; corpora in
-`proto/klatch-bench/judge-eval/` (`corpus.jsonl`, `corpus-hard.jsonl`, `scrub.txt`). An earlier run of the same judge
-on the main corpus (2026-11-19, `proto/klatch-bench/judge-eval/results/2026-11-19/`) missed 51 of 79 on dev (64.6
-percent) and 36 of 55 on test (65.5 percent), and 83 of 94 (88.3 percent) and 63 of 71 (88.7 percent) on the hard
-corpus. That run predates the credential scanner changes of #921 and #987, which are in the code of the 2026-11-23
-run; the gap is in the secret categories (on the main dev split the 2026-11-19 run missed 6 secret-credential and 4
-code-log-secret items, the 2026-11-23 run none). Do not read the lower figure as "it works": it still misses about
-half. The false-positive figures are zero in every run, which says the rules are narrow, not that they are right.
+Before the screen the clean items stopped were 0 in every row; that said the rules were narrow, not right. Now the false
+positives are real and bounded: at most 3 of the 197 clean main items and 10 of the 104 clean hard ones across both splits
+(measured 2 and 8), pinned by a test in `proto/klatch-bench` (`the_screen_stops_few_benign_items_and_misses_a_bounded_share_on_both_corpora`).
+Nearly all of them are a message that quotes or discusses an injection phrase (a sentence about testing the judge, a paper,
+a code listing): the rules cannot tell a quote from an attack and hold both, so a clean message that quotes "ignore your
+instructions" will be held for the reviewer. The rest are example data (a seed file with an example email and phone
+number) and a partly masked IBAN. The row-level counts and summaries are in
+`proto/klatch-bench/judge-eval/results/2026-11-27/`; the same run under both readings is the 2026-11-26 README (#1546).
+Earlier runs: 2026-11-23 (the same 51.9 and 54.5 percent main figures; commit 33bff7e8, scenario S10 part 2) and
+2026-11-19 (`results/2026-11-19/`: 64.6 and 65.5 percent, before the credential scanner changes of #921 and #987).
+Do not read a lower figure as "it works": on the hard corpus it still misses more than a third of held-out items.
 
-**What it does NOT screen.** From the categories the corpus shows being missed (counts are misses, dev and test
-splits, in the files above):
-- Personal data: contact details, government, bank or account identifiers, addresses, dates of birth (main corpus: 14
-  and 9 misses; hard: 27 and 18).
-- Private business matter: unreleased financials, deals, legal or personnel matters, unfixed vulnerabilities,
-  roadmaps, internal host names and addresses (main: 11 and 6; hard: 8 and 9).
-- Text that addresses the judge or reviewer to change a verdict, overt or hidden in otherwise clean text (main: 13 and
-  9 across the injection categories; hard: 14 and 11).
-- The same kinds of content in languages other than English (main: 2 and 4; hard: 10 and 4).
-- A sensitive part buried in a long message, and very short messages (hard: 4 and 4 misses on long items; 2 and 4 on
-  short ones).
-- A secret that only the surrounding talk marks as one, and a passphrase of plain words (by design: the rules do not
-  guess).
-- Some variants of a listed scrub term on the hard corpus (4 and 3 misses): the match is a case-insensitive
-  substring, so a term written another way is not matched. A term nobody listed is never matched.
-- Anything that needs judgement. The rules never redact, so even a stopped item is denied whole.
+**What it does NOT screen.** From the categories the corpus shows still being missed (counts are misses, dev then
+test, main corpus then hard; the first two numbers are tuned on, so read the second):
+- Private business matter that has no confidentiality phrase: revenue against plan, runway, a customer about to churn,
+  a price quoted to one customer, a launch price, a vulnerability described without a flag word (main: 5 and 3; hard: 2
+  and 5). The rules look for a few telltale phrases, never for meaning.
+- Personal data with no label beside it: an account number after "account", a name next to a number, an address in a
+  form the street-word list lacks, a custom or foreign date format, a contact detail when the readers are internal
+  (main: 0 and 3; hard: 2 and 4). A person's name alone is never screened.
+- Text that addresses the judge in a way the lists do not carry: a forged chat transcript or closing tag, a request to
+  lower a confidence, an image description or a quoted email addressed to "the reviewing model", a role play, a
+  hypothetical, and phrasings in languages beyond the seven listed (main: 0 and 6; hard: 1 and 8).
+- Other languages in general: the injection and label lists are short, and Chinese, Japanese, Russian and Hindi text is
+  matched only on listed phrases (main: 0 and 2; hard: 2 and 3).
+- A sensitive part buried in a long message (hard: 2 and 4) and very short ones (hard: 1 and 1), and any message over
+  64 KiB beyond the credential scanner and the scrub list.
+- A secret that only the surrounding talk marks as one, a bare passphrase of plain words, and a bare spelled-out secret
+  (by design: the rules do not guess).
+- A scrub term written with spaces between its letters, or with the words reordered. A term nobody listed is never
+  matched.
+- Anything that needs judgement. The rules never redact, so even a stopped item is denied whole, and a clean message
+  that quotes an injection phrase is held with the bad ones.
+Everything above is held for the reviewer if the rules do not match it; the rules never allow anything.
 
 **The opt-in model judge (not the default).** `klatch judge run --hosted-judge <model> --hosted-ceiling <label>`
 adds a Claude model, run by your own `claude` program with your own credentials, after the rules (a rules deny
@@ -359,8 +383,8 @@ boundary. Keep sensitive material (personal data, private business matter, anyth
 place) out of rooms that anything crosses from. Make labels, clearance and scopes the control: put sensitive work in a
 room labelled above the rooms that others read, give members the lowest clearance that works, seal labels that need it,
 and keep the reviewer role for a person or an agent you trust to read what the rules leave queued. List your own private
-terms in the scrubber. Improving the rules is tracked in #1413 (part 2); until a rerun shows a lower miss rate on a
-held-out split, assume the figures above.
+terms in the scrubber. Assume the held-out figures above, not the dev ones; #1413 stays open until the benchmark metric
+is rerun.
 
 ## Reporting a problem
 
