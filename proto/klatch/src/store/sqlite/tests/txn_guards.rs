@@ -90,6 +90,12 @@ fn a_failed_row_outside_a_transaction_is_queued_and_written_later() {
     s.conn.execute_batch(NO_AUDIT).unwrap();
     s.audit_refusal(ACTION, "k", 1);
     assert_eq!(s.audit_flush_errors(), 1);
+    s.immediate(|| Ok(())).unwrap();
+    assert_eq!(
+        s.audit_flush_errors(),
+        1,
+        "a second failed flush is not a second failure"
+    );
     s.conn.execute_batch("DROP TRIGGER no_audit").unwrap();
     s.immediate(|| Ok(())).unwrap();
     assert_eq!(audit_rows(&s), 1, "the row was retried");
@@ -121,4 +127,90 @@ fn the_retry_queue_keeps_the_newest_256_rows_and_counts_the_rest_as_dropped() {
         oldest, 44,
         "the 44 oldest (ts 0..=43) were the ones dropped"
     );
+}
+
+fn queued(s: &SqliteStore) -> Vec<(String, i64)> {
+    s.deferred_audit
+        .borrow()
+        .iter()
+        .map(|r| (r.1.clone(), r.2))
+        .collect()
+}
+
+#[test]
+fn a_new_failed_row_outside_a_transaction_goes_behind_the_queued_ones() {
+    let s = SqliteStore::open_in_memory().unwrap();
+    s.conn.execute_batch(NO_AUDIT).unwrap();
+    s.immediate(|| {
+        s.audit_refusal(ACTION, "a", 1);
+        Ok(())
+    })
+    .unwrap();
+    s.audit_refusal(ACTION, "b", 2);
+    assert_eq!(queued(&s), vec![("a".into(), 1), ("b".into(), 2)]);
+}
+
+#[test]
+fn a_full_queue_drops_the_oldest_row_never_the_new_one() {
+    let s = SqliteStore::open_in_memory().unwrap();
+    s.conn.execute_batch(NO_AUDIT).unwrap();
+    s.immediate(|| {
+        for i in 0..256 {
+            s.audit_refusal(ACTION, "k", i);
+        }
+        Ok(())
+    })
+    .unwrap();
+    s.audit_refusal(ACTION, "new", 256);
+    let q = queued(&s);
+    assert_eq!(q.len(), 256);
+    assert_eq!(q.first().unwrap().1, 1, "the oldest (ts 0) was dropped");
+    assert_eq!(q.last().unwrap(), &("new".to_string(), 256));
+    assert_eq!(s.audit_rows_dropped(), 1);
+}
+
+#[test]
+fn a_snapshot_and_a_plain_read_close_a_dead_transaction_first() {
+    let s = SqliteStore::open_in_memory().unwrap();
+    s.fail_rollbacks.set(1);
+    let _ = s.immediate(|| -> crate::domain::Result<()> {
+        s.policy_set("label:dead", Some("1"), 1).unwrap();
+        Err(Error::Backend("x".into()))
+    });
+    assert!(!s.conn.is_autocommit());
+    assert_eq!(
+        s.policy_get("label:dead").unwrap(),
+        None,
+        "no uncommitted row is seen"
+    );
+    assert!(s.conn.is_autocommit());
+    s.fail_rollbacks.set(1);
+    let _ = s.immediate(|| -> crate::domain::Result<()> { Err(Error::Backend("x".into())) });
+    assert_eq!(s.snapshot(|| Ok(7)).unwrap(), 7);
+}
+
+#[test]
+fn a_snapshot_and_a_read_refuse_a_dead_transaction_that_will_not_close() {
+    let s = SqliteStore::open_in_memory().unwrap();
+    s.fail_rollbacks.set(3);
+    let _ = s.immediate(|| -> crate::domain::Result<()> { Err(Error::Backend("x".into())) });
+    let mut ran = false;
+    assert!(
+        s.snapshot(|| {
+            ran = true;
+            Ok(())
+        })
+        .is_err()
+    );
+    assert!(!ran);
+    assert!(s.policy_get("label:x").is_err(), "a read refuses too");
+}
+
+#[test]
+fn a_write_inside_a_snapshot_is_an_error_not_a_silent_rollback() {
+    let s = SqliteStore::open_in_memory().unwrap();
+    let r = s.snapshot(|| s.policy_set("label:w", Some("1"), 1));
+    assert!(r.is_err(), "{r:?}");
+    assert!(s.conn.is_autocommit());
+    assert_eq!(s.policy_get("label:w").unwrap(), None);
 }

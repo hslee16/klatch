@@ -31,8 +31,10 @@ impl SqliteStore {
 
     /// Run `f` in one read transaction: a consistent snapshot that never takes the writer lock. `f` must only read.
     pub(super) fn snapshot<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
+        self.clear_dead_txn()?;
         self.conn.execute_batch("BEGIN").map_err(be)?;
         self.owns_txn.set(true);
+        self.read_only_txn.set(true);
         // a panic in `f` unwinds through this guard, which rolls back (#1676)
         let guard = CloseOnUnwind(self);
         let out = f();
@@ -96,6 +98,7 @@ impl SqliteStore {
 
     /// Run one statement; how many rows it changed.
     pub(super) fn exec(&self, sql: &str, params: impl rusqlite::Params) -> Result<usize> {
+        self.clear_dead_txn()?;
         self.conn.execute(sql, params).map_err(be)
     }
 
@@ -106,6 +109,7 @@ impl SqliteStore {
         params: impl rusqlite::Params,
         map: impl FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
     ) -> Result<Option<T>> {
+        self.clear_dead_txn()?;
         match self.conn.query_row(sql, params, map) {
             Ok(v) => Ok(Some(v)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -120,6 +124,7 @@ impl SqliteStore {
         params: impl rusqlite::Params,
         map: impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
     ) -> Result<Vec<T>> {
+        self.clear_dead_txn()?;
         let mut st = self.conn.prepare(sql).map_err(be)?;
         st.query_map(params, map)
             .map_err(be)?
@@ -127,22 +132,20 @@ impl SqliteStore {
             .map_err(be)
     }
 
-    /// Run `f` as one write transaction. Inside one already open (a caller's `atomically`), `f` joins it and the
-    /// outer commit or rollback decides, so the single statements here nest without a second `BEGIN`.
+    /// Run `f` as one write transaction. Inside one this store opened (a caller's `atomically`), `f` joins it and the
+    /// outer commit or rollback decides, so the single statements here nest without a second `BEGIN`. A transaction
+    /// the store did not open is a dead one (#1678) and is closed first, or the call fails. Inside a `snapshot` a
+    /// write is an error, never a silent rollback.
     pub(super) fn immediate<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
-        if !self.conn.is_autocommit() {
-            if self.owns_txn.get() {
-                return f();
-            }
-            // an open transaction this store did not open is a dead one (a ROLLBACK failed, #1678): close it, and
-            // refuse to run inside it if it will not close
-            self.close_failed();
-            if !self.conn.is_autocommit() {
+        if !self.conn.is_autocommit() && self.owns_txn.get() {
+            if self.read_only_txn.get() {
                 return Err(crate::domain::Error::Backend(
-                    "a transaction left open by a failed rollback could not be closed".into(),
+                    "a write inside a read snapshot".into(),
                 ));
             }
+            return f();
         }
+        self.clear_dead_txn()?;
         self.conn.execute_batch("BEGIN IMMEDIATE").map_err(be)?;
         self.owns_txn.set(true);
         // a panic in `f` unwinds through this guard, which closes the transaction (#1591): a later write would
@@ -158,6 +161,20 @@ impl SqliteStore {
         out
     }
 
+    /// An open transaction this store did not open is a dead one (a ROLLBACK failed, #1678): close it, or fail
+    /// rather than run inside it, so no read sees its uncommitted rows and no write joins it.
+    fn clear_dead_txn(&self) -> Result<()> {
+        if !self.conn.is_autocommit() && !self.owns_txn.get() {
+            self.close_failed();
+            if !self.conn.is_autocommit() {
+                return Err(crate::domain::Error::Backend(
+                    "a transaction left open by a failed rollback could not be closed".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Roll back whatever transaction is still open: after a failed `f`, or a COMMIT that failed (BUSY, a deferred
     /// constraint) and left it open (#1592). A no-op once the transaction has closed.
     fn close_failed(&self) {
@@ -165,6 +182,7 @@ impl SqliteStore {
             self.rollback_errors.set(self.rollback_errors.get() + 1);
         }
         self.owns_txn.set(false);
+        self.read_only_txn.set(false);
     }
 
     /// ROLLBACK; whether it succeeded.
@@ -187,7 +205,7 @@ impl SqliteStore {
             {
                 // queued for the next flush like a row made inside a transaction (#1677)
                 self.count_audit_flush_error();
-                self.requeue(vec![(action, target.to_string(), now, true)]);
+                self.queue_back((action, target.to_string(), now, true));
             }
         } else {
             self.deferred_audit
@@ -240,6 +258,20 @@ impl SqliteStore {
         self.requeue(kept);
     }
 
+    /// Queue a row newer than everything queued: it goes last, and the oldest go if the queue is full.
+    fn queue_back(&self, row: QueuedAudit) {
+        let mut q = self.deferred_audit.borrow_mut();
+        q.push(row);
+        self.trim(&mut q);
+    }
+
+    fn trim(&self, q: &mut Vec<QueuedAudit>) {
+        let over = q.len().saturating_sub(MAX_QUEUED);
+        q.drain(..over);
+        self.audit_rows_dropped
+            .set(self.audit_rows_dropped.get() + over as u64);
+    }
+
     /// Put `kept` (older) back in front of what was queued meanwhile; past `MAX_QUEUED` the oldest are dropped and
     /// counted (`audit_rows_dropped`).
     fn requeue(&self, mut kept: Vec<QueuedAudit>) {
@@ -248,10 +280,7 @@ impl SqliteStore {
         }
         let mut q = self.deferred_audit.borrow_mut();
         kept.append(&mut q);
-        let over = kept.len().saturating_sub(MAX_QUEUED);
-        kept.drain(..over);
-        self.audit_rows_dropped
-            .set(self.audit_rows_dropped.get() + over as u64);
+        self.trim(&mut kept);
         *q = kept;
     }
 }

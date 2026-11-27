@@ -20,28 +20,30 @@ fn q<'a>(action: &'a str, targets: &'a [&'a str], since: i64, cap: u64) -> Censu
 }
 
 fn fill(s: &SqliteStore, old: usize, inside: usize) {
-    s.conn.execute_batch("BEGIN").unwrap();
-    for i in 0..old {
-        let at = NOW - 2 * WINDOW - i as i64;
-        s.record_audit(
-            &NewAudit::new(ACTION, "", &format!("failures=1 terminal=old{i}")),
-            at,
-        )
-        .unwrap();
-    }
-    for i in 0..inside {
-        let target = if i % 5 == 0 { "recovery" } else { "" };
-        let at = NOW - i as i64;
-        let detail = format!("failures=1 terminal=t{}", i % 7);
-        s.record_audit(&NewAudit::new(ACTION, target, &detail), at)
+    s.immediate(|| {
+        for i in 0..old {
+            let at = NOW - 2 * WINDOW - i as i64;
+            s.record_audit(
+                &NewAudit::new(ACTION, "", &format!("failures=1 terminal=old{i}")),
+                at,
+            )
             .unwrap();
-    }
-    // noise the census must not count: another action, and another target of the same action
-    s.record_audit(&NewAudit::new("other", "", "terminal=x"), NOW)
-        .unwrap();
-    s.record_audit(&NewAudit::new(ACTION, "elsewhere", "terminal=y"), NOW)
-        .unwrap();
-    s.conn.execute_batch("COMMIT").unwrap();
+        }
+        for i in 0..inside {
+            let target = if i % 5 == 0 { "recovery" } else { "" };
+            let at = NOW - i as i64;
+            let detail = format!("failures=1 terminal=t{}", i % 7);
+            s.record_audit(&NewAudit::new(ACTION, target, &detail), at)
+                .unwrap();
+        }
+        // noise the census must not count: another action, and another target of the same action
+        s.record_audit(&NewAudit::new("other", "", "terminal=x"), NOW)
+            .unwrap();
+        s.record_audit(&NewAudit::new(ACTION, "elsewhere", "terminal=y"), NOW)
+            .unwrap();
+        Ok(())
+    })
+    .unwrap();
 }
 
 #[test]

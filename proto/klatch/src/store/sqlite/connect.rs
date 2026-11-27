@@ -264,6 +264,7 @@ impl SqliteStore {
             audit_rows_dropped: std::cell::Cell::default(),
             rollback_errors: std::cell::Cell::default(),
             owns_txn: std::cell::Cell::default(),
+            read_only_txn: std::cell::Cell::default(),
             #[cfg(test)]
             fail_rollbacks: std::cell::Cell::default(),
         })
