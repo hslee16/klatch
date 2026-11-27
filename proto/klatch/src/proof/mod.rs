@@ -477,6 +477,15 @@ pub fn recovery_attempts_recorded(db: &std::path::Path) -> u32 {
     filelimit::attempts(db)
 }
 
+/// "1 recovery attempt is" or "N recovery attempts are".
+pub fn attempts_phrase(n: u32) -> String {
+    if n == 1 {
+        "1 recovery attempt is".into()
+    } else {
+        format!("{n} recovery attempts are")
+    }
+}
+
 /// The file of recovery attempts for the store at `db`.
 pub fn recovery_attempts_file(db: &std::path::Path) -> std::path::PathBuf {
     filelimit::path_for(db)
@@ -485,8 +494,8 @@ pub fn recovery_attempts_file(db: &std::path::Path) -> std::path::PathBuf {
 /// The line written to stderr when a recovery code was wrong: how many attempts the store has on record.
 pub fn failed_attempt_note(db: &std::path::Path) -> String {
     format!(
-        "klatch: that recovery code was wrong; {} recovery attempts are on record in {} until a recovery succeeds (`klatch doctor` shows the count)",
-        filelimit::attempts(db),
+        "klatch: that recovery code was wrong; {} on record in {} until a recovery succeeds (`klatch doctor` shows the count)",
+        attempts_phrase(filelimit::attempts(db)),
         filelimit::path_for(db).display()
     )
 }

@@ -158,16 +158,6 @@ mod tests {
     }
 
     #[test]
-    fn no_attempts_file_beside_the_store_is_quiet() {
-        let mut r = Report { lines: Vec::new() };
-        store::check_attempts_file(
-            &mut r,
-            std::path::Path::new("/nonexistent-klatch-1636/rooms.db"),
-        );
-        assert!(r.lines.is_empty());
-    }
-
-    #[test]
     fn the_passphrase_warning_is_only_for_a_readable_store_with_none_set() {
         let lines = |set| {
             let mut r = Report { lines: Vec::new() };

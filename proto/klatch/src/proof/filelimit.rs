@@ -35,14 +35,17 @@ fn open_plain(path: &Path, create: bool) -> std::io::Result<std::fs::File> {
         .read(true)
         .append(create)
         .create(create)
+        .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
         .open(path)
 }
 
-/// At most `MAX_FILE_BYTES` of an open file, and whether it held more. `None` when the descriptor is not a regular file.
+/// At most `MAX_FILE_BYTES` of an open file, and whether it held more. `None` when the descriptor is not a regular
+/// file with one link (a hard link would let a write land in a file that is not ours).
 fn read_capped(file: &mut std::fs::File) -> Option<(Vec<u8>, bool)> {
     use std::io::Read;
-    if !file.metadata().ok()?.is_file() {
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() || std::os::unix::fs::MetadataExt::nlink(&meta) != 1 {
         return None;
     }
     let mut bytes = Vec::new();
@@ -108,14 +111,48 @@ pub fn wait_secs(db: &Path, now: i64) -> i64 {
 /// advisory and held only by `charge`; whoever writes the file by hand is the owner, who can delete it anyway.
 pub fn charge(db: &Path, now: i64) -> Result<(), Charge> {
     let io = |e: std::io::Error| Charge::Io(e.to_string());
-    let mut f = open_plain(&path_for(db), true).map_err(io)?;
-    f.lock().map_err(io)?;
-    let (count, times) = times_of(&mut f, now);
+    let file = path_for(db);
+    let mut f = open_plain(&file, true).map_err(io)?;
+    lock_within(&f, &file)?;
+    let (count, times) = match read_capped(&mut f) {
+        Some((bytes, false)) => lines_to_times(&bytes, now),
+        _ => {
+            return Err(Charge::Io(format!(
+                "{} is not a plain file of one link, or it is over {MAX_FILE_BYTES} bytes; inspect it and remove it",
+                file.display()
+            )));
+        }
+    };
     let wait = limit::remaining(count, times.iter().copied().max().unwrap_or(0), now);
     if wait > 0 {
         return Err(Charge::Wait(wait));
     }
     f.write_all(format!("{now}\n").as_bytes()).map_err(io)
+}
+
+/// How long `charge` waits for another holder of the lock before it refuses.
+const LOCK_PATIENCE: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Take the exclusive lock, trying for `LOCK_PATIENCE`: a process that holds the file's lock (it needs only a readable
+/// descriptor) must not make every recovery wait forever without a word. Refused, never granted.
+fn lock_within(f: &std::fs::File, file: &Path) -> Result<(), Charge> {
+    use std::fs::TryLockError;
+    let end = std::time::Instant::now() + LOCK_PATIENCE;
+    loop {
+        match f.try_lock() {
+            Ok(()) => return Ok(()),
+            Err(TryLockError::WouldBlock) if std::time::Instant::now() < end => {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Err(TryLockError::WouldBlock) => {
+                return Err(Charge::Io(format!(
+                    "{} is locked by another process; find what holds it and try again",
+                    file.display()
+                )));
+            }
+            Err(TryLockError::Error(e)) => return Err(Charge::Io(e.to_string())),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -275,29 +312,7 @@ mod tests {
         let db = d.join("rooms.db");
         std::fs::write(path_for(&db), "1\n".repeat(200_000)).unwrap();
         assert!(wait_secs(&db, 10_000_000) > 0);
-        assert!(matches!(charge(&db, 10_000_000), Err(Charge::Wait(_))));
-    }
-
-    #[test]
-    fn racing_callers_at_the_moment_one_attempt_is_due_get_exactly_one() {
-        for round in 0..5 {
-            let d = dir();
-            let db = std::sync::Arc::new(d.join("rooms.db"));
-            std::fs::write(path_for(&db), "1\n2\n").unwrap();
-            let handles: Vec<_> = (0..32)
-                .map(|_| {
-                    let db = db.clone();
-                    std::thread::spawn(move || charge(&db, 1000 + round).is_ok())
-                })
-                .collect();
-            let passed = handles
-                .into_iter()
-                .filter(|_| true)
-                .map(|h| h.join().unwrap())
-                .filter(|&ok| ok)
-                .count();
-            assert_eq!(passed, 1, "round {round}");
-        }
+        assert!(matches!(charge(&db, 10_000_000), Err(Charge::Io(_))));
     }
 
     #[test]
@@ -328,5 +343,127 @@ mod tests {
         assert!(note.contains("2 recovery attempts"), "{note}");
         assert!(note.contains("recovery-fails"), "{note}");
         assert_eq!(super::super::recovery_attempts_recorded(&db), 2);
+    }
+
+    fn mkfifo(path: &Path) {
+        // `sh` is on the no-telemetry program list; a unit test may use it, and no unsafe site is added (#1636)
+        let ok = std::process::Command::new("sh")
+            .args(["-c", "mkfifo \"$0\""])
+            .arg(path)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "mkfifo");
+    }
+
+    #[test]
+    fn a_fifo_never_blocks_the_count_or_the_charge() {
+        let d = dir();
+        let db = d.join("rooms.db");
+        mkfifo(&path_for(&db));
+        let got = crate::sync::within(std::time::Duration::from_secs(5), move || {
+            (attempts(&db), charge(&db, 1000))
+        });
+        let (count, charged) = got.expect("the FIFO blocked the count or the charge");
+        assert_eq!(count, u32::MAX);
+        assert!(matches!(charged, Err(Charge::Io(_))), "{charged:?}");
+    }
+
+    #[test]
+    fn racing_callers_at_the_moment_one_attempt_is_due_get_exactly_one() {
+        for round in 0..5 {
+            let d = dir();
+            let db = std::sync::Arc::new(d.join("rooms.db"));
+            std::fs::write(path_for(&db), "1\n2\n").unwrap();
+            let gate = std::sync::Arc::new(std::sync::Barrier::new(32));
+            let handles: Vec<_> = (0..32)
+                .map(|_| {
+                    let (db, gate) = (db.clone(), gate.clone());
+                    std::thread::spawn(move || {
+                        gate.wait();
+                        charge(&db, 1000 + round).is_ok()
+                    })
+                })
+                .collect();
+            let passed = handles
+                .into_iter()
+                .filter(|_| true)
+                .map(|h| h.join().unwrap())
+                .filter(|&ok| ok)
+                .count();
+            assert_eq!(passed, 1, "round {round}");
+        }
+    }
+
+    #[test]
+    fn a_lock_held_elsewhere_refuses_within_the_bound_naming_the_file() {
+        let d = dir();
+        let db = d.join("rooms.db");
+        std::fs::write(path_for(&db), "").unwrap();
+        let holder = std::fs::File::open(path_for(&db)).unwrap();
+        holder.lock().unwrap();
+        let asked = db.clone();
+        let got = crate::sync::within(std::time::Duration::from_secs(10), move || {
+            charge(&asked, 1000)
+        });
+        let got = got.expect("charge blocked forever on a lock held by another process");
+        match got {
+            Err(Charge::Io(m)) => {
+                assert!(m.contains("recovery-fails") && m.contains("locked"), "{m}")
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            std::fs::read(path_for(&db)).unwrap(),
+            b"",
+            "nothing charged"
+        );
+    }
+
+    #[test]
+    fn an_oversized_file_is_refused_with_a_message_naming_the_file_not_a_wait() {
+        let d = dir();
+        let db = d.join("rooms.db");
+        std::fs::write(path_for(&db), "1\n".repeat(200_000)).unwrap();
+        match charge(&db, 10_000_000) {
+            Err(Charge::Io(m)) => {
+                assert!(m.contains("recovery-fails") && m.contains("remove"), "{m}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_hard_link_is_never_appended_through() {
+        let d = dir();
+        let db = d.join("rooms.db");
+        let victim = d.join("victim.txt");
+        std::fs::write(&victim, "keep\n").unwrap();
+        std::fs::hard_link(&victim, path_for(&db)).unwrap();
+        assert!(matches!(charge(&db, 1000), Err(Charge::Io(_))));
+        assert_eq!(std::fs::read(&victim).unwrap(), b"keep\n");
+        assert_eq!(attempts(&db), u32::MAX, "a linked file reads as a wait");
+    }
+
+    #[test]
+    fn the_file_is_made_private_to_the_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = dir();
+        let db = d.join("rooms.db");
+        charge(&db, 1000).unwrap();
+        let mode = std::fs::metadata(path_for(&db))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn one_attempt_is_said_in_the_singular() {
+        let d = dir();
+        let db = d.join("rooms.db");
+        charge(&db, 10).unwrap();
+        let note = super::super::failed_attempt_note(&db);
+        assert!(note.contains("1 recovery attempt is"), "{note}");
     }
 }

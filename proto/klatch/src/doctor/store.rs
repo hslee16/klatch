@@ -369,7 +369,8 @@ pub(super) fn report_recovery_attempts(r: &mut Report, n: u32, file: &Path) {
     r.add(
         Status::Warn,
         format!(
-            "{n} recovery attempts are recorded in {} and no recovery has settled them yet (a count of {} means the file could not be read safely: a link, a pipe or one over the size cap)",
+            "{} recorded in {} and no recovery has settled any yet (a count of {} means the file could not be read safely: a link, a pipe or one over the size cap)",
+            klatch::proof::attempts_phrase(n),
             file.display(),
             u32::MAX
         ),
