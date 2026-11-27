@@ -46,14 +46,12 @@ pub(super) fn dirs_up_to(cwd: &Path, root: &Path) -> Vec<PathBuf> {
 /// The file is opened once, without blocking, and every check after that is on the open handle, so a swap between a
 /// check and the read (a FIFO, a huge file) cannot hang or outgrow the cap.
 pub(super) fn look(file: &Path, within: &Path, follow_dir: bool) -> Option<Seen> {
-    if !follow_dir {
-        if let Some(dir) = file.parent() {
-            match std::fs::symlink_metadata(dir) {
-                Ok(m) if m.file_type().is_symlink() => return None,
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some(Seen::Absent),
-                Err(_) => return None,
-            }
+    if let (false, Some(dir)) = (follow_dir, file.parent()) {
+        match std::fs::symlink_metadata(dir) {
+            Ok(m) if m.file_type().is_symlink() => return None,
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some(Seen::Absent),
+            Err(_) => return None,
         }
     }
     let meta = match std::fs::symlink_metadata(file) {
