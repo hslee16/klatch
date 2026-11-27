@@ -19,44 +19,44 @@
         [
           34,
           0,
-          4,
-          0
+          0,
+          4
         ],
         [
           6,
           0,
-          24,
-          0
+          0,
+          24
         ],
         [
-          20,
+          21,
           0,
-          22,
-          0
+          16,
+          5
         ]
       ]
     },
-    "leaks": 26,
-    "leak_rate": 0.3611111111111111,
+    "leaks": 27,
+    "leak_rate": 0.375,
     "redaction_leaks": 0,
-    "data_leaks": 26,
-    "data_leak_rate": 0.3611111111111111,
+    "data_leaks": 27,
+    "data_leak_rate": 0.375,
     "contested": [],
-    "overblocks": 4,
-    "overblock_rate": 0.10526315789473684,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
     "softened": 0,
-    "defers": 0,
-    "defer_rate": 0.0,
+    "defers": 33,
+    "defer_rate": 0.3,
     "errors": 0,
     "staged": 0,
     "escalated": 0,
     "escalation_rate": null,
-    "accuracy": 0.509090909090909,
-    "accuracy_decided": 0.509090909090909,
+    "accuracy": 0.45454545454545453,
+    "accuracy_decided": 0.6493506493506493,
     "per_verdict": [
       {
         "verdict": "allow",
-        "precision": 0.5666666666666667,
+        "precision": 0.5573770491803278,
         "recall": 0.8947368421052632
       },
       {
@@ -66,12 +66,12 @@
       },
       {
         "verdict": "deny",
-        "precision": 0.44,
-        "recall": 0.5238095238095238
+        "precision": 1.0,
+        "recall": 0.38095238095238093
       }
     ],
-    "latency_p50_ms": 0.1714159999999998,
-    "latency_p99_ms": 27.858833999999998,
+    "latency_p50_ms": 0.1745420000000002,
+    "latency_p99_ms": 27.842417000000005,
     "tokens_in": null,
     "tokens_out": null,
     "cost_usd": null,
@@ -86,7 +86,7 @@
         "correct": 1,
         "leaks": 5,
         "overblocks": 0,
-        "defers": 0
+        "defers": 4
       },
       {
         "category": "code-log-clean",
@@ -110,7 +110,7 @@
         "correct": 5,
         "leaks": 0,
         "overblocks": 0,
-        "defers": 0
+        "defers": 1
       },
       {
         "category": "harmless-name",
@@ -118,23 +118,23 @@
         "correct": 2,
         "leaks": 0,
         "overblocks": 0,
-        "defers": 0
+        "defers": 1
       },
       {
         "category": "injection-hidden",
         "n": 6,
-        "correct": 3,
-        "leaks": 3,
+        "correct": 0,
+        "leaks": 4,
         "overblocks": 0,
-        "defers": 0
+        "defers": 2
       },
       {
         "category": "injection-lookalike",
         "n": 6,
         "correct": 4,
         "leaks": 1,
-        "overblocks": 1,
-        "defers": 0
+        "overblocks": 0,
+        "defers": 1
       },
       {
         "category": "injection-overt",
@@ -157,16 +157,16 @@
         "n": 9,
         "correct": 4,
         "leaks": 3,
-        "overblocks": 1,
-        "defers": 0
+        "overblocks": 0,
+        "defers": 2
       },
       {
         "category": "personal-data",
         "n": 20,
         "correct": 0,
         "leaks": 4,
-        "overblocks": 2,
-        "defers": 0
+        "overblocks": 0,
+        "defers": 16
       },
       {
         "category": "public-chatter",
@@ -174,15 +174,15 @@
         "correct": 2,
         "leaks": 0,
         "overblocks": 0,
-        "defers": 0
+        "defers": 1
       },
       {
         "category": "scrub-term",
         "n": 6,
-        "correct": 5,
+        "correct": 3,
         "leaks": 1,
         "overblocks": 0,
-        "defers": 0
+        "defers": 2
       },
       {
         "category": "secret-credential",
@@ -203,51 +203,55 @@
       {
         "category": "short",
         "n": 5,
-        "correct": 2,
+        "correct": 1,
         "leaks": 1,
         "overblocks": 0,
-        "defers": 0
+        "defers": 3
       },
       {
         "category": "injection (all)",
         "n": 16,
-        "correct": 7,
-        "leaks": 8,
-        "overblocks": 1,
-        "defers": 0
+        "correct": 4,
+        "leaks": 9,
+        "overblocks": 0,
+        "defers": 3
       }
     ]
   },
   "semantics": {
+    "flagged_clean": 4,
+    "clean": 38,
+    "flagged_should_not_cross": 45,
+    "should_not_cross": 72,
     "not_stopped_by_rules": {
       "semantics": "not-stopped-by-rules",
       "leak_metric": "not_stopped_rate",
       "n": 110,
-      "blocked_by_rules": 50,
-      "deferred_to_reviewer": 0,
-      "allowed_by_rules": 60,
+      "blocked_by_rules": 16,
+      "deferred_to_reviewer": 33,
+      "allowed_by_rules": 61,
       "should_not_cross": 72,
-      "should_not_cross_blocked": 46,
-      "should_not_cross_deferred": 0,
-      "should_not_cross_allowed": 26,
-      "leaked": 26,
-      "not_stopped_rate": 0.3611111111111111
+      "should_not_cross_blocked": 16,
+      "should_not_cross_deferred": 29,
+      "should_not_cross_allowed": 27,
+      "leaked": 27,
+      "not_stopped_rate": 0.375
     },
     "production": {
       "semantics": "production",
       "leak_metric": "would_cross_without_reviewer_rate",
       "n": 110,
-      "blocked_by_rules": 50,
-      "deferred_to_reviewer": 60,
+      "blocked_by_rules": 16,
+      "deferred_to_reviewer": 94,
       "allowed_by_rules": 0,
       "should_not_cross": 72,
-      "should_not_cross_blocked": 46,
-      "should_not_cross_deferred": 26,
+      "should_not_cross_blocked": 16,
+      "should_not_cross_deferred": 56,
       "should_not_cross_allowed": 0,
       "leaked": 0,
       "would_cross_without_reviewer_rate": 0.0
     },
-    "reaches_reviewer": 60,
-    "reaches_reviewer_rate": 0.5454545454545454
+    "reaches_reviewer": 94,
+    "reaches_reviewer_rate": 0.8545454545454545
   }
 }

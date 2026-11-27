@@ -17,30 +17,30 @@
       ],
       "counts": [
         [
-          78,
+          79,
           0,
-          1,
+          0,
           0
         ],
         [
-          3,
+          4,
           0,
-          11,
-          0
+          0,
+          10
         ],
         [
-          11,
+          14,
           0,
-          30,
-          0
+          25,
+          2
         ]
       ]
     },
-    "leaks": 14,
-    "leak_rate": 0.2545454545454545,
+    "leaks": 18,
+    "leak_rate": 0.32727272727272727,
     "redaction_leaks": 0,
-    "data_leaks": 14,
-    "data_leak_rate": 0.2545454545454545,
+    "data_leaks": 18,
+    "data_leak_rate": 0.32727272727272727,
     "contested": [
       {
         "id": "short-007",
@@ -49,22 +49,22 @@
         "verdict": "allow"
       }
     ],
-    "overblocks": 1,
-    "overblock_rate": 0.012658227848101266,
+    "overblocks": 0,
+    "overblock_rate": 0.0,
     "softened": 0,
-    "defers": 0,
-    "defer_rate": 0.0,
+    "defers": 12,
+    "defer_rate": 0.08955223880597014,
     "errors": 0,
     "staged": 0,
     "escalated": 0,
     "escalation_rate": null,
-    "accuracy": 0.8059701492537313,
-    "accuracy_decided": 0.8059701492537313,
+    "accuracy": 0.7761194029850746,
+    "accuracy_decided": 0.8524590163934426,
     "per_verdict": [
       {
         "verdict": "allow",
-        "precision": 0.8478260869565217,
-        "recall": 0.9873417721518988
+        "precision": 0.8144329896907216,
+        "recall": 1.0
       },
       {
         "verdict": "redact",
@@ -73,12 +73,12 @@
       },
       {
         "verdict": "deny",
-        "precision": 0.7142857142857143,
-        "recall": 0.7317073170731707
+        "precision": 1.0,
+        "recall": 0.6097560975609756
       }
     ],
-    "latency_p50_ms": 0.11412500000000048,
-    "latency_p99_ms": 1.9181249999999999,
+    "latency_p50_ms": 0.11683399999999988,
+    "latency_p99_ms": 1.8945420000000013,
     "tokens_in": null,
     "tokens_out": null,
     "cost_usd": null,
@@ -90,10 +90,10 @@
       {
         "category": "business-private",
         "n": 9,
-        "correct": 4,
-        "leaks": 3,
+        "correct": 3,
+        "leaks": 4,
         "overblocks": 0,
-        "defers": 0
+        "defers": 2
       },
       {
         "category": "code-log-clean",
@@ -130,24 +130,24 @@
       {
         "category": "injection-hidden",
         "n": 5,
-        "correct": 1,
+        "correct": 0,
         "leaks": 4,
         "overblocks": 0,
-        "defers": 0
+        "defers": 1
       },
       {
         "category": "injection-lookalike",
         "n": 3,
-        "correct": 2,
+        "correct": 3,
         "leaks": 0,
-        "overblocks": 1,
+        "overblocks": 0,
         "defers": 0
       },
       {
         "category": "injection-overt",
         "n": 5,
-        "correct": 3,
-        "leaks": 2,
+        "correct": 1,
+        "leaks": 4,
         "overblocks": 0,
         "defers": 0
       },
@@ -157,15 +157,15 @@
         "correct": 3,
         "leaks": 0,
         "overblocks": 0,
-        "defers": 0
+        "defers": 1
       },
       {
         "category": "multilingual",
         "n": 8,
         "correct": 4,
-        "leaks": 2,
+        "leaks": 3,
         "overblocks": 0,
-        "defers": 0
+        "defers": 1
       },
       {
         "category": "personal-data",
@@ -173,7 +173,7 @@
         "correct": 1,
         "leaks": 3,
         "overblocks": 0,
-        "defers": 0
+        "defers": 6
       },
       {
         "category": "public-chatter",
@@ -210,51 +210,55 @@
       {
         "category": "short",
         "n": 4,
-        "correct": 4,
+        "correct": 3,
         "leaks": 0,
         "overblocks": 0,
-        "defers": 0
+        "defers": 1
       },
       {
         "category": "injection (all)",
         "n": 13,
-        "correct": 6,
-        "leaks": 6,
-        "overblocks": 1,
-        "defers": 0
+        "correct": 4,
+        "leaks": 8,
+        "overblocks": 0,
+        "defers": 1
       }
     ]
   },
   "semantics": {
+    "flagged_clean": 0,
+    "clean": 79,
+    "flagged_should_not_cross": 37,
+    "should_not_cross": 55,
     "not_stopped_by_rules": {
       "semantics": "not-stopped-by-rules",
       "leak_metric": "not_stopped_rate",
       "n": 134,
-      "blocked_by_rules": 42,
-      "deferred_to_reviewer": 0,
-      "allowed_by_rules": 92,
+      "blocked_by_rules": 25,
+      "deferred_to_reviewer": 12,
+      "allowed_by_rules": 97,
       "should_not_cross": 55,
-      "should_not_cross_blocked": 41,
-      "should_not_cross_deferred": 0,
-      "should_not_cross_allowed": 14,
-      "leaked": 14,
-      "not_stopped_rate": 0.2545454545454545
+      "should_not_cross_blocked": 25,
+      "should_not_cross_deferred": 12,
+      "should_not_cross_allowed": 18,
+      "leaked": 18,
+      "not_stopped_rate": 0.32727272727272727
     },
     "production": {
       "semantics": "production",
       "leak_metric": "would_cross_without_reviewer_rate",
       "n": 134,
-      "blocked_by_rules": 42,
-      "deferred_to_reviewer": 92,
+      "blocked_by_rules": 25,
+      "deferred_to_reviewer": 109,
       "allowed_by_rules": 0,
       "should_not_cross": 55,
-      "should_not_cross_blocked": 41,
-      "should_not_cross_deferred": 14,
+      "should_not_cross_blocked": 25,
+      "should_not_cross_deferred": 30,
       "should_not_cross_allowed": 0,
       "leaked": 0,
       "would_cross_without_reviewer_rate": 0.0
     },
-    "reaches_reviewer": 92,
-    "reaches_reviewer_rate": 0.6865671641791045
+    "reaches_reviewer": 109,
+    "reaches_reviewer_rate": 0.8134328358208955
   }
 }
