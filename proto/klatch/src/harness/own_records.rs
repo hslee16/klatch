@@ -175,10 +175,11 @@ pub(crate) fn scan_records_bounded(
             .take(max_opened.saturating_sub(visited))
         {
             let filed_under: u32 = name.trim_end_matches(".json").parse().unwrap_or(0);
-            if let Some(rec) = read(name).and_then(|t| parse_record(&t)) {
-                if rec.pid == filed_under {
-                    dead_sessions.push(rec.session_id);
-                }
+            if let Some(rec) = read(name)
+                .and_then(|t| parse_record(&t))
+                .filter(|r| r.pid == filed_under)
+            {
+                dead_sessions.push(rec.session_id);
             }
             visited += 1;
         }
