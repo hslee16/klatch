@@ -9,6 +9,10 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::time::Duration;
 
+/// What `unlock` says when SQLite answers "not a database": the key is wrong, or the file is no encrypted store.
+const WRONG_KEY_MESSAGE: &str =
+    "cannot open the store: wrong key, or the file is not an encrypted klatch store";
+
 pub(super) fn be(e: rusqlite::Error) -> Error {
     match &e {
         rusqlite::Error::SqliteFailure(f, _)
@@ -24,6 +28,12 @@ pub(super) fn be(e: rusqlite::Error) -> Error {
 }
 
 impl SqliteStore {
+    /// Whether `e`, from a read-only helper or `open`, is SQLite saying "not a database" (a wrong key, or no
+    /// encrypted store), as opposed to a file it could not open, a locked store or a busy one (#1701).
+    pub fn is_wrong_key_error(e: &Error) -> bool {
+        matches!(e, Error::Backend(m) if m == WRONG_KEY_MESSAGE)
+    }
+
     /// Open the encrypted store at `path` with `key`, with the default five second wait for another writer. There
     /// is no way to open a file without a key: the store is encrypted at rest (R32).
     pub fn open(path: &Path, key: &Key) -> Result<Self> {
@@ -51,11 +61,9 @@ impl SqliteStore {
         }
     }
 
-    /// Every member's last reported permission mode, read from the file without opening it for writing: no migration,
-    /// no journal switch, nothing created (`klatch doctor` must change nothing). A store from before the table
-    /// existed has no modes yet.
     /// Row counts of the tables that only grow: live messages (tombstones left by archiving are not counted), the
-    /// audit log, refusals and claim notes. Read-only (#487); a table the store does not have yet counts as 0.
+    /// audit log, refusals and claim notes. Read-only (#487), opened without write access: no migration, no journal
+    /// switch, no store file created, though SQLite makes `-wal` and `-shm` beside a WAL store it reads (#1701); a table the store does not have yet counts as 0.
     pub fn read_growth(path: &Path, key: &Key) -> Result<Vec<(&'static str, i64)>> {
         let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(be)?;
@@ -120,6 +128,8 @@ impl SqliteStore {
     pub fn read_policy_has(path: &Path, key: &Key, policy_key: &str) -> Result<bool> {
         let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(be)?;
+        // a writer holding the store for a moment is waited for, not reported as a failure (#1701)
+        conn.busy_timeout(Duration::from_millis(1000)).map_err(be)?;
         Self::unlock(&conn, key)?;
         let has: i64 = conn
             .query_row(
@@ -140,6 +150,9 @@ impl SqliteStore {
         .map_err(be)
     }
 
+    /// Every member's last reported permission mode, read from the file without opening it for writing: no
+    /// migration, no journal switch (#1701: `-wal` and `-shm` may appear beside a WAL store). A store from before the
+    /// table existed has no modes yet.
     pub fn read_member_modes(path: &Path, key: &Key) -> Result<Vec<(String, String, i64)>> {
         let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(be)?;
@@ -191,19 +204,18 @@ impl SqliteStore {
                 "this build has no SQLCipher, so it cannot keep a store encrypted".into(),
             ));
         }
-        conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0))
-            .map(|_| ())
-            .map_err(|e| match &e {
-                rusqlite::Error::SqliteFailure(f, _)
-                    if matches!(f.code, rusqlite::ErrorCode::NotADatabase) =>
-                {
-                    Error::Backend(
-                        "cannot open the store: wrong key, or the file is not an encrypted klatch store"
-                            .into(),
-                    )
-                }
-                _ => be(e),
-            })
+        conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .map(|_| ())
+        .map_err(|e| match &e {
+            rusqlite::Error::SqliteFailure(f, _)
+                if matches!(f.code, rusqlite::ErrorCode::NotADatabase) =>
+            {
+                Error::Backend(WRONG_KEY_MESSAGE.into())
+            }
+            _ => be(e),
+        })
     }
 
     /// Re-encrypt the whole store under `new`, in place. The old key stops working. Other open connections keep their

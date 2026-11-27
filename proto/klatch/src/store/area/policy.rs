@@ -19,7 +19,7 @@ pub struct Census<'a> {
 }
 
 /// The policy keys the admin passphrase proof owns (#1275): the verifier, the failure counter, the unlock window,
-/// and anything else under the `admin-passphrase` prefix. Only `PolicyStore::reserved_policy_set` writes them.
+/// anything else under the `admin-passphrase` prefix, and the `admin-unlock-` family (#1588). Only `PolicyStore::reserved_policy_set` writes them.
 pub fn is_proof_key(key: &str) -> bool {
     key.starts_with("admin-passphrase") || key.starts_with("admin-unlock-")
 }

@@ -86,7 +86,7 @@ mod tests {
 
     #[test]
     fn the_hangup_handler_restarts_calls_and_the_stop_handlers_do_not() {
-        let before = flags_of(libc::SIGINT).0;
+        let before = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP].map(|s| (s, flags_of(s)));
         let restore = Restore::take();
         install_signal_handlers_with_hangup();
         let (handler, flags) = flags_of(libc::SIGHUP);
@@ -103,6 +103,8 @@ mod tests {
         }
         // the guard puts back what it found (#1689): the test binary keeps its own Ctrl-C
         drop(restore);
-        assert_eq!(flags_of(libc::SIGINT).0, before);
+        for (s, was) in before {
+            assert_eq!(flags_of(s), was, "signal {s} was not put back");
+        }
     }
 }

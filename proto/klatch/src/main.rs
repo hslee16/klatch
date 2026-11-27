@@ -235,7 +235,7 @@ enum Cmd {
         #[arg(long)]
         room: Option<String>,
     },
-    /// Check this installation: the binary, the store and its key, the hooks, the session (read only; creates nothing)
+    /// Check this installation: the binary, the store and its key, the hooks, the session (read only; creates no store, key or settings)
     #[command(display_order = 37)]
     Doctor,
     /// List the live coding-agent sessions on this machine from the harness registry (read only; never a key file)

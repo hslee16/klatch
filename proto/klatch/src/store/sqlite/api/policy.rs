@@ -92,13 +92,11 @@ impl PolicyStore for SqliteStore {
     fn policy_set(&self, key: &str, value: Option<&str>, now: i64) -> Result<()> {
         if is_proof_key(key) {
             // key name only, never the value; the audit row is kept even though the write is refused
-            // at most one row a minute per key, so a loop of refused writes cannot fill the audit (#1588)
-            if self
-                .last_audit_ts("policy-reserved-refused", key, now - 60)
-                .ok()
-                .flatten()
-                .is_none()
-            {
+            // at most one row a minute per key and a few per key family, counting rows still queued in an open
+            // transaction, so a loop of refused writes cannot fill the audit or the queue (#1588, #1701)
+            if self.refusal_throttled(key, now) {
+                self.count_audit_row_dropped();
+            } else {
                 self.audit_refusal("policy-reserved-refused", key, now);
             }
             return Err(Error::Refused {
@@ -246,4 +244,43 @@ pub(in crate::store::sqlite) fn census_from_row(
     r: &rusqlite::Row<'_>,
 ) -> rusqlite::Result<(u64, u64)> {
     Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64))
+}
+
+/// Rows of refused writes to one family of admin passphrase keys that one minute may hold (#1701).
+const FAMILY_CAP: u64 = 8;
+
+/// The family of a reserved key: `admin-unlock-*` is one, everything else under `admin-passphrase` the other.
+fn family(key: &str) -> &'static str {
+    if key.starts_with("admin-unlock-") {
+        "admin-unlock-"
+    } else {
+        "admin-passphrase"
+    }
+}
+
+impl SqliteStore {
+    /// Whether a refusal of `key` at `now` is left unaudited: the key already has a row in the last minute, or its
+    /// family already has `FAMILY_CAP`. Written rows and rows queued in an open transaction both count; a row stamped
+    /// after `now` (the clock stepped back) counts for neither, or it would silence the audit (#1701).
+    fn refusal_throttled(&self, key: &str, now: i64) -> bool {
+        const ACTION: &str = "policy-reserved-refused";
+        let fam = family(key);
+        let (mut same, mut in_family) = self
+            .optional(
+                "SELECT COALESCE(SUM(target=?3),0), COUNT(*) FROM admin_audit WHERE action=?1 \
+                 AND ts BETWEEN ?2 AND ?4 AND substr(target,1,length(?5))=?5",
+                params![ACTION, now - 60, key, now, fam],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+            )
+            .ok()
+            .flatten()
+            .unwrap_or((0, 0));
+        for (action, target, ts, _) in self.deferred_audit.borrow().iter() {
+            if *action == ACTION && (now - 60..=now).contains(ts) && target.starts_with(fam) {
+                in_family += 1;
+                same += i64::from(target == key);
+            }
+        }
+        same > 0 || in_family as u64 >= FAMILY_CAP
+    }
 }

@@ -55,3 +55,25 @@ fn a_read_only_open_cannot_write() {
     );
     assert_eq!(std::fs::read(&db).unwrap(), before);
 }
+
+/// What a read-only open leaves beside a WAL store, stated exactly (#1701): the main file is unchanged and the only
+/// files that may appear are SQLite's own `-wal` and `-shm`; nothing else is created.
+#[test]
+fn a_read_only_open_leaves_only_the_main_file_and_sqlites_wal_and_shm() {
+    let d = crate::store::test_dir::TestDir::new("probe-ro-files");
+    let db = d.join("rooms.db");
+    drop(SqliteStore::open(&db, &key()).unwrap());
+    let before = std::fs::read(&db).unwrap();
+    let mtime = std::fs::metadata(&db).unwrap().modified().unwrap();
+    SqliteStore::read_policy_has(&db, &key(), "k").unwrap();
+    SqliteStore::read_growth(&db, &key()).unwrap();
+    SqliteStore::read_member_modes(&db, &key()).unwrap();
+    assert_eq!(std::fs::read(&db).unwrap(), before);
+    assert_eq!(std::fs::metadata(&db).unwrap().modified().unwrap(), mtime);
+    let mut names: Vec<String> = std::fs::read_dir(&*d)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.retain(|n| !["rooms.db", "rooms.db-wal", "rooms.db-shm"].contains(&n.as_str()));
+    assert!(names.is_empty(), "unexpected files: {names:?}");
+}
