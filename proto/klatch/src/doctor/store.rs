@@ -346,3 +346,34 @@ fn report_mode(r: &mut Report, member: &str, mode: &str) {
         ),
     }
 }
+
+/// Recovery attempts recorded beside the store and not settled (#1636): failed guesses at the recovery code, which
+/// are audited only when a recovery later succeeds and the store opens, are otherwise visible only in that file.
+/// A warning while there is any, with the count. Reads the file only (no store, no key), so it also works when the
+/// store cannot be read, which is when the file is written.
+pub(super) fn check_recovery_attempts(r: &mut Report, home: Option<&Path>) {
+    if let Some(db) = store_path(home) {
+        check_attempts_file(r, &db);
+    }
+}
+
+pub(super) fn check_attempts_file(r: &mut Report, db: &Path) {
+    let n = klatch::proof::recovery_attempts_recorded(db);
+    report_recovery_attempts(r, n, &klatch::proof::recovery_attempts_file(db));
+}
+
+pub(super) fn report_recovery_attempts(r: &mut Report, n: u32, file: &Path) {
+    if n == 0 {
+        return;
+    }
+    r.add(
+        Status::Warn,
+        format!(
+            "{} recorded in {} and no recovery has settled any yet (a count of {} means the file could not be read safely: a link, a pipe or one over the size cap)",
+            klatch::proof::attempts_phrase(n),
+            file.display(),
+            u32::MAX
+        ),
+        Some("if these were not you, someone is guessing the recovery code (it carries 256 bits, so this is detection, not a risk of success); the file is audited and removed the next time a recovery succeeds and the store opens"),
+    );
+}

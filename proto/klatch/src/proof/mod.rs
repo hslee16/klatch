@@ -443,7 +443,21 @@ pub fn recovery_proof_for_restore(
             )
         })?;
     charge_file_limit(db)?;
-    prove_by_recovery_code(&crate::keys::recovery_code(&key), prompt, what)
+    note_if_wrong(
+        db,
+        prove_by_recovery_code(&crate::keys::recovery_code(&key), prompt, what),
+    )
+}
+
+/// A wrong code is said on stderr with the count on record, so failed guesses that never settle are not silent (#1636).
+fn note_if_wrong(
+    db: &std::path::Path,
+    proved: Result<AdminProof, ProofError>,
+) -> Result<AdminProof, ProofError> {
+    if matches!(proved, Err(ProofError::Wrong)) {
+        eprintln!("{}", failed_attempt_note(db));
+    }
+    proved
 }
 
 /// Charge one attempt to the file limit of a store that cannot be read; a wait not over is `Locked`.
@@ -456,6 +470,34 @@ fn charge_file_limit(db: &std::path::Path) -> Result<(), ProofError> {
             "cannot keep the count of recovery attempts, so none is allowed: {e}"
         )),
     })
+}
+
+/// How many recovery attempts are recorded for the store at `db` and not yet settled (`klatch doctor` shows it).
+pub fn recovery_attempts_recorded(db: &std::path::Path) -> u32 {
+    filelimit::attempts(db)
+}
+
+/// "1 recovery attempt is" or "N recovery attempts are".
+pub fn attempts_phrase(n: u32) -> String {
+    if n == 1 {
+        "1 recovery attempt is".into()
+    } else {
+        format!("{n} recovery attempts are")
+    }
+}
+
+/// The file of recovery attempts for the store at `db`.
+pub fn recovery_attempts_file(db: &std::path::Path) -> std::path::PathBuf {
+    filelimit::path_for(db)
+}
+
+/// The line written to stderr when a recovery code was wrong: how many attempts the store has on record.
+pub fn failed_attempt_note(db: &std::path::Path) -> String {
+    format!(
+        "klatch: that recovery code was wrong; {} on record in {} until a recovery succeeds (`klatch doctor` shows the count)",
+        attempts_phrase(filelimit::attempts(db)),
+        filelimit::path_for(db).display()
+    )
 }
 
 /// The store opens again after a recovery or restore: audit the attempts made while it could not be read.
@@ -472,7 +514,10 @@ pub fn recovery_proof_for_recover(
 ) -> Result<AdminProof, ProofError> {
     let key = crate::keys::restore(code).map_err(|e| ProofError::Rejected(e.to_string()))?;
     charge_file_limit(db)?;
-    prove_by_key_that_opens(crate::member::custody::opens_encrypted_store(db, &key))
+    note_if_wrong(
+        db,
+        prove_by_key_that_opens(crate::member::custody::opens_encrypted_store(db, &key)),
+    )
 }
 
 fn prove_by_recovery_code(

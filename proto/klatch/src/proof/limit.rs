@@ -99,7 +99,9 @@ fn of(entries: &[(String, u32, i64)], term: &str) -> (u32, i64) {
 
 pub(super) fn remaining(count: u32, last: i64, now: i64) -> i64 {
     // a clock that went back must not shorten the wait or lengthen it past the cap
-    (last + lock_secs(count) - now).clamp(0, MAX_LOCK_SECS)
+    last.saturating_add(lock_secs(count))
+        .saturating_sub(now)
+        .clamp(0, MAX_LOCK_SECS)
 }
 
 /// Seconds the next attempt from terminal `term` must wait, 0 when it may be made now.

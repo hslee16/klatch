@@ -1,18 +1,21 @@
 ### restore, wrong recovery code, attempt 1
 the store cannot be read, so the admin passphrase cannot be checked; this act is approved by the recovery code and the typed confirmation instead
 recovery code to approve `admin restore <HOME>/backup.db [store <HOME>/rooms.db]`: 
+klatch: that recovery code was wrong; 1 recovery attempt is on record in <HOME>/rooms.db.recovery-fails until a recovery succeeds (`klatch doctor` shows the count)
 Error: wrong passphrase; nothing was done
 (ended: refused)
 
 ### restore, wrong recovery code, attempt 2
 the store cannot be read, so the admin passphrase cannot be checked; this act is approved by the recovery code and the typed confirmation instead
 recovery code to approve `admin restore <HOME>/backup.db [store <HOME>/rooms.db]`: 
+klatch: that recovery code was wrong; 2 recovery attempts are on record in <HOME>/rooms.db.recovery-fails until a recovery succeeds (`klatch doctor` shows the count)
 Error: wrong passphrase; nothing was done
 (ended: refused)
 
 ### restore, wrong recovery code, attempt 3
 the store cannot be read, so the admin passphrase cannot be checked; this act is approved by the recovery code and the typed confirmation instead
 recovery code to approve `admin restore <HOME>/backup.db [store <HOME>/rooms.db]`: 
+klatch: that recovery code was wrong; 3 recovery attempts are on record in <HOME>/rooms.db.recovery-fails until a recovery succeeds (`klatch doctor` shows the count)
 Error: wrong passphrase; nothing was done
 (ended: refused)
 

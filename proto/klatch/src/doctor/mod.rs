@@ -75,6 +75,7 @@ pub fn run(
     store::check_archives(&mut r, home);
     store::check_growth(&mut r, home);
     store::check_proof_failures(&mut r, home);
+    store::check_recovery_attempts(&mut r, home);
     store::check_modes(&mut r, home);
     store::check_passphrase(&mut r, home);
     session::check_codex(&mut r, home, project_dir);
@@ -135,6 +136,25 @@ mod tests {
             "{at_level:?}"
         );
         assert!(at_level[0].contains("from 9 terminals"), "{at_level:?}");
+    }
+
+    #[test]
+    fn unsettled_recovery_attempts_are_a_warning_with_their_count() {
+        let lines = |n| {
+            let mut r = Report { lines: Vec::new() };
+            store::report_recovery_attempts(
+                &mut r,
+                n,
+                std::path::Path::new("/x/rooms.db.recovery-fails"),
+            );
+            r.lines
+        };
+        assert!(lines(0).is_empty());
+        let two = lines(2);
+        assert_eq!(two.len(), 1);
+        assert!(two[0].0 == Status::Warn);
+        assert!(two[0].1.contains("2 recovery attempts"), "{:?}", two[0].1);
+        assert!(two[0].1.contains("rooms.db.recovery-fails"));
     }
 
     #[test]
