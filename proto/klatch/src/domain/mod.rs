@@ -116,7 +116,7 @@ pub use cascade_judge::{
     Reading, ReadingTransport, Stage,
 };
 pub use claim_age::{AgedClaim, FIRST_MILESTONE_SECS, due_milestone, milestone};
-pub use convention::{CONVENTION_MARKER, convention, convention_in, subagent_brief};
+pub use convention::{CONVENTION_MARKER, FEED_ROOM, convention, convention_in, subagent_brief};
 pub use convention_words::{CONVENTION_WORDS, ConventionWord};
 pub use could_answer::{Blocker, CouldAnswer};
 pub use credentials::credential_kind;

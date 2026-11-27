@@ -109,3 +109,57 @@ fn a_status_remembers_when_it_was_set_and_a_return_clears_only_done() {
     let m = &s.members("r").unwrap()[0];
     assert_eq!((m.status.as_deref(), m.status_ts), (None, 0));
 }
+
+// The feed room (#1404): gh-watch posts GitHub events there; a seat in it starts muted, so only an explicit read, a
+// mention or an unmute shows the events to a member.
+#[test]
+fn a_seat_in_the_feed_room_starts_muted_however_it_is_made() {
+    let s = SqliteStore::open(&temp_db("feed-muted"), &crate::store::insecure_test_key()).unwrap();
+    let feed = crate::domain::FEED_ROOM;
+    s.join(feed, "joined", 1).unwrap();
+    s.post(Seat::new(feed, "poster"), "PR #1 opened", 2)
+        .unwrap();
+    s.read(Seat::new(feed, "reader"), true, 3).unwrap();
+    s.advance_cursor(Seat::new(feed, "acker"), Seq(1), 4)
+        .unwrap();
+    for who in ["joined", "poster", "reader", "acker"] {
+        assert!(s.is_muted(Seat::new(feed, who)).unwrap(), "{who}");
+    }
+}
+
+#[test]
+fn only_the_feed_room_starts_muted_and_a_member_can_unmute_it() {
+    let s = SqliteStore::open(&temp_db("feed-only"), &crate::store::insecure_test_key()).unwrap();
+    s.join("lobby", "alice", 1).unwrap();
+    s.join("feed2", "alice", 1).unwrap();
+    assert!(!s.is_muted(Seat::new("lobby", "alice")).unwrap());
+    assert!(!s.is_muted(Seat::new("feed2", "alice")).unwrap());
+    let at = Seat::new(crate::domain::FEED_ROOM, "alice");
+    s.join(at.room, "alice", 1).unwrap();
+    s.set_muted(at, false, 2).unwrap();
+    s.join(at.room, "alice", 3).unwrap();
+    s.read(at, true, 4).unwrap();
+    assert!(!s.is_muted(at).unwrap(), "an unmute is kept");
+}
+
+#[test]
+fn an_acknowledgement_makes_a_muted_feed_seat_but_never_mutes_an_existing_unmuted_one() {
+    let s = SqliteStore::open(&temp_db("feed-ack"), &crate::store::insecure_test_key()).unwrap();
+    let feed = crate::domain::FEED_ROOM;
+    s.post(Seat::new(feed, "poster"), "PR #1 opened", 1)
+        .unwrap();
+    let kept = Seat::new(feed, "kept");
+    s.join(feed, "kept", 2).unwrap();
+    s.set_muted(kept, false, 3).unwrap();
+    s.advance_cursor(kept, Seq(1), 4).unwrap();
+    assert!(
+        !s.is_muted(kept).unwrap(),
+        "an acknowledgement keeps an unmute"
+    );
+    let fresh = Seat::new(feed, "fresh");
+    s.advance_cursor(fresh, Seq(1), 5).unwrap();
+    assert!(
+        s.is_muted(fresh).unwrap(),
+        "a seat made by an acknowledgement starts muted"
+    );
+}
