@@ -79,7 +79,7 @@ def _events(event, payload, state, clean):
         main = main if isinstance(main, str) and main else "main"
         branch = _get(obj, "check_suite", "head_branch") if event == "check_run" else obj.get("head_branch")
         name = _text(obj.get("name"), NAME_MAX, clean)
-        if branch == main:
+        if branch == main and _own_head(obj, payload):
             sha = _text(obj.get("head_sha"), 40, clean)[:7]
             return [(("main", sha, "red"), _line("main is red: %s %s at %s" % (
                 "check" if event == "check_run" else "workflow", name, sha or "?")))]
@@ -92,6 +92,24 @@ def _events(event, payload, state, clean):
     return []
 
 
+def _own_head(obj, payload):
+    """False when the payload says the commit comes from another repository: a failing check on a fork PR made from the
+    fork's own `main` is not main red. Compares what the payload carries (`head_repository` of a workflow run, the head
+    repository of each pull request a check names, by full name or id) with the repository itself. A check_run that
+    names no head repository and no pull request cannot be told apart; that is a known limit (PR-SWEEP.md)."""
+    repo = payload.get("repository") if isinstance(payload.get("repository"), dict) else {}
+    heads = [obj.get("head_repository"), _get(obj, "check_suite", "head_repository")]
+    for item in obj.get("pull_requests") if isinstance(obj.get("pull_requests"), list) else []:
+        heads.append(_get(item, "head", "repo"))
+    for head in heads:
+        if not isinstance(head, dict):
+            continue
+        for field in ("full_name", "id"):
+            if head.get(field) is not None and repo.get(field) is not None and head[field] != repo[field]:
+                return False
+    return True
+
+
 class Feed:
     """Posts feed items through `post(line)`, bounded. `clock()` is seconds; `log(text)` gets one line when the rate cap
     first drops something in a window. A failing `post` never raises."""
@@ -100,11 +118,11 @@ class Feed:
         self.post, self.clock, self.rate = post, clock, rate
         self.log = log or (lambda text: None)
         self.seen = collections.OrderedDict()  # key -> time it was posted
-        self.window_start, self.count, self.dropped = None, 0, 0
+        self.window_start, self.count, self.dropped, self.failed = None, 0, 0, False
 
     def _in_window(self, now):
         if self.window_start is None or now - self.window_start >= WINDOW or now < self.window_start:
-            self.window_start, self.count, self.dropped = now, 0, 0
+            self.window_start, self.count, self.dropped, self.failed = now, 0, 0, False
         return self.count < self.rate
 
     def offer(self, items):
@@ -120,11 +138,18 @@ class Feed:
                 self.dropped += 1
                 continue
             self.count += 1
+            try:
+                ok = bool(self.post(line))
+            except Exception:  # a klatch trouble never stops the receiver
+                ok = False
+            if not ok:
+                # not remembered, so the next event for the PR is tried again; one fixed line per window, no payload text
+                if not self.failed:
+                    self.failed = True
+                    self.log("feed post failed (klatch refused or could not run); see serve.out; retrying with the "
+                             "next event")
+                continue
             self.seen[key] = now
             self.seen.move_to_end(key)
             while len(self.seen) > DEDUPE_MAX:
                 self.seen.popitem(last=False)
-            try:
-                self.post(line)
-            except Exception:  # a klatch trouble never stops the receiver; the status log keeps the event
-                pass

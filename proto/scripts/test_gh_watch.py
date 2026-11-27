@@ -1707,6 +1707,32 @@ class FeedEventTests(unittest.TestCase):
             self.assertEqual([c for c in t if ord(c) < 32 or ord(c) in (0x202e, 0x7f)], [])
             self.assertNotIn("$(", t)
 
+    def test_each_stripped_character_is_stripped(self):
+        for ch in "@`$\\<>":
+            (k, t), = self.ev("pull_request", pr(title="a%sb" % ch, user={"login": "u%sv" % ch}))
+            self.assertNotIn(ch, t[len(ghfeed.MARK):], repr(ch))
+
+    def test_the_title_is_cut_at_sixty_characters(self):
+        (k, t), = self.ev("pull_request", pr(title="t" * 500))
+        title = t.split('title="', 1)[1].rsplit('"', 1)[0]
+        self.assertEqual(len(title), 60)
+        self.assertEqual(ghfeed.TITLE_MAX, 60)
+
+    def test_a_failing_workflow_from_a_fork_is_not_main_red(self):
+        p = workflow_run("failure", "main")
+        p["workflow_run"]["head_repository"] = {"full_name": "mallory/klatch"}
+        p["repository"] = dict(REPO)
+        self.assertEqual(self.ev("workflow_run", p), [])
+        p["workflow_run"]["head_repository"] = {"full_name": "hslee16/klatch"}
+        (k, t), = self.ev("workflow_run", p)
+        self.assertIn("main is red", t)
+
+    def test_a_check_run_whose_pull_request_head_is_a_fork_is_not_main_red(self):
+        p = check_run("failure", "main", prs=[7])
+        p["repository"] = dict(REPO, id=1)
+        p["check_run"]["pull_requests"][0]["head"] = {"repo": {"id": 2}}
+        self.assertEqual([t for _, t in self.ev("check_run", p) if "main is red" in t], [])
+
     def test_title_cannot_close_its_quotes(self):
         (k, t), = self.ev("pull_request", pr(title='a" b'))
         self.assertEqual(t.count('"'), 2)
@@ -1728,7 +1754,7 @@ class FeedBoundsTests(unittest.TestCase):
 
     def setUp(self):
         self.now, self.posted, self.logged = [1000.0], [], []
-        self.feed = ghfeed.Feed(self.posted.append, lambda: self.now[0], rate=3, log=lambda t: self.logged.append(t))
+        self.feed = ghfeed.Feed(lambda line: self.posted.append(line) or True, lambda: self.now[0], rate=3, log=lambda t: self.logged.append(t))
 
     def test_defaults(self):
         self.assertEqual((ghfeed.DEFAULT_RATE, ghfeed.WINDOW), (12, 60))
@@ -1774,6 +1800,20 @@ class FeedBoundsTests(unittest.TestCase):
             f.offer([(("pr", n, "opened"), "x")])
         self.assertLessEqual(len(f.seen), ghfeed.DEDUPE_MAX)
 
+    def test_a_failed_post_is_logged_once_per_window_and_not_remembered(self):
+        results = [False]
+        calls = []
+        f = ghfeed.Feed(lambda line: calls.append(line) or results[0], lambda: self.now[0], rate=10,
+                        log=self.logged.append)
+        f.offer([(("pr", 1, "opened"), "a"), (("pr", 2, "opened"), "b")])
+        self.assertEqual(len(self.logged), 1)
+        self.assertIn("feed post failed", self.logged[0])
+        results[0] = True
+        f.offer([(("pr", 1, "opened"), "a")])
+        self.assertEqual(calls, ["a", "b", "a"], "a failed post is retried by the next event")
+        f.offer([(("pr", 1, "opened"), "a")])
+        self.assertEqual(len(calls), 3, "a post that worked is remembered")
+
     def test_a_failing_post_does_not_raise(self):
         def boom(text):
             raise OSError("x")
@@ -1783,11 +1823,11 @@ class FeedBoundsTests(unittest.TestCase):
 class FeedReceiverTests(ReceiverTests):
     """The feed through the receiver with a fake klatch binary (#1404). Inherited tests are skipped."""
 
-    def fake(self):
+    def fake(self, rc=0):
         self.calls_file = os.path.join(self.t, "calls")
         fake = os.path.join(self.t, "klatch")
         with open(fake, "w") as f:
-            f.write('#!/bin/sh\nprintf "%%s|%%s|%%s|%%s\\n" "$KLATCH_NAME" "$1" "$2" "$3" >> "%s"\n' % self.calls_file)
+            f.write('#!/bin/sh\nprintf "%%s|%%s|%%s|%%s\\n" "$KLATCH_NAME" "$1" "$2" "$3" >> "%s"\nexit %d\n' % (self.calls_file, rc))
         os.chmod(fake, 0o755)
         return fake
 
@@ -1797,8 +1837,8 @@ class FeedReceiverTests(ReceiverTests):
         with open(self.calls_file) as f:
             return [c for c in (l.split("|", 3) for l in f.read().splitlines()) if c[1] == "post" and c[2] == room]
 
-    def feed_receiver(self, *extra):
-        return self.start("--klatch-bin", self.fake(), "--as-member", "gh-watch", "--room", "factory-status",
+    def feed_receiver(self, *extra, rc=0):
+        return self.start("--klatch-bin", self.fake(rc), "--as-member", "gh-watch", "--room", "factory-status",
                           "--feed-room", "feed", "--no-claim", *extra)
 
     def test_feed_events_are_posted_to_the_feed_room_by_the_member_and_not_to_the_lobby(self):
@@ -1839,19 +1879,41 @@ class FeedReceiverTests(ReceiverTests):
             self.post(port, "pull_request", pr(), delivery="g%d" % n)
         self.assertEqual(len(self.posts("feed")), 1)
 
-    def test_the_feed_room_must_be_a_plain_name_other_than_the_lobby_or_the_status_room(self):
-        for room in ("lobby", "factory-status", "bad room", "-x"):
-            p, _ = self.start("--klatch-bin", self.fake(), "--as-member", "gh-watch", "--room", "factory-status",
-                              "--feed-room", room, expect_ready=False)
-            p.wait(timeout=15)
-            self.assertEqual(p.returncode, 2, room)
+    def refused(self, *args):
+        p, _ = self.start(*args, expect_ready=False)
+        out, err = p.communicate(timeout=15)
+        return p.returncode, err
+
+    def test_the_feed_room_must_be_the_room_named_feed(self):
+        base = ["--klatch-bin", self.fake(), "--as-member", "gh-watch", "--room", "factory-status"]
+        for room in ("lobby", "factory-status", "bad room", "_x", "gh-feed"):
+            rc, err = self.refused(*base, "--feed-room", room)
+            self.assertEqual(rc, 2, room)
+            self.assertIn("--feed-room must be the room named feed", err, room)
 
     def test_the_feed_needs_klatch_bin_and_a_sane_rate(self):
-        for args in (["--feed-room", "feed"], ["--klatch-bin", "/bin/true", "--as-member", "m", "--room", "r",
-                                              "--feed-room", "feed", "--feed-rate", "0"]):
-            p, _ = self.start(*args, expect_ready=False)
-            p.wait(timeout=15)
-            self.assertEqual(p.returncode, 2, args)
+        rc, err = self.refused("--feed-room", "feed")
+        self.assertEqual(rc, 2)
+        self.assertIn("--feed-room", err)
+        rc, err = self.refused("--klatch-bin", "/bin/true", "--as-member", "m", "--room", "r", "--feed-room", "feed",
+                               "--feed-rate", "0")
+        self.assertEqual(rc, 2)
+        self.assertIn("--feed-rate must be between 1 and 600", err)
+
+    def test_a_refused_feed_post_is_logged_with_a_fixed_line_and_not_remembered(self):
+        _, port = self.feed_receiver(rc=1)
+        for n in range(3):
+            self.post(port, "pull_request", pr(title="SECRET-PAYLOAD-TEXT"), delivery="z%d" % n)
+        self.assertEqual(len(self.posts("feed")), 3, "each event is tried again, none was remembered")
+        failed = [l for l in self.log() if "feed post failed" in l]
+        self.assertEqual(len(failed), 1)
+        self.assertNotIn("SECRET-PAYLOAD-TEXT", failed[0])
+
+    def test_a_replayed_delivery_id_posts_nothing_even_for_a_new_pr(self):
+        _, port = self.feed_receiver()
+        self.post(port, "pull_request", pr(number=7), delivery="same")
+        self.assertEqual(self.post(port, "pull_request", pr(number=8), delivery="same")[1].strip(), "duplicate")
+        self.assertEqual(len(self.posts("feed")), 1)
 
     def test_the_feed_line_is_the_only_payload_text_sent_and_is_one_argument(self):
         _, port = self.feed_receiver()

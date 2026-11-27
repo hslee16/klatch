@@ -226,7 +226,7 @@ class Sink:
         # the feed room (#1404): GitHub events as marked, bounded data lines, never the lobby
         self.feed = None
         if feed_room and klatch_bin:
-            self.feed = FEED.Feed(lambda line: self.klatch(["post", feed_room, line]), time.monotonic,
+            self.feed = FEED.Feed(lambda line: self.klatch(["post", feed_room, line])[0] == 0, time.monotonic,
                                   rate=feed_rate or FEED.DEFAULT_RATE, log=lambda text: self.log("INFO", text))
 
     def feed_event(self, event, payload, state):
@@ -493,10 +493,10 @@ def main(argv):
         sys.stderr.write("gh-watch: --as-member and --room need --klatch-bin\n")
         return 2
     if a.feed_room:
-        if not (a.klatch_bin and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]*", a.feed_room)) or \
-                a.feed_room in ("lobby", a.room):
-            sys.stderr.write("gh-watch: --feed-room needs --klatch-bin and a plain name that is neither lobby nor "
-                             "--room\n")
+        # only a seat in the room named FEED_ROOM starts muted (store rule), so no other name is allowed (#1404)
+        if not a.klatch_bin or a.feed_room != FEED.FEED_ROOM:
+            sys.stderr.write("gh-watch: --feed-room must be the room named %s and needs --klatch-bin (only that room "
+                             "starts muted for members)\n" % FEED.FEED_ROOM)
             return 2
         if not 1 <= a.feed_rate <= 600:
             sys.stderr.write("gh-watch: --feed-rate must be between 1 and 600\n")

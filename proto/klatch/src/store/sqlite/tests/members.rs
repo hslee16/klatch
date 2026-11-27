@@ -141,3 +141,25 @@ fn only_the_feed_room_starts_muted_and_a_member_can_unmute_it() {
     s.read(at, true, 4).unwrap();
     assert!(!s.is_muted(at).unwrap(), "an unmute is kept");
 }
+
+#[test]
+fn an_acknowledgement_makes_a_muted_feed_seat_but_never_mutes_an_existing_unmuted_one() {
+    let s = SqliteStore::open(&temp_db("feed-ack"), &crate::store::insecure_test_key()).unwrap();
+    let feed = crate::domain::FEED_ROOM;
+    s.post(Seat::new(feed, "poster"), "PR #1 opened", 1)
+        .unwrap();
+    let kept = Seat::new(feed, "kept");
+    s.join(feed, "kept", 2).unwrap();
+    s.set_muted(kept, false, 3).unwrap();
+    s.advance_cursor(kept, Seq(1), 4).unwrap();
+    assert!(
+        !s.is_muted(kept).unwrap(),
+        "an acknowledgement keeps an unmute"
+    );
+    let fresh = Seat::new(feed, "fresh");
+    s.advance_cursor(fresh, Seq(1), 5).unwrap();
+    assert!(
+        s.is_muted(fresh).unwrap(),
+        "a seat made by an acknowledgement starts muted"
+    );
+}
