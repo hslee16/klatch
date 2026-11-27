@@ -90,6 +90,10 @@ Error: no admin passphrase is set; run `klatch admin init-passphrase` at a termi
 Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
 (ended: refused)
 
+### $ klatch admin room-ask-routing r off
+Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
+(ended: refused)
+
 ### $ klatch admin room-require r --off
 Error: no admin passphrase is set; run `klatch admin init-passphrase` at a terminal of your own
 (ended: refused)

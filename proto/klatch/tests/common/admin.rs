@@ -37,6 +37,7 @@ pub fn admin_table(h: &Home) -> Vec<(&'static str, Vec<String>)> {
         ("lease-grace", s(&["lease-grace", "60"])),
         ("room-stale", s(&["room-stale", "r", "120"])),
         ("room-ask-lease", s(&["room-ask-lease", "r", "100"])),
+        ("room-ask-routing", s(&["room-ask-routing", "r", "off"])),
         ("room-require", s(&["room-require", "r", "--off"])),
         ("cap", s(&["cap", "internal"])),
         ("chain", s(&["chain", "a,b"])),

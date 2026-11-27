@@ -493,6 +493,7 @@ by_copy!(
     usize,
     bool,
     Option<i64>,
+    Option<bool>,
     Option<(usize, i64)>,
     HistoryRange,
     crate::gateway::DeliveryView,

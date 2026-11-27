@@ -220,6 +220,17 @@ fn room_ask_lease(t: &dyn Transport, room: &str, (secs, off): (Option<i64>, bool
     Ok(())
 }
 
+fn room_ask_routing(t: &dyn Transport, room: &str, state: RoutingState) -> Result<()> {
+    t.admin_set_room_ask_routing(room, state.as_option())?;
+    let said = match state {
+        RoutingState::On => "asks are routed to the members that could take them",
+        RoutingState::Off => "asks are not routed (a new ask is addressed to nobody)",
+        RoutingState::Default => "asks are routed (the default)",
+    };
+    println!("{}: {said}", flat(room));
+    Ok(())
+}
+
 fn room_require(t: &dyn Transport, room: &str, (spec, off): (Option<String>, bool)) -> Result<()> {
     let spec = match (off, spec) {
         (true, None) => None,
@@ -314,6 +325,7 @@ fn policy(t: &dyn Transport, act: PolicyAct) -> Result<()> {
         }
         PolicyAct::RoomStale { room, secs, off } => room_stale(t, &room, (secs, off))?,
         PolicyAct::RoomAskLease { room, secs, off } => room_ask_lease(t, &room, (secs, off))?,
+        PolicyAct::RoomAskRouting { room, state } => room_ask_routing(t, &room, state)?,
         PolicyAct::RoomRequire { room, spec, off } => room_require(t, &room, (spec, off))?,
         PolicyAct::Cap { label } => {
             t.admin_set_cap(&label)?;

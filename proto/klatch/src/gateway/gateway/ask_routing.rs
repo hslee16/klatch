@@ -24,8 +24,9 @@ use crate::domain::{
 };
 
 /// Whether a room switched routing off with the policy key `room:ROOM:ask-routing` set to `off`. Routing is on
-/// otherwise. No admin act sets it yet (ticketed); the key is read at every use.
+/// otherwise. `admin_set_room_ask_routing` (#1460) is the only way to set it; the key is read at every use.
 const OFF: &str = "off";
+const ON: &str = "on";
 
 /// The blockers a coordinator is addressed despite: it is expected to be busy with claims of its own, and it need not
 /// share the ask's scope. Everything else (the label, a stop, its role) still refuses it.
@@ -37,6 +38,32 @@ impl<S: Store> Gateway<S> {
     pub fn ask_routes(&self, who: &Principal, room: &str) -> Result<Vec<AskRoute>> {
         self.admit(who, room, Operation::read(room, false))?;
         self.store.ask_routes(room)
+    }
+
+    /// Only the human: switch ask routing in `room` `on` (`Some(true)`), `off` (`Some(false)`) or back to the default,
+    /// which is on (`None`). The room name is validated and the value is one of three words, so the audit row
+    /// (`room-ask-routing`, target `ROOM on|off|default`) holds no other text. Takes effect on the next ask.
+    pub fn admin_set_room_ask_routing(
+        &self,
+        who: &Principal,
+        room: &str,
+        state: Option<bool>,
+    ) -> Result<()> {
+        check_room(room)?;
+        let (word, value) = match state {
+            Some(true) => (ON, Some(ON)),
+            Some(false) => (OFF, Some(OFF)),
+            None => ("default", None),
+        };
+        self.administer(
+            who,
+            ("room-ask-routing", &format!("{room} {word}")),
+            |now| {
+                self.store
+                    .policy_set(&format!("room:{room}:ask-routing"), value, now)?;
+                Ok(String::new())
+            },
+        )
     }
 
     fn routing_on(&self, room: &str) -> Result<bool> {

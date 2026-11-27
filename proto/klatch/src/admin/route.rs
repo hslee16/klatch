@@ -3,6 +3,7 @@
 //! it is routed and a family function can never be handed a command it has no arm for.
 
 use super::{AdminCmd, RoomPolicy};
+use clap::ValueEnum;
 use std::path::PathBuf;
 
 /// A command and the family that handles it.
@@ -123,6 +124,10 @@ pub(super) enum PolicyAct {
         room: String,
         secs: Option<i64>,
         off: bool,
+    },
+    RoomAskRouting {
+        room: String,
+        state: RoutingState,
     },
     RoomRequire {
         room: String,
@@ -274,6 +279,9 @@ impl From<AdminCmd> for Route {
             C::RoomAskLease { room, secs, off } => {
                 Route::policy(PolicyAct::RoomAskLease { room, secs, off })
             }
+            C::RoomAskRouting { room, state } => {
+                Route::policy(PolicyAct::RoomAskRouting { room, state })
+            }
             C::RoomRequire { room, spec, off } => {
                 Route::policy(PolicyAct::RoomRequire { room, spec, off })
             }
@@ -348,6 +356,25 @@ impl Route {
     }
     fn archive(a: ArchiveAct) -> Self {
         Route::Keystore(Keystore::Archive(a))
+    }
+}
+
+/// The three words `room-ask-routing` takes (#1460); nothing else reaches the policy key.
+#[derive(Clone, Copy, ValueEnum)]
+pub enum RoutingState {
+    On,
+    Off,
+    Default,
+}
+
+impl RoutingState {
+    /// `Some(true)` on, `Some(false)` off, `None` the default.
+    pub(super) fn as_option(self) -> Option<bool> {
+        match self {
+            Self::On => Some(true),
+            Self::Off => Some(false),
+            Self::Default => None,
+        }
     }
 }
 
@@ -432,5 +459,32 @@ mod tests {
             all_rooms: true,
         };
         assert_eq!(family(archive), "archive");
+    }
+
+    #[test]
+    fn room_ask_routing_takes_only_three_words_and_routes_as_policy() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Cli {
+            #[command(subcommand)]
+            cmd: AdminCmd,
+        }
+        for (word, expect) in [("on", Some(true)), ("off", Some(false)), ("default", None)] {
+            let c = Cli::try_parse_from(["x", "room-ask-routing", "lobby", word]).unwrap();
+            match c.cmd {
+                AdminCmd::RoomAskRouting { room, state } => {
+                    assert_eq!(room, "lobby");
+                    assert_eq!(state.as_option(), expect);
+                }
+                _ => panic!("not room-ask-routing"),
+            }
+        }
+        for bad in ["maybe", "OFF", "", "off ", "--off"] {
+            assert!(
+                Cli::try_parse_from(["x", "room-ask-routing", "lobby", bad]).is_err(),
+                "{bad:?}"
+            );
+        }
+        assert!(Cli::try_parse_from(["x", "room-ask-routing", "lobby"]).is_err());
     }
 }

@@ -12,6 +12,7 @@ mod admin_role;
 mod anchors;
 mod ask_refs;
 mod ask_routing;
+mod ask_routing_switch;
 mod asks;
 mod asks_notes;
 mod board;

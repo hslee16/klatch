@@ -21,6 +21,8 @@ pub trait Limits {
     /// built-in value (#242).
     fn admin_set_room_stale(&self, room: &str, secs: Option<i64>) -> Result<()>;
     fn admin_set_room_ask_lease(&self, room: &str, secs: Option<i64>) -> Result<()>;
+    /// Switch ask routing in a room on, off, or with `None` back to the default (on) (#1460).
+    fn admin_set_room_ask_routing(&self, room: &str, state: Option<bool>) -> Result<()>;
     /// Require harness capabilities of a room as `refuse:CAPS` or `flag:CAPS`, or with `None` lift it (#61).
     fn admin_set_room_require(&self, room: &str, spec: Option<&str>) -> Result<()>;
 }
@@ -50,6 +52,10 @@ impl<S: Store> Limits for Direct<S> {
         self.gateway
             .admin_set_room_ask_lease(&self.principal, room, secs)
     }
+    fn admin_set_room_ask_routing(&self, room: &str, state: Option<bool>) -> Result<()> {
+        self.gateway
+            .admin_set_room_ask_routing(&self.principal, room, state)
+    }
     fn admin_set_room_require(&self, room: &str, spec: Option<&str>) -> Result<()> {
         self.gateway
             .admin_set_room_require(&self.principal, room, spec)
@@ -65,6 +71,7 @@ impl Limits for SharedTransport {
         admin_set_lease_grace(secs: Option<i64>) -> Result<()>;
         admin_set_room_stale(room: &str, secs: Option<i64>) -> Result<()>;
         admin_set_room_ask_lease(room: &str, secs: Option<i64>) -> Result<()>;
+        admin_set_room_ask_routing(room: &str, state: Option<bool>) -> Result<()>;
         admin_set_room_require(room: &str, spec: Option<&str>) -> Result<()>;
     }
 }

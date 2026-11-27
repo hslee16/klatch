@@ -14,6 +14,10 @@ r: an ask with no claim is reported to its asker after 120 seconds
 r: an ask claim lasts 100 seconds unless the claimer asks for less
 (ended: ok)
 
+### $ klatch admin room-ask-routing r off
+r: asks are not routed (a new ask is addressed to nobody)
+(ended: ok)
+
 ### $ klatch admin room-require r --off
 r is back to no harness requirement
 (ended: ok)
@@ -234,43 +238,44 @@ largest sessions by bytes injected
   (none)
 
 admin audit by act
-  act             count
-  proof-ok        38
-  canary          2
-  rate-limit      2
-  unlock-window   2
-  admin-agent     1
-  allow           1
-  archive         1
-  backup          1
-  canary-retire   1
-  cap             1
-  clear           1
-  close           1
-  create-room     1
-  facilitator     1
-  grant-rooms     1
-  grantor         1
-  integrator      1
-  label           1
-  lease-cap       1
-  lease-grace     1
-  librarian       1
-  passphrase-set  1
-  pause           1
-  remove          1
-  reopen          1
-  resume          1
-  retention       1
-  reviewer        1
-  room-ask-lease  1
-  room-clear      1
-  room-creation   1
-  room-require    1
-  room-stale      1
-  scrub-add       1
-  scrub-remove    1
-  seal-label      1
+  act               count
+  proof-ok          39
+  canary            2
+  rate-limit        2
+  unlock-window     2
+  admin-agent       1
+  allow             1
+  archive           1
+  backup            1
+  canary-retire     1
+  cap               1
+  clear             1
+  close             1
+  create-room       1
+  facilitator       1
+  grant-rooms       1
+  grantor           1
+  integrator        1
+  label             1
+  lease-cap         1
+  lease-grace       1
+  librarian         1
+  passphrase-set    1
+  pause             1
+  remove            1
+  reopen            1
+  resume            1
+  retention         1
+  reviewer          1
+  room-ask-lease    1
+  room-ask-routing  1
+  room-clear        1
+  room-creation     1
+  room-require      1
+  room-stale        1
+  scrub-add         1
+  scrub-remove      1
+  seal-label        1
 
 worker credentials: 0 issued, 0 revoked
 (ended: ok)
@@ -308,6 +313,8 @@ label order is a < b; the agent cap is back to its default
 <AGE>s ago	room-stale	r 120	
 <AGE>s ago	proof-ok		window 60s
 <AGE>s ago	room-ask-lease	r 100	
+<AGE>s ago	proof-ok		window 60s
+<AGE>s ago	room-ask-routing	r off	
 <AGE>s ago	proof-ok		window 60s
 <AGE>s ago	room-require	r off	
 <AGE>s ago	proof-ok		window 60s
