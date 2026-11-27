@@ -43,6 +43,7 @@ mod stats;
 mod stats_events;
 mod stats_fixture;
 mod stats_golden;
+mod key_variants;
 mod throttle_summary;
 mod txn_guards;
 mod wait_cycles;
