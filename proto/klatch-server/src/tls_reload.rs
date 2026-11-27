@@ -31,7 +31,7 @@ use crate::tls::{self, SharedConfig, TlsFiles};
 use crate::tls_crl::Stage;
 use crate::wire_https::Options;
 use anyhow::{Result, bail};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -166,13 +166,35 @@ fn build(opts: &Options, in_force_due: Option<i64>) -> Result<Built> {
     tls::build_config_at(&opts.files, roots, Stage::Reload { in_force_due })
 }
 
-/// Clears the flag it holds when the build thread ends, however it ends. The flag is the one of ITS build: a build that was
-/// abandoned clears only its own, never the flag of the build that replaced it.
-struct Done(Arc<AtomicBool>);
+/// Held by the build thread: when it ends, however it ends, it clears the flag of ITS build (a build that was abandoned
+/// clears only its own, never the flag of the build that replaced it) and, if it had been given up meanwhile, gives its
+/// place back to the abandon cap (#1694), so the cap means "abandoned and still stuck".
+struct Done {
+    busy: Arc<AtomicBool>,
+    /// Set by whichever of the two comes second, the abandoning reload or the end of the build: the second one to set it
+    /// knows the other has happened, so the count is raised and lowered exactly once and never goes below zero.
+    ended: Arc<AtomicBool>,
+    abandoned: Arc<AtomicUsize>,
+}
+
+/// Lower the count by one, never below zero.
+fn give_back(count: &AtomicUsize) {
+    let mut seen = count.load(Ordering::SeqCst);
+    while seen > 0 {
+        match count.compare_exchange(seen, seen - 1, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return,
+            Err(now) => seen = now,
+        }
+    }
+}
 
 impl Drop for Done {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
+        self.busy.store(false, Ordering::SeqCst);
+        if self.ended.swap(true, Ordering::SeqCst) {
+            // the abandoning reload got here first and counted this build: it is no longer stuck
+            give_back(&self.abandoned);
+        }
     }
 }
 
@@ -182,29 +204,39 @@ struct Limits {
     deadline: Duration,
     /// How long a build may stay unfinished before the next reload gives it up (a stalled mount; a restart is the cure).
     abandon_after: Duration,
-    /// The most builds that may be given up: past it a stuck build keeps the flag (a few threads, never one per reload).
+    /// The most abandoned builds that may be stuck at once: past it a stuck build keeps the flag (a few threads, never one
+    /// per reload).
     max_abandoned: usize,
 }
 
 /// How long a build may be stuck before it is abandoned (#1637): far past [`DEADLINE`], so only a hung read reaches it.
 pub const ABANDON_AFTER: Duration = Duration::from_secs(120);
-/// The most builds that are ever abandoned in one run.
+/// The most abandoned builds that may be stuck at one time (one that ends gives its place back).
 const MAX_ABANDONED: usize = 3;
 
-/// The state of the build in flight: its own busy flag, when it started, and how many were given up before it.
+/// The state of the build in flight: its own busy flag, when it started, and how many given-up builds are still stuck.
 struct Slot {
     busy: Arc<AtomicBool>,
+    /// The `ended` marker of the build in flight (see [`Done`]).
+    ended: Arc<AtomicBool>,
     started: Instant,
-    abandoned: usize,
+    abandoned: Arc<AtomicUsize>,
 }
 
 impl Slot {
     fn new() -> Self {
         Slot {
             busy: Arc::new(AtomicBool::new(false)),
+            ended: Arc::new(AtomicBool::new(false)),
             started: Instant::now(),
-            abandoned: 0,
+            abandoned: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// How many given-up builds are still unfinished.
+    #[cfg(test)]
+    fn abandoned_now(&self) -> usize {
+        self.abandoned.load(Ordering::SeqCst)
     }
 
     /// Take the right to build: `Err(restart_needed)` while an earlier build is unfinished and not yet abandonable. Past the bound, and
@@ -214,21 +246,35 @@ impl Slot {
         &mut self,
         abandon_after: Duration,
         max_abandoned: usize,
-    ) -> Result<(bool, Arc<AtomicBool>), bool> {
+    ) -> Result<(bool, Done), bool> {
         let mut gave_up = false;
         if self.busy.load(Ordering::SeqCst) {
             let overdue = self.started.elapsed() >= abandon_after;
-            if !overdue || self.abandoned >= max_abandoned {
+            if !overdue || self.abandoned.load(Ordering::SeqCst) >= max_abandoned {
                 // `Err(true)`: given up but for the cap, so a restart clears it, as does the stuck build finishing (#1694, #1704)
                 return Err(overdue);
             }
+            // count it before the marker is set, and take the count back if the build had already ended
+            self.abandoned.fetch_add(1, Ordering::SeqCst);
+            if self.ended.swap(true, Ordering::SeqCst) {
+                // it ended in the meantime: it never was stuck, and its end has already run
+                give_back(&self.abandoned);
+            } else {
+                gave_up = true;
+            }
             self.busy = Arc::new(AtomicBool::new(false));
-            self.abandoned += 1;
-            gave_up = true;
+            self.ended = Arc::new(AtomicBool::new(false));
         }
         self.busy.store(true, Ordering::SeqCst);
         self.started = Instant::now();
-        Ok((gave_up, self.busy.clone()))
+        Ok((
+            gave_up,
+            Done {
+                busy: self.busy.clone(),
+                ended: self.ended.clone(),
+                abandoned: self.abandoned.clone(),
+            },
+        ))
     }
 }
 
@@ -301,13 +347,13 @@ fn reload_with<T: Send + Sync + 'static>(
     in_force_due: &mut Option<i64>,
     limits: &Limits,
 ) -> Option<String> {
-    let (gave_up, busy) = match slot.claim(limits.abandon_after, limits.max_abandoned) {
+    let (gave_up, guard) = match slot.claim(limits.abandon_after, limits.max_abandoned) {
         Ok(taken) => taken,
         Err(true) => return Some(failure_line(Kind::Restart)),
         Err(false) => return Some(failure_line(Kind::Busy)),
     };
     let (tx, rx) = channel();
-    let guard = Done(busy.clone());
+    let busy = guard.busy.clone();
     let spawned = std::thread::Builder::new()
         .name("tls-reload".into())
         .spawn(move || {

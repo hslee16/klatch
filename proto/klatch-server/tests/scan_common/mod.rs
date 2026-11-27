@@ -67,3 +67,112 @@ pub fn tree(args: &[&str]) -> Vec<String> {
 pub fn dependency_names(edges: &str) -> Vec<String> {
     tree(&["-p", "klatch-server", "--edges", edges])
 }
+
+/// Where the crate `ring` is named in `text`, as tokens and not as lines (#1704): the segment that follows each `ring::`
+/// (empty when it is a group `ring::{..}` or the end of a path), and one `""` for every other naming of the crate (`use
+/// ring;`, `use ring as rr;`, `extern crate ring as rr;`), so a second use on the line of an allowed one is seen.
+pub fn ring_paths(text: &str) -> Vec<String> {
+    let tokens = tokens_of(text);
+    let mut out = Vec::new();
+    for (i, t) in tokens.iter().enumerate() {
+        if t != "ring" {
+            continue;
+        }
+        let before = i.checked_sub(1).map(|j| tokens[j].as_str());
+        let followed_by_path = tokens.get(i + 1).is_some_and(|n| n == "::");
+        if followed_by_path {
+            let next = tokens.get(i + 2).map(String::as_str).unwrap_or("");
+            let word = next.chars().all(|c| c.is_alphanumeric() || c == '_');
+            out.push(if word { next } else { "" }.to_string());
+        } else if matches!(before, Some("use" | "crate"))
+            || tokens.get(i + 1).is_some_and(|n| n == "as")
+        {
+            out.push(String::new());
+        }
+    }
+    out
+}
+
+/// The tokens of Rust source with comments, string literals and char literals left out: words, `::`, and every other
+/// character on its own. Enough to read paths; it parses nothing else.
+fn tokens_of(text: &str) -> Vec<String> {
+    let c: Vec<char> = text.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < c.len() {
+        let ch = c[i];
+        if ch == '/' && c.get(i + 1) == Some(&'/') {
+            while i < c.len() && c[i] != '\n' {
+                i += 1;
+            }
+        } else if ch == '/' && c.get(i + 1) == Some(&'*') {
+            let mut depth = 0;
+            while i < c.len() {
+                if c[i] == '/' && c.get(i + 1) == Some(&'*') {
+                    depth += 1;
+                    i += 2;
+                } else if c[i] == '*' && c.get(i + 1) == Some(&'/') {
+                    depth -= 1;
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+        } else if ch == '"' {
+            i += 1;
+            while i < c.len() && c[i] != '"' {
+                i += if c[i] == '\\' { 2 } else { 1 };
+            }
+            i += 1;
+        } else if ch == '\'' {
+            // a char literal ('x', '\n', '"'); anything else with a quote is a lifetime
+            if c.get(i + 1) == Some(&'\\') {
+                i += 2;
+                while i < c.len() && c[i] != '\'' {
+                    i += 1;
+                }
+                i += 1;
+            } else if c.get(i + 2) == Some(&'\'') {
+                i += 3;
+            } else {
+                i += 1;
+            }
+        } else if ch.is_alphanumeric() || ch == '_' {
+            let start = i;
+            while i < c.len() && (c[i].is_alphanumeric() || c[i] == '_') {
+                i += 1;
+            }
+            let word: String = c[start..i].iter().collect();
+            // a raw string: r"..", r#".."#, br".."
+            let raw = matches!(word.as_str(), "r" | "br") && matches!(c.get(i), Some('"' | '#'));
+            if raw {
+                let mut hashes = 0;
+                while c.get(i) == Some(&'#') {
+                    hashes += 1;
+                    i += 1;
+                }
+                i += 1;
+                while i < c.len()
+                    && !(c[i] == '"' && (0..hashes).all(|k| c.get(i + 1 + k) == Some(&'#')))
+                {
+                    i += 1;
+                }
+                i += 1 + hashes;
+            } else {
+                out.push(word);
+            }
+        } else if ch == ':' && c.get(i + 1) == Some(&':') {
+            out.push("::".into());
+            i += 2;
+        } else {
+            if !ch.is_whitespace() {
+                out.push(ch.to_string());
+            }
+            i += 1;
+        }
+    }
+    out
+}

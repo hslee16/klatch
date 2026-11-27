@@ -245,3 +245,68 @@ fn abandoning_stops_at_the_cap_and_then_the_flag_stays() {
         let _ = free.send(());
     }
 }
+
+/// #1694: the cap means "abandoned and still stuck": when an abandoned build ends, its place is given back, so a later
+/// stall can be abandoned again; the count never goes below zero and a build that was never abandoned changes nothing.
+#[test]
+fn an_abandoned_build_that_finishes_gives_its_place_back_to_the_cap() {
+    let stop = AtomicBool::new(false);
+    let current = Current::new(Arc::new(0u8));
+    let mut slot = Slot::new();
+    let mut due = None;
+    let limits = Limits {
+        deadline: Duration::from_millis(50),
+        abandon_after: Duration::from_secs(30),
+        max_abandoned: 1,
+    };
+    let start = |slot: &mut Slot, due: &mut Option<i64>| {
+        let (free, hold) = channel();
+        let line = reload_with(
+            blocked_build(hold, 1u8),
+            "ok",
+            &current,
+            slot,
+            &stop,
+            due,
+            &limits,
+        );
+        (free, line)
+    };
+    let (free_first, _) = start(&mut slot, &mut due);
+    backdate(&mut slot, Duration::from_secs(31));
+    let (free_second, second) = start(&mut slot, &mut due);
+    assert!(second.unwrap().contains("abandoned"));
+    assert_eq!(slot.abandoned_now(), 1);
+    // at the cap: the next stuck build cannot be abandoned
+    backdate(&mut slot, Duration::from_secs(31));
+    let (free_capped, capped) = start(&mut slot, &mut due);
+    assert!(capped.unwrap().contains("restart the server"));
+    // the first (abandoned) build ends: its place is free again
+    free_first.send(()).unwrap();
+    let waited = Instant::now();
+    while slot.abandoned_now() != 0 {
+        assert!(
+            waited.elapsed() < Duration::from_secs(10),
+            "never given back"
+        );
+        std::thread::yield_now();
+    }
+    backdate(&mut slot, Duration::from_secs(31));
+    let (free_fourth, fourth) = start(&mut slot, &mut due);
+    assert!(fourth.unwrap().contains("abandoned"));
+    assert_eq!(slot.abandoned_now(), 1);
+    // the build in flight finishing normally never lowers the count
+    free_fourth.send(()).unwrap();
+    let waited = Instant::now();
+    while slot.busy.load(Ordering::SeqCst) {
+        assert!(
+            waited.elapsed() < Duration::from_secs(10),
+            "flag never cleared"
+        );
+        std::thread::yield_now();
+    }
+    assert_eq!(slot.abandoned_now(), 1);
+    for free in [free_second, free_capped] {
+        let _ = free.send(());
+    }
+}

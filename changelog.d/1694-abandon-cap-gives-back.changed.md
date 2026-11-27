@@ -1,0 +1,1 @@
+- `klatch-server https`: the cap of three abandoned reload builds now counts the ones that are still stuck: when an abandoned build finally ends, its place is given back, so a later stall can be abandoned again and reloads are not left refused for the rest of the run by stalls that cleared long ago. Nothing about what the TLS layer accepts changes.
