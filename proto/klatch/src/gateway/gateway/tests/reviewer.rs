@@ -231,6 +231,9 @@ fn review_next_reaches_an_item_behind_a_full_page_of_unreadable_ones() {
         .enqueue_review(&NewReview::new("r", 1, "public", "x"), 1_002)
         .unwrap();
     g.admin_set_reviewer(&admin(), "rev", true).unwrap();
-    let item = g.review_next(&rev()).unwrap().expect("a readable item waits");
+    let item = g
+        .review_next(&rev())
+        .unwrap()
+        .expect("a readable item waits");
     assert_eq!(item.text, "readable candidate");
 }

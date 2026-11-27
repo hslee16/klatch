@@ -420,7 +420,8 @@ fn a_principal_without_the_role_cannot_release() {
 /// Post `n` more messages in the vault, so crossings have distinct sources.
 fn more_vault_messages(g: &Gateway<SpyStore>, n: usize) {
     for i in 0..n {
-        g.post(&alice(), "vault", &format!("another fact {i}")).unwrap();
+        g.post(&alice(), "vault", &format!("another fact {i}"))
+            .unwrap();
     }
 }
 
