@@ -2,7 +2,8 @@
 //! applies a recorded verdict only after checking labels again, and a judge here can only narrow what the floors
 //! allow, never widen it.
 //!
-//! - `RulesJudge`: the local first gate (credential scanner, then the scrub list). It denies on a match and
+//! - `RulesJudge`: the local first gate (credential scanner, the scrub list, then the screen of #1413: personal data,
+//!   injection phrasings, internal hosts, confidentiality phrases). It denies on a match and
 //!   otherwise defers; it never vouches for text, so clean text waits for a reviewer or a configured judge.
 //! - `Narrowed`: the rules run first, and a deny from them stands whatever the inner judge would say. The inner
 //!   judge is not shown text the rules denied.
@@ -11,7 +12,7 @@
 //!
 //! Nothing here touches the network. A hosted judge is off unless an operator builds one (see `HostedJudge`).
 
-use super::{Judge, LabelChain, ReviewItem, Verdict, credential_kind};
+use super::{Judge, LabelChain, ReviewItem, Verdict, credential_kind, screen};
 use std::cell::Cell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -58,7 +59,10 @@ impl Judge for RulesJudge {
                 return Verdict::Deny(format!("scrub:{name}"));
             }
         }
-        Verdict::Defer
+        match screen(&item.text, &item.from_label, &item.to_label, &self.chain, &self.terms) {
+            Some(reason) => Verdict::Deny(reason),
+            None => Verdict::Defer,
+        }
     }
 }
 

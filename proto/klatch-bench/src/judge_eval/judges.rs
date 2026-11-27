@@ -3,7 +3,7 @@
 //! directly and is also a production `Judge`, so what is graded is what would run.
 
 use crate::judge_eval::corpus::Truth;
-use klatch::domain::{Judge, LabelChain, ReviewItem, Verdict, credential_kind, valid_name};
+use klatch::domain::{Judge, LabelChain, ReviewItem, Verdict, credential_kind, screen, valid_name};
 
 /// What a judge said about one item, with what it reports about itself.
 #[derive(Debug, Clone, PartialEq)]
@@ -103,7 +103,7 @@ pub fn parse_scrub(text: &str) -> Result<Vec<(String, String)>, String> {
 
 /// What klatch does today with no model: the credential scanner the gateway refuses posts with (R20,
 /// `credential_kind`), then the scrub list (R9), matched as the gateway matches it (case-insensitive substring, only
-/// when the destination is below the agent cap). A match is a deny naming the rule, never the text; anything else
+/// when the destination is below the agent cap), then the screen of #1413 (`klatch::domain::screen`). A match is a deny naming the rule, never the text; anything else
 /// is allowed. It never redacts.
 ///
 /// The scrub match is a copy of `Gateway::check_scrub`, which needs a store; the credential match is the engine's
@@ -142,7 +142,10 @@ impl Judge for RulesJudge {
                 return Verdict::Deny(format!("scrub:{name}"));
             }
         }
-        Verdict::Allow
+        match screen(&item.text, &item.from_label, &item.to_label, &self.chain, &self.terms) {
+            Some(reason) => Verdict::Deny(reason),
+            None => Verdict::Allow,
+        }
     }
 }
 
