@@ -78,6 +78,12 @@ pub trait Backend {
     fn canceller(&self) -> Arc<dyn CancelHook> {
         Arc::new(NoCancel)
     }
+    /// After a post: how many messages from others wait unread when it was `who`'s first in `room` and nothing of the
+    /// room was ever shown to it, else 0 (#1415; see `Gateway::first_post_unread`). Moves no cursor. The default says
+    /// 0, which prints no notice, never a count it did not take.
+    fn first_post_unread(&self, _who: &Principal, _room: &str) -> Result<usize> {
+        Ok(0)
+    }
     /// Prove a member from the text of its credential token: `Verified` when it is live, else the refusal. Nothing
     /// weaker is ever returned for a bad token.
     fn verify_credential(&self, member: &str, token: &str) -> Result<Principal>;
@@ -121,6 +127,9 @@ impl<S: Store> Backend for Gateway<S> {
         harness: Option<&dyn crate::harness::Harness>,
     ) -> Vec<ServerFrame> {
         handle(self, who, call, harness)
+    }
+    fn first_post_unread(&self, who: &Principal, room: &str) -> Result<usize> {
+        Gateway::first_post_unread(self, who, room)
     }
     fn verify_credential(&self, member: &str, token: &str) -> Result<Principal> {
         let token =

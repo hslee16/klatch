@@ -428,6 +428,12 @@ impl<'a, B: Backend + ?Sized> Session<'a, B> {
         self.request(&mut Vec::new(), call)
     }
 
+    /// The count behind the one-time never-read notice (#1415), for the session's principal; zero when it does not apply
+    /// or cannot be counted. Moves no cursor.
+    pub fn first_post_unread(&self, room: &str) -> usize {
+        self.gateway.first_post_unread(self.who, room).unwrap_or(0)
+    }
+
     /// Dispatch one request. `subscribe` and `unsubscribe` change the session's subscriptions; every other
     /// method is a plain call through the gateway.
     fn request(&self, subs: &mut Vec<Subscription>, call: Call) -> Vec<ServerFrame> {

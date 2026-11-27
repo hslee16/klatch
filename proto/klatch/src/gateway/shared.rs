@@ -331,6 +331,14 @@ impl Backend for SharedBackend {
         self.gateway
             .call_backend_as((Some(&keyed), &None), move |b, _| b.ack(&who, &room, seq))?
     }
+    fn first_post_unread(&self, who: &Principal, room: &str) -> Result<usize> {
+        let (who, room) = (who.clone(), room.to_owned());
+        let keyed = who.clone();
+        self.gateway
+            .call_backend_as((Some(&keyed), &None), move |b, _| {
+                b.first_post_unread(&who, &room)
+            })?
+    }
     /// The subscription lives with the caller and goes to the owner for the length of one poll.
     fn poll(&self, sub: &mut Subscription, who: &Principal, max: usize) -> Result<Batch> {
         let mut moved = std::mem::replace(sub, Subscription::new("", 0, 0));

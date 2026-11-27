@@ -162,3 +162,41 @@ fn a_member_that_waited_gets_no_notice() {
     let o = h.run("worker", &["post", "lobby", "ready"]);
     assert!(!stderr(&o).contains("klatch read"), "{}", stderr(&o));
 }
+
+// ---- klatch dm (#1415) -----------------------------------------------------------------------------------------
+
+#[test]
+fn a_first_dm_reply_without_reading_gets_the_notice_once() {
+    let h = Home::new();
+    h.ok("old", &["dm", "worker", "can", "you", "take", "this"]);
+    let first = stderr(&h.run("worker", &["dm", "old", "yes"]));
+    let notice: Vec<&str> = first
+        .lines()
+        .filter(|l| l.contains("klatch read"))
+        .collect();
+    assert_eq!(notice.len(), 1, "{first}");
+    assert!(notice[0].contains("1 unread message"), "{first}");
+    assert!(notice[0].contains("DATA"), "{first}");
+    assert!(
+        !first.contains("can you take this"),
+        "never the content: {first}"
+    );
+    let second = stderr(&h.run("worker", &["dm", "old", "again"]));
+    assert!(!second.contains("klatch read"), "once only: {second}");
+}
+
+#[test]
+fn a_dm_reply_after_reading_the_thread_gets_no_notice() {
+    let h = Home::new();
+    h.ok("old", &["dm", "worker", "hello"]);
+    h.ok("worker", &["read", "dm.old.worker"]);
+    let o = h.run("worker", &["dm", "old", "hi back"]);
+    assert!(!stderr(&o).contains("klatch read"), "{}", stderr(&o));
+}
+
+#[test]
+fn a_first_dm_to_someone_with_no_thread_yet_gets_no_notice() {
+    let h = Home::new();
+    let o = h.run("worker", &["dm", "old", "hello"]);
+    assert!(!stderr(&o).contains("klatch read"), "{}", stderr(&o));
+}

@@ -176,6 +176,7 @@ pub(super) fn dm(
     println!(
         "sent to {member} in room {room} (queued; `klatch read {room}` shows the thread). To wait for the reply: `klatch wait {room}`"
     );
+    super::never_read::note(t, &room);
     Ok(())
 }
 
