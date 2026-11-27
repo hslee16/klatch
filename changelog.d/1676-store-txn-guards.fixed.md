@@ -1,0 +1,2 @@
+- The store's read transaction (`snapshot`) now closes when its closure panics, like the write transaction (#1676). A failed ROLLBACK is counted (`rollback_errors`) and the next write closes the dead transaction or refuses to run inside it, instead of silently joining it (#1678).
+- Audit flush accounting: `audit_flush_errors` counts rows, not attempts; rows lost to the 256 row retry queue cap are counted apart (`audit_rows_dropped`); a refusal row that fails outside a transaction is now queued and retried as the changelog said (#1677).

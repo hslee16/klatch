@@ -261,6 +261,11 @@ impl SqliteStore {
             claim_record_errors: std::cell::Cell::default(),
             audit_flush_errors: std::cell::Cell::default(),
             deferred_audit: std::cell::RefCell::default(),
+            audit_rows_dropped: std::cell::Cell::default(),
+            rollback_errors: std::cell::Cell::default(),
+            owns_txn: std::cell::Cell::default(),
+            #[cfg(test)]
+            fail_rollbacks: std::cell::Cell::default(),
         })
     }
 }
