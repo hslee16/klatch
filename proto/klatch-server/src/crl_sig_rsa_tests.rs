@@ -10,6 +10,21 @@
 //! openssl crl -in crl256.pem -outform DER -out crl256.der; openssl x509 -in ca.pem -outform DER -out ca.der
 //! ```
 //!
+//! The openssl CA database files `ca ... -gencrl` needs (the config's `database` and `crlnumber`) were made empty in the
+//! same directory: `touch index.txt; echo 01 > crlnumber`. The config set `default_crl_days = 3650`: every CRL here (the
+//! older fixtures made on 2026-11-27 as well as `CRL_PSS`) has a nextUpdate 3650 days after its thisUpdate, so none is
+//! in date past 2036-11 (the certificates `CA`, `CA_1024` and `CA_PSS` were made with `-days 36500`). None of the dates
+//! matters to these tests: `judge` reads only the signature and ignores every time in the CRL (expiry is `tls_crl.rs`'s
+//! concern, tested with hand-built CRLs in `tls_crl_tests.rs`).
+//!
+//! `CA_PSS` and `CRL_PSS` (#1704) are a second 2048 bit RSA CA of the same name with a CRL signed with RSA-PSS (SHA-256,
+//! salt 32), which `crl_sig` does not know and so leaves to the verifier:
+//!
+//! ```text
+//! openssl ca -gencrl -config ca.cnf -keyfile k.pem -cert ca.pem -md sha256 \
+//!     -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:32 -out pss.pem
+//! ```
+//!
 //! `CA` is the 2048 bit certificate, `CRL_*` its CRLs (issuer CN=sig-ca), `CRL_OTHER_KEY` one of the same issuer name
 //! signed by another 2048 bit key, and `CA_1024` / `CRL_1024` the same with a 1024 bit key (which the verifier's RSA
 //! algorithms refuse as too short).
@@ -137,4 +152,71 @@ fn a_too_short_rsa_key_is_refused_and_the_message_says_the_key_may_be_the_cause(
         err.to_string().contains("or its key is not usable"),
         "{err}"
     );
+}
+
+const CA_PSS: &str = "\
+308202d2308201baa003020102021414dcc8d539524468ad567bce1fdbaed6608f4e2f300d06092a864886f70d01010b05\
+003011310f300d06035504030c067369672d63613020170d3236313132373132323532365a180f32313236313130333132\
+323532365a3011310f300d06035504030c067369672d636130820122300d06092a864886f70d01010105000382010f0030\
+82010a0282010100b34e97550eeccfe97be6bc0b807bf66dd0f169c3c1f8922915f25c1a526ea3017facf7dadee1b9dae5\
+0cf6bf7f477dbdd3b9ea7d625aff89d2a7dc75c28ba17efa01c2755c50980fa80cae6f901156a3e98adcc960070f370179\
+7f33af287bc40dec577fabeb3bf390be130ccaf4d640b7da360e8799ebf9baeb43d29dab9942e29f3d3f239c14cb97aa95\
+52287b1d8c136115fb8dafede8694fc1ef85c8c7cfdfa0bfc9f6bcecd0e7ff535661480524f6347394fba9d87fba73c036\
+0cc0e4c00c6d8bb0a935fedc5b54dc034dcb8dad67939a875232a613636e4342261a99bd0e2fc2ca649246f341af146f0e\
+1c0c4ed5ef91287f1bf954f78f3e5f64358e510203010001a320301e300f0603551d130101ff040530030101ff300b0603\
+551d0f040403020106300d06092a864886f70d01010b0500038201010059e4e80b29f6f9542be14409c6f0b0300b878ad4\
+62d07a78fb81699daa28ee0e76f36504933af3e24a829e33bb810e29373ddd32294d70a47bafa0e637510b8981a4e742aa\
+a79b4422724d29dcc66bde10bba5d33607d15f4f7b443d29b71716c8cd93c4731aebc90236202c356ad950343e0e9286f1\
+a2223a72714eb03e9309c05e783239e6bbcf8cbcf145c8bac5044fbbe7bd086857002c856b649e037e2781f6aeb7cb0c41\
+6d587bfc2ddf679b0a934a4b68649d4ed9500acc7b442a632832e003fe4445db95bba675dfb1a92b5ecd540ff64b31c5e4\
+d347fa098a51c112a4dbb121fe4f6bb0c510238d22f205094e31eede1eae878a8f9fac4c3ea6e0aa";
+
+const CRL_PSS: &str = "\
+308201d2308187020101304106092a864886f70d01010a3034a00f300d06096086480165030402010500a11c301a06092a\
+864886f70d010108300d06096086480165030402010500a2030201203011310f300d06035504030c067369672d6361170d\
+3236313132373132323532365a170d3336313132343132323532365aa00e300c300a0603551d140403020101304106092a\
+864886f70d01010a3034a00f300d06096086480165030402010500a11c301a06092a864886f70d010108300d0609608648\
+0165030402010500a2030201200382010100b04bdd8eb7c7ce0c7b4ec313c4cbd788a01f72310a1f2d2fb848ef53d111a0\
+45636ea7e9990281d8a72526d6439fc0d15086a524584c2cbba946e159702f313b38ebb9144ed21f0e973fd090c648ac1c\
+74fcffa44a3829b9f5e55af5c46480bb992ce2159a40e35f9347b2c5cb8981af71e049a43127968bededfd02d500a1fe1e\
+cdd72bb6a90d61f11599912ffd33824b50c5682bf699533718ef1bb9130ac910daf3e53151a401c962dd9ac54456050d9a\
+96b86cb2d265973231ac9c75ea529ede5ea84b59dbc35ac01559d04f07635b552be2a37cf028ad7492f4932dab95f0381e\
+fe2b780fe3842c85f1bb0f9e48551de6f0fdc89d898a768a652b41265a";
+
+/// #1694 (mutant M8): an RSA-PSS signature is an algorithm `crl_sig` does not know. The verdict is `Unknown`, and it passes
+/// through `check` (which refuses only when EVERY listed certificate of the name says `Invalid`), so a start that worked
+/// before still works: the verifier at handshake time decides, exactly as before.
+#[test]
+fn an_rsa_pss_crl_is_unknown_and_passes_through_check() {
+    let key = spki(CA_PSS);
+    assert_eq!(judge(&unhex(CRL_PSS), &key), Verdict::Unknown);
+    let ca_der = unhex(CA_PSS);
+    let (subject, _) = subject_and_key_of(&ca_der).unwrap();
+    let listed = vec![Intermediate {
+        subject: subject.to_vec(),
+        spki: key,
+    }];
+    let crl = CertificateRevocationListDer::from(unhex(CRL_PSS));
+    check(
+        std::slice::from_ref(&crl),
+        &[],
+        &listed,
+        Path::new("/d/crl.pem"),
+    )
+    .expect("an Unknown CRL was refused");
+    // two listed certificates of the name (a rollover), both Unknown for it: still passes
+    let other = spki(CA_1024);
+    assert_eq!(judge(&unhex(CRL_PSS), &other), Verdict::Unknown);
+    let both = vec![
+        Intermediate {
+            subject: subject.to_vec(),
+            spki: spki(CA_PSS),
+        },
+        Intermediate {
+            subject: subject.to_vec(),
+            spki: other,
+        },
+    ];
+    check(&[crl], &[], &both, Path::new("/d/crl.pem"))
+        .expect("Unknown next to Unknown was refused");
 }

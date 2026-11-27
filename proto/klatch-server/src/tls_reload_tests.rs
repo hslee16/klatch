@@ -245,3 +245,167 @@ fn abandoning_stops_at_the_cap_and_then_the_flag_stays() {
         let _ = free.send(());
     }
 }
+
+/// #1694: the cap means "abandoned and still stuck": when an abandoned build ends, its place is given back, so a later
+/// stall can be abandoned again; the count never goes below zero and a build that was never abandoned changes nothing.
+#[test]
+fn an_abandoned_build_that_finishes_gives_its_place_back_to_the_cap() {
+    let stop = AtomicBool::new(false);
+    let current = Current::new(Arc::new(0u8));
+    let mut slot = Slot::new();
+    let mut due = None;
+    let limits = Limits {
+        deadline: Duration::from_millis(50),
+        abandon_after: Duration::from_secs(30),
+        max_abandoned: 1,
+    };
+    let start = |slot: &mut Slot, due: &mut Option<i64>| {
+        let (free, hold) = channel();
+        let line = reload_with(
+            blocked_build(hold, 1u8),
+            "ok",
+            &current,
+            slot,
+            &stop,
+            due,
+            &limits,
+        );
+        (free, line)
+    };
+    let (free_first, _) = start(&mut slot, &mut due);
+    backdate(&mut slot, Duration::from_secs(31));
+    let (free_second, second) = start(&mut slot, &mut due);
+    assert!(second.unwrap().contains("abandoned"));
+    assert_eq!(slot.abandoned_now(), 1);
+    // at the cap: the next stuck build cannot be abandoned
+    backdate(&mut slot, Duration::from_secs(31));
+    let (free_capped, capped) = start(&mut slot, &mut due);
+    assert!(capped.unwrap().contains("restart the server"));
+    // the first (abandoned) build ends: its place is free again
+    free_first.send(()).unwrap();
+    let waited = Instant::now();
+    while slot.abandoned_now() != 0 {
+        assert!(
+            waited.elapsed() < Duration::from_secs(10),
+            "never given back"
+        );
+        std::thread::yield_now();
+    }
+    backdate(&mut slot, Duration::from_secs(31));
+    let (free_fourth, fourth) = start(&mut slot, &mut due);
+    assert!(fourth.unwrap().contains("abandoned"));
+    assert_eq!(slot.abandoned_now(), 1);
+    // the build in flight finishing normally never lowers the count: wait for the end of its guard (the marker is set
+    // there, after the flag), then a moment more for a wrong give-back to show (a wrong one can only be missed by being slow)
+    free_fourth.send(()).unwrap();
+    wait_until("the build never ended", || {
+        !slot.busy.load(Ordering::SeqCst) && slot.ended.load(Ordering::SeqCst)
+    });
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(slot.abandoned_now(), 1);
+    for free in [free_second, free_capped] {
+        let _ = free.send(());
+    }
+}
+
+/// Wait (bounded) until `done` holds: the build thread clears its flag and gives its place back just after it answers.
+fn wait_until(what: &str, done: impl Fn() -> bool) {
+    let waited = Instant::now();
+    while !done() {
+        assert!(waited.elapsed() < Duration::from_secs(10), "{what}");
+        std::thread::yield_now();
+    }
+}
+
+/// #1714 review: a mount that stalls now and then (a good reload, then a hung one, again and again) must engage the cap,
+/// say "abandoned", and keep the count exact. A marker reused from a build that ended normally made the next stuck build
+/// uncounted and unlogged, and its end then took a place from another stuck build.
+#[test]
+fn a_good_reload_then_a_stall_repeated_is_counted_logged_and_capped() {
+    let stop = AtomicBool::new(false);
+    let current = Current::new(Arc::new(0u8));
+    let mut slot = Slot::new();
+    let mut due = None;
+    let limits = Limits {
+        deadline: Duration::from_millis(50),
+        abandon_after: Duration::from_secs(30),
+        max_abandoned: 2,
+    };
+    let mut releases = Vec::new();
+    let mut lines = Vec::new();
+    for round in 0..4 {
+        let good = reload_with(
+            || Ok((Arc::new(5u8), None)),
+            "ok",
+            &current,
+            &mut slot,
+            &stop,
+            &mut due,
+            &limits,
+        );
+        lines.push(good.unwrap());
+        if round == 3 {
+            break;
+        }
+        wait_until("the good build never ended", || {
+            !slot.busy.load(Ordering::SeqCst)
+        });
+        let (free, hold) = channel();
+        releases.push(free);
+        let stalled = reload_with(
+            blocked_build(hold, 1u8),
+            "ok",
+            &current,
+            &mut slot,
+            &stop,
+            &mut due,
+            &limits,
+        );
+        assert_eq!(stalled, Some(failure_line(Kind::TimedOut)));
+        backdate(&mut slot, Duration::from_secs(31));
+    }
+    // round 0: nothing stuck before it; rounds 1 and 2 each abandon the stall before them; round 3 finds the cap reached
+    assert!(!lines[0].contains("abandoned"), "{:?}", lines[0]);
+    for n in [1, 2] {
+        assert!(lines[n].contains("abandoned"), "round {n}: {:?}", lines[n]);
+        assert_eq!(*current.get(), 5);
+    }
+    assert_eq!(slot.abandoned_now(), 2);
+    assert!(lines[3].contains("restart the server"), "{:?}", lines[3]);
+    // the stuck builds end one by one: the count falls to zero and stays there
+    for free in releases {
+        let _ = free.send(());
+    }
+    wait_until("the places were not all given back", || {
+        slot.abandoned_now() == 0
+    });
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(slot.abandoned_now(), 0);
+}
+
+/// A build that ends in the very moment it is abandoned was never stuck: the count is taken back and nothing is logged as
+/// abandoned. (The interleaving is set up by hand: the guard has set the marker and cleared the flag's successor.)
+#[test]
+fn a_build_that_ended_while_being_abandoned_is_not_counted() {
+    let mut slot = Slot::new();
+    slot.busy.store(true, Ordering::SeqCst);
+    backdate(&mut slot, Duration::from_secs(31));
+    slot.ended.store(true, Ordering::SeqCst);
+    let (gave_up, _guard) = slot
+        .claim(Duration::from_secs(30), 3)
+        .unwrap_or_else(|restart| panic!("the claim was refused (restart: {restart})"));
+    assert!(!gave_up);
+    assert_eq!(slot.abandoned_now(), 0);
+}
+
+/// The count never goes below zero, however often a place is given back.
+#[test]
+fn giving_a_place_back_never_goes_below_zero() {
+    let count = AtomicUsize::new(0);
+    give_back(&count);
+    give_back(&count);
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+    let count = AtomicUsize::new(2);
+    give_back(&count);
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+}
