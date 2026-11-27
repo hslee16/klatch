@@ -212,3 +212,43 @@ pub fn a_flag_is_kept_on_a_waiting_item_and_a_verdict_replaces_it<S: Store>(make
         "a flag on a resolved item changes nothing"
     );
 }
+
+pub fn a_capped_enqueue_stops_at_the_requesters_cap_and_returns_a_waiting_duplicate<S: Store>(
+    make: fn() -> S,
+) {
+    let s = make();
+    fn cross(seq: i64, who: &str) -> NewReview<'_> {
+        NewReview::new("r", seq, "public", "crossing").crossing("open", who)
+    }
+    let a1 = s
+        .enqueue_review_capped(&cross(1, "alice"), 10, 2)
+        .unwrap()
+        .unwrap();
+    s.enqueue_review_capped(&cross(2, "alice"), 10, 2)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        s.enqueue_review_capped(&cross(3, "alice"), 10, 2).unwrap(),
+        None,
+        "a third waiting crossing was queued past the cap of 2"
+    );
+    assert_eq!(s.waiting_crossings_of("alice").unwrap(), 2);
+    assert_eq!(
+        s.enqueue_review_capped(&cross(1, "alice"), 11, 2).unwrap(),
+        Some(a1),
+        "a message already waiting is no new place"
+    );
+    assert!(
+        s.enqueue_review_capped(&cross(3, "bob"), 10, 2)
+            .unwrap()
+            .is_some(),
+        "another requester shares the cap"
+    );
+    s.resolve_review(&ReviewResolution::new(a1, "deny", ""), 20)
+        .unwrap();
+    assert!(
+        s.enqueue_review_capped(&cross(3, "alice"), 21, 2)
+            .unwrap()
+            .is_some()
+    );
+}

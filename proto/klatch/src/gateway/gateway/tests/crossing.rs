@@ -488,3 +488,65 @@ fn the_human_sets_the_cap_and_off_restores_the_default() {
         assert_eq!(g.crossing_cap().unwrap(), DEFAULT_CROSSING_CAP, "{bad}");
     }
 }
+
+#[test]
+fn a_refusal_at_the_cap_is_recorded_with_its_rule_and_no_message_text() {
+    let (g, _) = world();
+    g.admin_set_crossing_cap(&admin(), Some(1)).unwrap();
+    more_vault_messages(&g, 1);
+    g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    assert!(g.request_crossing(&alice(), "vault", 2, "open").is_err());
+    let rows: Vec<_> = g
+        .my_refusals(&alice(), 50)
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.rule == "crossing-cap")
+        .collect();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(
+        (rows[0].member.as_str(), rows[0].operation.as_str()),
+        ("alice", "crossing")
+    );
+    let shown = format!("{rows:?}");
+    assert!(
+        !shown.contains("the plan") && !shown.contains("another fact"),
+        "{shown}"
+    );
+}
+
+#[test]
+fn a_flood_of_refusals_at_the_cap_keeps_a_bounded_number_of_rows_and_refuses_every_time() {
+    let (g, t) = world();
+    g.admin_set_crossing_cap(&admin(), Some(1)).unwrap();
+    more_vault_messages(&g, 1);
+    g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    let rows = |g: &Gateway<SpyStore>| {
+        g.my_refusals(&alice(), 1000)
+            .unwrap()
+            .iter()
+            .filter(|r| r.rule == "crossing-cap")
+            .count()
+    };
+    for _ in 0..500 {
+        let e = g
+            .request_crossing(&alice(), "vault", 2, "open")
+            .unwrap_err();
+        assert_eq!(rule_of(e), "crossing-cap");
+    }
+    assert_eq!(rows(&g), 1, "500 refusals in one minute are one row");
+    t.set(t.get() + 61);
+    assert!(g.request_crossing(&alice(), "vault", 2, "open").is_err());
+    assert_eq!(rows(&g), 2, "a later minute is told again");
+}
+
+#[test]
+fn a_message_already_waiting_is_returned_at_the_cap_and_adds_nothing() {
+    let (g, _) = world();
+    g.admin_set_crossing_cap(&admin(), Some(1)).unwrap();
+    let id = g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    // the queue dedupes the same message, so asking again is no new place
+    assert_eq!(
+        g.request_crossing(&alice(), "vault", 1, "open").unwrap(),
+        id
+    );
+}

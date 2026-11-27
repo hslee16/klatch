@@ -7,6 +7,27 @@ impl ReviewStore for SpyStore {
         self.inner.enqueue_review(item, now)
     }
 
+    fn enqueue_review_capped(
+        &self,
+        item: &crate::store::NewReview,
+        now: i64,
+        cap: usize,
+    ) -> Result<Option<i64>> {
+        self.inner.enqueue_review_capped(item, now, cap)
+    }
+
+    fn pending_reviews_after(
+        &self,
+        after: i64,
+        limit: usize,
+    ) -> Result<Vec<crate::store::QueuedReview>> {
+        self.inner.pending_reviews_after(after, limit)
+    }
+
+    fn waiting_crossings_of(&self, requester: &str) -> Result<usize> {
+        self.inner.waiting_crossings_of(requester)
+    }
+
     fn pending_reviews(&self, limit: usize) -> Result<Vec<crate::store::QueuedReview>> {
         self.inner.pending_reviews(limit)
     }

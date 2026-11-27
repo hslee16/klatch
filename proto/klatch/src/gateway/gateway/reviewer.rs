@@ -7,8 +7,7 @@
 use super::roles::RoleChange;
 use super::*;
 use crate::domain::{ReviewItem, Verdict};
-use crate::gateway::DRAIN_LIMIT;
-use crate::gateway::judge::{load_item, record};
+use crate::gateway::judge::{PendingPages, load_item, record};
 
 const REVIEWER: &str = "reviewer";
 
@@ -37,11 +36,8 @@ impl<S: Store> Gateway<S> {
     /// the reviewer's clearance is skipped, not shown: the human grants clearance to the reviewer like any member.
     pub fn review_next(&self, who: &Principal) -> Result<Option<ReviewItem>> {
         self.admit_review(who, &Operation::ReviewNext)?;
-        let mut after = 0;
-        loop {
-            let page = self.store.pending_reviews_after(after, DRAIN_LIMIT)?;
-            let Some(last) = page.last() else { break };
-            after = last.id;
+        let mut pages = PendingPages::new();
+        while let Some(page) = pages.next(&self.store)? {
             for q in page {
                 if self.check_clearance(who, &q.room).is_err() {
                     continue;

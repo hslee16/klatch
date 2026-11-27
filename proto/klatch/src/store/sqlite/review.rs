@@ -6,7 +6,14 @@ use crate::store::{NewReview, QueuedReview, ReviewResolution};
 use rusqlite::params;
 
 impl SqliteStore {
-    pub(super) fn enqueue_review_row(&self, item: &NewReview, now: i64) -> Result<i64> {
+    /// Queue `item`, or return the id already waiting for it. With a `cap`, the requester's waiting crossings are
+    /// counted in the same immediate transaction as the insert, and `None` means the cap stopped it (#1736).
+    pub(super) fn enqueue_review_row(
+        &self,
+        item: &NewReview,
+        now: i64,
+        cap: Option<usize>,
+    ) -> Result<Option<i64>> {
         self.immediate(|| {
             let waiting = self.optional(
                 "SELECT id FROM review_queue WHERE room=?1 AND seq=?2 AND to_label=?3 AND resolved IS NULL",
@@ -14,7 +21,19 @@ impl SqliteStore {
                 |r| r.get(0),
             )?;
             if let Some(id) = waiting {
-                return Ok(id);
+                return Ok(Some(id));
+            }
+            if let Some(cap) = cap {
+                let n: i64 = self
+                    .optional(
+                        "SELECT COUNT(*) FROM review_queue WHERE resolved IS NULL AND to_room<>'' AND requester=?1",
+                        params![item.requester],
+                        |r| r.get(0),
+                    )?
+                    .unwrap_or(0);
+                if usize::try_from(n).unwrap_or(usize::MAX) >= cap {
+                    return Ok(None);
+                }
             }
             self.exec(
                 "INSERT INTO review_queue(room,seq,to_label,reason,ts,to_room,requester) VALUES(?1,?2,?3,?4,?5,?6,?7)",
@@ -28,7 +47,7 @@ impl SqliteStore {
                     item.requester
                 ],
             )?;
-            Ok(self.conn.last_insert_rowid())
+            Ok(Some(self.conn.last_insert_rowid()))
         })
     }
 

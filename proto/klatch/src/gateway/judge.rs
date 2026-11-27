@@ -3,11 +3,43 @@
 //! stays inline in the gateway and fails closed, so an absent or unreachable judge only leaves the queue longer.
 
 use crate::domain::{Judge, LabelChain, Result, ReviewItem, RulesJudge, Verdict};
-use crate::store::{NewAudit, QueuedReview, ReviewResolution, Store};
+use crate::store::{NewAudit, QueuedReview, ReviewResolution, ReviewStore, Store};
 
 /// How many items one page of the queue holds. A drain walks every page by age (#1736), so items behind a full page
 /// of deferred ones are still judged; the run is bounded by the per-requester cap on waiting crossings.
 pub const DRAIN_LIMIT: usize = 100;
+
+/// The most pages one walk of the queue takes: far more than the cap allows, so reaching it means a broken cursor.
+const MAX_PAGES: usize = 100_000;
+
+/// A walk over the waiting queue by age, a page of `DRAIN_LIMIT` at a time (#1736). A store that returns an item at or
+/// before the cursor, or a walk that never ends, is an error and not a hang: failing closed leaves the queue as it is.
+pub(crate) struct PendingPages {
+    after: i64,
+    taken: usize,
+}
+
+impl PendingPages {
+    pub(crate) fn new() -> Self {
+        Self { after: 0, taken: 0 }
+    }
+
+    /// The next page, or `None` at the end of the queue.
+    pub(crate) fn next<S: ReviewStore>(&mut self, store: &S) -> Result<Option<Vec<QueuedReview>>> {
+        let page = store.pending_reviews_after(self.after, DRAIN_LIMIT)?;
+        let (Some(first), Some(last)) = (page.first(), page.last()) else {
+            return Ok(None);
+        };
+        self.taken += 1;
+        if first.id <= self.after || last.id < first.id || self.taken > MAX_PAGES {
+            return Err(crate::domain::Error::Backend(
+                "the review queue did not page forward".into(),
+            ));
+        }
+        self.after = last.id;
+        Ok(Some(page))
+    }
+}
 
 /// What one drain did.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -47,11 +79,8 @@ pub(crate) fn load_item<S: Store>(store: &S, q: &QueuedReview) -> Result<Option<
 /// Run every pending item past `judge` once. A vanished message is denied: there is nothing left to let across.
 pub fn drain<S: Store>(store: &S, judge: &dyn Judge, now: i64) -> Result<Drained> {
     let mut out = Drained::default();
-    let mut after = 0;
-    loop {
-        let page = store.pending_reviews_after(after, DRAIN_LIMIT)?;
-        let Some(last) = page.last() else { break };
-        after = last.id;
+    let mut pages = PendingPages::new();
+    while let Some(page) = pages.next(store)? {
         for q in page {
             drain_one(store, judge, &q, now, &mut out)?;
         }
@@ -161,6 +190,41 @@ mod tests {
     use crate::domain::{Judge, NullJudge, ReviewItem, Verdict};
     use crate::store::areas::*;
     use crate::store::{NewReview, SqliteStore};
+
+    /// A store whose queue ignores the cursor, as a broken `pending_reviews_after` would.
+    struct IgnoresCursor;
+    impl crate::store::ReviewStore for IgnoresCursor {
+        fn pending_reviews_after(&self, _after: i64, _limit: usize) -> Result<Vec<QueuedReview>> {
+            Ok(vec![QueuedReview {
+                id: 1,
+                ..QueuedReview::default()
+            }])
+        }
+    }
+
+    #[test]
+    fn a_cursor_that_does_not_advance_is_an_error_not_a_hang() {
+        let mut pages = PendingPages::new();
+        assert!(pages.next(&IgnoresCursor).unwrap().is_some());
+        assert!(pages.next(&IgnoresCursor).is_err());
+    }
+
+    #[test]
+    fn the_pages_of_a_queue_cover_every_item_once_in_order() {
+        let s = SqliteStore::open_in_memory().unwrap();
+        for seq in 1..=(2 * DRAIN_LIMIT as i64 + 1) {
+            s.enqueue_review(&NewReview::new("r", seq, "public", "x"), 3)
+                .unwrap();
+        }
+        let mut pages = PendingPages::new();
+        let (mut seen, mut calls) = (Vec::new(), 0);
+        while let Some(page) = pages.next(&s).unwrap() {
+            calls += 1;
+            seen.extend(page.iter().map(|q| q.id));
+        }
+        assert_eq!((calls, seen.len()), (3, 2 * DRAIN_LIMIT + 1));
+        assert!(seen.windows(2).all(|w| w[0] < w[1]));
+    }
 
     struct Says(Verdict);
     impl Judge for Says {

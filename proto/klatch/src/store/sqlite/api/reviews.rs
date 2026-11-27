@@ -7,7 +7,12 @@ use crate::store::{ReviewResolution, ReviewStore};
 
 impl ReviewStore for SqliteStore {
     fn enqueue_review(&self, item: &NewReview, now: i64) -> Result<i64> {
-        self.enqueue_review_row(item, now)
+        self.enqueue_review_row(item, now, None)
+            .map(|id| id.unwrap_or_default())
+    }
+
+    fn enqueue_review_capped(&self, item: &NewReview, now: i64, cap: usize) -> Result<Option<i64>> {
+        self.enqueue_review_row(item, now, Some(cap))
     }
 
     fn pending_reviews(&self, limit: usize) -> Result<Vec<QueuedReview>> {

@@ -18,6 +18,8 @@ pub type Applied = (i64, &'static str);
 pub(super) const DEFAULT_CROSSING_CAP: usize = 20;
 /// The most the cap may be set to.
 const MAX_CROSSING_CAP: usize = 10_000;
+/// A member is told of the cap in the refusal record once a minute.
+const CAP_REFUSAL_WINDOW_SECS: i64 = 60;
 const CAP_KEY: &str = "crossing:cap";
 const RELEASED: &str = "released";
 const BLOCKED: &str = "blocked";
@@ -52,9 +54,14 @@ impl<S: Store> Gateway<S> {
             )));
         }
         self.refuse_text(who, (to, "crossing"), &item.text)?;
-        self.check_crossing_cap(who, from)?;
         let new = NewReview::new(from, seq, &to_label, "crossing").crossing(to, &who.member);
-        self.store.enqueue_review(&new, self.now())
+        // counted and queued in one store transaction, so concurrent processes of one member cannot both take the
+        // last place
+        let cap = self.crossing_cap()?;
+        match self.store.enqueue_review_capped(&new, self.now(), cap)? {
+            Some(id) => Ok(id),
+            None => Err(self.crossing_cap_refusal(who, from, cap)),
+        }
     }
 
     /// The cap on one member's waiting crossings: the human's setting, else the default. A stored value that does not
@@ -84,22 +91,26 @@ impl<S: Store> Gateway<S> {
         })
     }
 
-    /// Fail closed when `who` already has the cap of crossings waiting. The refusal names the number and what frees a
-    /// place, never a message or its text; it is kept as a refusal record like any other (not a safety rule, so it does
-    /// not trip the breaker).
-    fn check_crossing_cap(&self, who: &Principal, from: &str) -> Result<()> {
-        let cap = self.crossing_cap()?;
-        if self.store.waiting_crossings_of(&who.member)? < cap {
-            return Ok(());
-        }
+    /// The refusal for a requester at the cap: it names the number and what frees a place, never a message or its
+    /// text. It is kept as a refusal record (not a safety rule, so it does not trip the breaker), at most one row a
+    /// minute per member however many requests are refused, so a loop of requests cannot grow the table; every
+    /// request is still refused.
+    fn crossing_cap_refusal(&self, who: &Principal, from: &str, cap: usize) -> Error {
         let e = Error::Refused {
             rule: "crossing-cap".into(),
             reason: format!(
                 "you already have {cap} crossings waiting for a verdict, the most allowed; {NEXT_STEP}wait for a verdict on one (klatch crossings), then ask again"
             ),
         };
-        self.note_refusal(who, (from, "crossing"), &e);
-        Err(e)
+        let now = self.now();
+        let told = self
+            .store
+            .refusal_rules_since(&who.member, now - CAP_REFUSAL_WINDOW_SECS)
+            .is_ok_and(|rules| rules.iter().any(|r| r == "crossing-cap"));
+        if !told {
+            self.note_refusal(who, (from, "crossing"), &e);
+        }
+        e
     }
 
     /// The label the message was posted under.
