@@ -159,15 +159,11 @@ impl SqliteStore {
     /// `note_yield_end` for every lapse of a sweep with one read of the deadlock marks, not one select per lapse
     /// (#1620): a mark is a `claim_yields` row with an empty path, and a lapse is marked when its holder has one in the
     /// window before the lease ended.
-    fn note_lapsed_yield_ends(&self, lapsed: &[Lapsed]) -> Result<()> {
+    pub(super) fn note_lapsed_yield_ends(&self, lapsed: &[Lapsed]) -> Result<()> {
         if lapsed.is_empty() {
             return Ok(());
         }
-        let marks: Vec<(String, String, i64)> = self.rows(
-            "SELECT room,member,ts FROM claim_yields WHERE path=''",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )?;
+        let marks = self.lapsed_marks(lapsed)?;
         for l in lapsed.iter().filter(|l| {
             marks.iter().any(|(room, member, ts)| {
                 *room == l.room
@@ -179,6 +175,37 @@ impl SqliteStore {
             self.mark_yield_end(&l.room, (&l.owner, &l.path), l.expires)?;
         }
         Ok(())
+    }
+
+    /// The deadlock marks `(room, member, ts)` that can mark one of `lapsed`: those of the rooms that lapsed and
+    /// inside the span from the earliest lease end minus the window to the latest lease end (#1757), so the read
+    /// grows with the sweep and not with every stale mark of every room. The caller still matches mark to lapse.
+    pub(super) fn lapsed_marks(&self, lapsed: &[Lapsed]) -> Result<Vec<(String, String, i64)>> {
+        let (Some(first), Some(last)) = (
+            lapsed.iter().map(|l| l.expires).min(),
+            lapsed.iter().map(|l| l.expires).max(),
+        ) else {
+            return Ok(Vec::new());
+        };
+        let mut rooms: Vec<&str> = lapsed.iter().map(|l| l.room.as_str()).collect();
+        rooms.sort_unstable();
+        rooms.dedup();
+        let mut marks = Vec::new();
+        // chunked: a sweep can lapse claims in more rooms than one statement has parameters
+        for chunk in rooms.chunks(500) {
+            let holes = vec!["?"; chunk.len()].join(",");
+            let sql = format!(
+                "SELECT room,member,ts FROM claim_yields WHERE path='' AND ts>=?1 AND ts<=?2 AND room IN ({holes})"
+            );
+            let lo = first - YIELD_WINDOW_SECS;
+            let args = [&lo as &dyn rusqlite::ToSql, &last]
+                .into_iter()
+                .chain(chunk.iter().map(|r| r as &dyn rusqlite::ToSql));
+            marks.extend(self.rows(&sql, rusqlite::params_from_iter(args), |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })?);
+        }
+        Ok(marks)
     }
 
     /// The claims flagged by `note_overwrites` that are still inside the window: `(path, previous, new)`, sorted.
