@@ -26,11 +26,11 @@ pub fn no_hooks_pointer(cwd: &Path, home: Option<&Path>, headless: bool) -> Opti
     }
     let mut seen = Vec::new();
     for f in &files {
-        seen.push(scan::look(f, &root)?);
+        seen.push(scan::look(f, &root, false)?);
     }
     if let Some(h) = home {
         // the user scope may link out of the project by design; it is read as the owner's own file
-        seen.push(scan::look(&h.join(".claude").join("settings.json"), h)?);
+        seen.push(scan::look(&h.join(".claude").join("settings.json"), h, true)?);
     }
     (!seen.contains(&scan::Seen::Hooks)).then_some(POINTER)
 }
