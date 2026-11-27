@@ -5,7 +5,8 @@
 use crate::gateway::{LeaseSource, Observed};
 use crate::harness::Record;
 use crate::harness::{
-    FileMeta, FsRegistry, Host, ProcRow, PsTable, SysHost, Thresholds, Turn, probe,
+    FileMeta, FsRegistry, Host, ProcRow, ProcessTable, PsTable, SysHost, Thresholds, Turn, Verdict,
+    probe,
 };
 use std::path::Path;
 
@@ -62,29 +63,66 @@ impl SysLeaseSource {
 
 impl LeaseSource for SysLeaseSource {
     fn observe(&self, _member: &str, session_id: &str, now_ms: u64) -> Option<Observed> {
-        let (records, _) = self.registry.records_alive(self.alive().as_ref());
-        let rec = records.into_iter().find(|r| r.session_id == session_id)?;
         let host = AtTime {
             inner: &self.host,
             now_ms,
         };
-        let p = probe(
-            &rec,
+        observe_in(
+            &self.registry,
             &PsTable,
-            self.domain,
             &host,
-            None,
-            &Thresholds::default(),
-        );
-        Some(Observed {
-            verdict: p.verdict,
-            quiet_for_ms: p.evidence.quiet_for_ms,
+            self.domain,
+            session_id,
+            &self.alive(),
+        )
+    }
+}
+
+/// What the registry, the process table and the host say about `session_id`, as the lease rules need it (#1706).
+///
+/// Every record that claims the session id is probed, because a same-user process can write a record carrying any
+/// session id under any pid (a low live pid to read as gone and shorten the victim's claims, or a live process named
+/// like the harness to read as alive and keep a dead member's claims from ever lapsing). One record: it is the
+/// session's. More than one: if none of them is the live harness the answer is `Gone`, which is true whichever of them
+/// is the real one; otherwise the records disagree about who the session is and nothing here can tell the real one from
+/// the forged, so the answer is `None` and the lease is left alone (neither extended nor shortened; its TTL decides).
+/// A harness restarted under a new pid with the stale file of the old one left behind lands here too, and lapses by TTL.
+fn observe_in(
+    registry: &FsRegistry,
+    procs: &dyn ProcessTable,
+    host: &dyn Host,
+    domain: &str,
+    session_id: &str,
+    alive: &Option<std::collections::HashSet<u32>>,
+) -> Option<Observed> {
+    let (records, _) = registry.records_alive(alive.as_ref());
+    let claims: Vec<Record> = records
+        .into_iter()
+        .filter(|r| r.session_id == session_id)
+        .collect();
+    let seen: Vec<Observed> = claims
+        .iter()
+        .map(|rec| {
+            let p = probe(rec, procs, domain, host, None, &Thresholds::default());
+            Observed {
+                verdict: p.verdict,
+                quiet_for_ms: p.evidence.quiet_for_ms,
+            }
         })
+        .collect();
+    match seen.as_slice() {
+        [] => None,
+        [one] => Some(*one),
+        many if many.iter().all(|o| o.verdict == Verdict::Gone) => Some(many[0]),
+        _ => None,
     }
 }
 
 #[cfg(test)]
 mod at_time_tests;
+
+#[cfg(test)]
+mod observe_tests;
 
 #[cfg(test)]
 mod tests {
