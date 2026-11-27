@@ -163,6 +163,8 @@ impl SqliteStore {
             }
             for sql in [
                 "DELETE FROM claims WHERE room=?1 AND owner=?2",
+                // a member that is gone is not stuck: its lapse is not reported after it was removed (#1620)
+                "DELETE FROM claim_lapses WHERE room=?1 AND owner=?2",
                 "DELETE FROM members WHERE room=?1 AND name=?2",
                 "DELETE FROM machine_checkpoints WHERE room=?1 AND member=?2",
             ] {

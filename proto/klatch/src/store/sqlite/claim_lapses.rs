@@ -3,7 +3,7 @@
 
 use super::SqliteStore;
 use super::claims::ask_number;
-use crate::domain::{LAPSE_RECORD_CAP, LAPSED_WINDOW_SECS, Result};
+use crate::domain::{LAPSE_RECORD_CAP, LAPSE_TOTAL_CAP, LAPSED_WINDOW_SECS, Result};
 use rusqlite::params;
 
 /// A claim whose lease had lapsed and that an attempt swept away.
@@ -25,8 +25,10 @@ pub(super) struct Lapsed {
 impl SqliteStore {
     /// Remember the named lapses in `claim_lapses` (#1586) so the `lapsed_claim` stuck event outlives this sweep: not
     /// passive or ask claims, not a lapse already past the report window. One row per room, path and holder (a repeat
-    /// replaces it). The table is pruned past the window and, per room that gained rows, down to `LAPSE_RECORD_CAP`
-    /// newest, so claiming and letting claims lapse cannot grow it without bound. Only runs when something lapsed.
+    /// replaces it). The table is pruned past the window at every sweep (so the next claim attempt of any room clears old
+    /// rows; a store with no attempts at all runs nothing, and the report filters by the window anyway), and, when rows
+    /// were added, per room that gained rows down to `LAPSE_RECORD_CAP` newest and in all down to `LAPSE_TOTAL_CAP`, so
+    /// claiming and letting claims lapse cannot grow it without bound.
     pub(super) fn record_lapses(&self, lapsed: &[Lapsed], now: i64) -> Result<()> {
         let floor = now - LAPSED_WINDOW_SECS;
         let named = |l: &&Lapsed| !l.passive && ask_number(&l.path).is_none() && l.expires > floor;
@@ -41,10 +43,11 @@ impl SqliteStore {
                 rooms.push(&l.room);
             }
         }
-        if lapsed.is_empty() {
+        // past the window on every sweep, a lapse or not: the next claim attempt of any room clears the old rows
+        self.exec("DELETE FROM claim_lapses WHERE expires<=?1", params![floor])?;
+        if rooms.is_empty() {
             return Ok(());
         }
-        self.exec("DELETE FROM claim_lapses WHERE expires<=?1", params![floor])?;
         let cap = i64::try_from(LAPSE_RECORD_CAP).unwrap_or(i64::MAX);
         for room in rooms {
             self.exec(
@@ -53,6 +56,12 @@ impl SqliteStore {
                 params![room, cap],
             )?;
         }
+        // and in all, whatever the number of rooms
+        self.exec(
+            "DELETE FROM claim_lapses WHERE rowid NOT IN
+             (SELECT rowid FROM claim_lapses ORDER BY expires DESC, room DESC, path DESC, owner DESC LIMIT ?1)",
+            params![i64::try_from(LAPSE_TOTAL_CAP).unwrap_or(i64::MAX)],
+        )?;
         Ok(())
     }
 }

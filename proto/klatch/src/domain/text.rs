@@ -61,9 +61,19 @@ pub fn valid_kind(kind: &str) -> bool {
     safe_name_bytes(kind.as_bytes())
 }
 
-/// Collapse line breaks so one message stays on one line.
+/// Collapse line breaks so one message stays on one line: every line separator (CR, LF, U+0085, U+2028, U+2029) and every
+/// other control character (a terminal escape, a tab, a bell) becomes a space, so text shown in a listing cannot start a
+/// line of its own or move a terminal's cursor. Only the copy shown changes; what is stored does not.
 pub fn flat(s: &str) -> String {
-    s.replace(['\r', '\n'], " ")
+    s.chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect()
 }
 
 /// Strip trailing slashes; the empty path becomes "/".
@@ -252,5 +262,24 @@ mod tests {
                 assert_eq!(overlaps(a, b), overlaps_reference(a, b), "{a:?} {b:?}");
             }
         }
+    }
+
+    #[test]
+    fn flat_leaves_no_line_separator_or_control_character() {
+        for bad in [
+            "\r", "\n", "\u{2028}", "\u{2029}", "\u{85}", "\u{1b}", "\t", "\u{7}",
+        ] {
+            let out = flat(&format!("a{bad}b"));
+            assert_eq!(out, "a b", "{bad:?}");
+        }
+        let out = flat("x\u{1b}[2K\ry\u{2028}z\r\nw");
+        assert!(
+            out.chars()
+                .all(|c| !c.is_control() && c != '\u{2028}' && c != '\u{2029}')
+        );
+        assert_eq!(
+            flat("plain text, unicode: \u{e9}\u{4e2d}"),
+            "plain text, unicode: \u{e9}\u{4e2d}"
+        );
     }
 }

@@ -1,0 +1,2 @@
+- Audit rows for ignored forwarded headers never show a name above the row's requests: a name held back by a half counted request is in a later row, not lost. The server's live line and summary go through one output writer, so a closed stderr cannot end the periodic rows (#1690).
+- `klatch admin audit` and `role act audit` listings show details with every line separator and control character (CR, LF, U+0085, U+2028, U+2029, escape codes, tabs) as spaces; stored text is unchanged (#1690).

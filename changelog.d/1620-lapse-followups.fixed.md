@@ -1,0 +1,1 @@
+- Lapse records are cleared past the report window at every claim sweep (not only when something lapsed), capped at 1000 in all across rooms, and dropped when the member is removed; a sweep records its expiry events with one prune instead of one per lapse (#1620).

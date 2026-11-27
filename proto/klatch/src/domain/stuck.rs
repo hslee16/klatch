@@ -79,6 +79,10 @@ pub const LAPSED_CLAIM_MAX: usize = 20;
 /// dropped as each sweep writes new ones. Above `LAPSED_CLAIM_MAX`, so the report is never starved by its own bound.
 pub const LAPSE_RECORD_CAP: usize = 100;
 
+/// At most this many lapse records are kept in all, newest lapse first, whatever the number of rooms (the per-room cap
+/// alone does not bound the table, because joining creates rooms). Records past it are dropped oldest first.
+pub const LAPSE_TOTAL_CAP: usize = 1000;
+
 /// Seconds a deadlock mark, a release after it and the flag that follows each last (#909): a release counts when it
 /// comes within this long of the deadlock, a take counts when it comes within this long of the release, and the event
 /// is shown for this long after the take. Fixed, not a setting.
