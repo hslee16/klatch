@@ -182,6 +182,20 @@ Claude Code behaviour that shapes this, read on 2026-11-22 from the Claude Code 
   holder, how long it has held it, the exact `klatch ask` to send) and never blocks; blocking is `init --enforce`. A tool
   call made inside a subagent (its input carries `agent_id`) claims nothing, and DESIGN.md, CHANGELOG.md and
   RESEARCH-NOTES.md are never claimed.
+- Pre-edit warning (opt in, `klatch init --pre-edit-warn`, #1402) and first-edit claim (`--pre-edit-claims`, #1458). One
+  `PreToolUse` entry of its own, matching Edit, Write, MultiEdit and NotebookEdit (never Bash), whose command carries
+  `--pre-edit-warn`. Before the edit it reads the claims in the rooms the member can read (the same guarded `claims` call
+  the blocking hook uses; no message is read, so none is consumed) and, when another member holds a live claim, explicit
+  or passive, that overlaps the path (symlinks, `..` spellings and files that do not exist yet are judged by where they
+  land), prints one `additionalContext` line: the holders (three names, then a count), how many claims, the longest time
+  left, and the exact `klatch ask` to send, marked as data. Nothing is printed when there is nothing to say, and a claim
+  reason is never printed. It never blocks: `init --enforce` is the separate blocking entry, and the two are installed and
+  removed independently. A store it cannot read fails open with the usual `could not check claims` line. With
+  `--pre-edit-claims` (needs `--passive-claims`, whose Stop and SessionEnd hooks release the claim) the same step takes the
+  passive claim before the edit when nobody else holds the path, so first edits are covered at edit time; it never takes a
+  claim over a warning. A claim is the only edit record there is: once the holder's turn ends and its passive claim is
+  released, a later edit of the same path is not warned about (a recent-edit record needs a schema change, see the design
+  item for #1402).
 - Machine status (opt in, `klatch init --machine-status`, #1403). The `PostToolUse` command that carries
   `--machine-status`, and a `Stop` command that carries it (one hook shared with `--checkpoint` and `--passive-claims`, whose command carries every flag the
   member consented to), set the member's status from activity instead of from posts: `working (auto)` at the

@@ -34,6 +34,10 @@ pub enum Setting {
     MachineStatus(bool),
     /// The stop warning (#1344).
     StopWarn(bool),
+    /// The pre-edit overlap warning (#1402).
+    PreEditWarn(bool),
+    /// The first-edit passive claim (#1458).
+    PreEditClaims(bool),
 }
 
 /// Every consent as it stands in one settings value.
@@ -48,6 +52,8 @@ pub struct State {
     pub passive_claims: bool,
     pub machine_status: bool,
     pub stop_warn: bool,
+    pub pre_edit_warn: bool,
+    pub pre_edit_claims: bool,
     /// The program klatch's hooks run, kept as it is when a consent changes.
     bin: String,
 }
@@ -63,6 +69,8 @@ const LEGEND: &str = "What each one changes (only klatch's own hook entries in t
   passive-claims: a flag on PostToolUse, SessionEnd and Stop claims the repo-relative path of each file you edit for 5 minutes (renewed by each edit, released when the turn ends); it warns when another member holds the path and never blocks
   machine-status: a flag on PostToolUse, SessionEnd and Stop sets the member's status from activity (working, idle, parked, marked auto), posting no message and never replacing a status the member set
   stop-warn: a flag on PostToolUse, SessionEnd and Stop prints one warning line to you when a turn ends with background tasks or crons still running (counts and kinds only, never a command or description), and never stops anything (it adds klatch's Stop hook, which records background counts and liveness as usual)
+  pre-edit-warn: a PreToolUse hook of its own for Edit, Write, MultiEdit and NotebookEdit prints one line when another member holds the path about to be edited (names and counts only, never a reason or message text), and never blocks (enforce is the blocking hook)
+  pre-edit-claims: the same hook also takes the passive claim before the first edit of a path (needs passive-claims, which releases it when the turn ends)
 A change takes effect at the next session; one already running keeps the hooks it started with.
 ";
 
@@ -95,6 +103,8 @@ pub fn read_state(settings: &Value) -> Option<State> {
         passive_claims: stop_flags(&found).0,
         machine_status: stop_flags(&found).2,
         stop_warn: stop_flags(&found).3,
+        pre_edit_warn: init::pre_edit_state(settings).0,
+        pre_edit_claims: init::pre_edit_state(settings).1,
         bin: init::hook_program(first).to_string(),
     })
 }
@@ -132,6 +142,8 @@ impl State {
             format!("passive-claims: {}", on_off(self.passive_claims)),
             format!("machine-status: {}", on_off(self.machine_status)),
             format!("stop-warn: {}", on_off(self.stop_warn)),
+            format!("pre-edit-warn: {}", on_off(self.pre_edit_warn)),
+            format!("pre-edit-claims: {}", on_off(self.pre_edit_claims)),
         ]
     }
 }
@@ -156,8 +168,10 @@ impl Setting {
             "passive-claims" => switch().map(Self::PassiveClaims),
             "machine-status" => switch().map(Self::MachineStatus),
             "stop-warn" => switch().map(Self::StopWarn),
+            "pre-edit-warn" => switch().map(Self::PreEditWarn),
+            "pre-edit-claims" => switch().map(Self::PreEditClaims),
             other => Err(format!(
-                "unknown consent {other:?}: board, join, session-end, enforce, wake, checkpoint, passive-claims, machine-status or stop-warn"
+                "unknown consent {other:?}: board, join, session-end, enforce, wake, checkpoint, passive-claims, machine-status, stop-warn, pre-edit-warn or pre-edit-claims"
             )),
         }
     }
@@ -203,9 +217,15 @@ pub fn apply(settings: &mut Value, setting: &Setting) -> Result<(), String> {
         Setting::Enforce(on) => init::set_enforce(&mut next, bin, switch_of(*on))?,
         Setting::Wake(on) => init::set_wake(&mut next, bin, switch_of(*on))?,
         Setting::Checkpoint(on) => init::set_checkpoint(&mut next, bin, switch_of(*on))?,
-        Setting::PassiveClaims(on) => init::set_passive_claims(&mut next, bin, switch_of(*on))?,
+        Setting::PassiveClaims(on) => {
+            init::set_passive_claims(&mut next, bin, switch_of(*on))?;
+            // the first-edit claim has nothing to release it without passive claims: it goes, the warning stays
+            init::drop_orphan_pre_edit_claims(&mut next, bin)?;
+        }
         Setting::MachineStatus(on) => init::set_machine_status(&mut next, bin, switch_of(*on))?,
         Setting::StopWarn(on) => init::set_stop_warn(&mut next, bin, switch_of(*on))?,
+        Setting::PreEditWarn(on) => init::set_pre_edit_warn(&mut next, bin, switch_of(*on))?,
+        Setting::PreEditClaims(on) => init::set_pre_edit_claims(&mut next, bin, switch_of(*on))?,
     }
     *settings = next;
     Ok(())

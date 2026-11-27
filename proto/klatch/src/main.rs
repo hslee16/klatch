@@ -202,19 +202,34 @@ enum Cmd {
         /// Remove the stop warning flag (and the Stop hook when nothing else needs it)
         #[arg(long)]
         no_stop_warn: bool,
+        /// Warn before an edit (off by default; #1402): an own PreToolUse hook for Edit, Write, MultiEdit and
+        /// NotebookEdit prints one bounded line when another member holds a live claim on the path about to be
+        /// changed (names and counts only, never a reason or message text). It never blocks (that is --enforce)
+        #[arg(long, conflicts_with = "no_pre_edit_warn")]
+        pre_edit_warn: bool,
+        /// Remove the pre-edit warning hook (and the first-edit claim with it)
+        #[arg(long)]
+        no_pre_edit_warn: bool,
+        /// Also claim the path before its first edit (off by default; #1458): the pre-edit hook takes the passive claim
+        /// before an edit, so the first edit of a path is covered too. Needs --passive-claims (it releases the claim)
+        #[arg(long, conflicts_with = "no_pre_edit_claims")]
+        pre_edit_claims: bool,
+        /// Remove the first-edit claim and keep the warning
+        #[arg(long)]
+        no_pre_edit_claims: bool,
         /// Remove every hook klatch installed (and nothing else) from the settings of --scope; keeps your rooms
         /// and keys
         #[arg(
             long,
-            conflicts_with_all = ["board", "no_lobby", "no_session_end", "enforce", "no_enforce", "wake", "no_wake", "checkpoint", "no_checkpoint", "passive_claims", "no_passive_claims", "machine_status", "no_machine_status", "stop_warn", "no_stop_warn"]
+            conflicts_with_all = ["board", "no_lobby", "no_session_end", "enforce", "no_enforce", "wake", "no_wake", "checkpoint", "no_checkpoint", "passive_claims", "no_passive_claims", "machine_status", "no_machine_status", "stop_warn", "no_stop_warn", "pre_edit_warn", "no_pre_edit_warn", "pre_edit_claims", "no_pre_edit_claims"]
         )]
         uninstall: bool,
     },
-    /// Show the consents `klatch init` granted (board, join, session-end, enforce, wake, checkpoint, passive-claims, machine-status, stop-warn), or switch one on or off
+    /// Show the consents `klatch init` granted (board, join, session-end, enforce, wake, checkpoint, passive-claims, machine-status, stop-warn, pre-edit-warn, pre-edit-claims), or switch one on or off
     /// later; edits only klatch's own hook entries, after a diff and a yes
     #[command(display_order = 35)]
     Consent {
-        /// The consent to change: board, join, session-end, enforce, wake, checkpoint, passive-claims, machine-status or stop-warn (none: show them all)
+        /// The consent to change: board, join, session-end, enforce, wake, checkpoint, passive-claims, machine-status, stop-warn, pre-edit-warn or pre-edit-claims (none: show them all)
         name: Option<String>,
         /// on or off (for board: off or a room name)
         value: Option<String>,
@@ -459,6 +474,10 @@ fn run_cli(cli: Cli) -> Result<()> {
             no_machine_status,
             stop_warn,
             no_stop_warn,
+            pre_edit_warn,
+            no_pre_edit_warn,
+            pre_edit_claims,
+            no_pre_edit_claims,
             uninstall,
         } => run_init(&init::Options {
             scope,
@@ -472,6 +491,8 @@ fn run_cli(cli: Cli) -> Result<()> {
             passive_claims: init::Switch::from_flags(passive_claims, no_passive_claims),
             machine_status: init::Switch::from_flags(machine_status, no_machine_status),
             stop_warn: init::Switch::from_flags(stop_warn, no_stop_warn),
+            pre_edit_warn: init::Switch::from_flags(pre_edit_warn, no_pre_edit_warn),
+            pre_edit_claims: init::Switch::from_flags(pre_edit_claims, no_pre_edit_claims),
             uninstall,
             codex: cli.who.codex,
         }),

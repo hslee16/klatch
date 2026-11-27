@@ -125,7 +125,7 @@ fn is_path_claim(c: &Claim) -> bool {
     c.path.len() > 1 && !c.path.starts_with("ask:") && c.path != "/"
 }
 
-fn mine_or_unrelated(h: &Held, who: &Asker) -> bool {
+pub(super) fn mine_or_unrelated(h: &Held, who: &Asker) -> bool {
     h.claim.owner == who.member
         || h.claim.expires <= who.now
         || !is_path_claim(&h.claim)

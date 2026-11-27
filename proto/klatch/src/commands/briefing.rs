@@ -192,6 +192,8 @@ mod briefing_tests {
             machine_status: false,
             stop_warn: false,
             passive_claims: false,
+            pre_edit_warn: false,
+            pre_edit_claims: false,
         };
         session_start(&ctx, &args).unwrap().0
     }

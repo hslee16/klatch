@@ -32,6 +32,7 @@ mod machine_status;
 mod mediator;
 mod merge_claim;
 mod passive_claim;
+mod pre_edit;
 mod priority;
 mod session_budget;
 pub use merge_claim::{MERGE_CLAIM, MERGE_CLAIM_MAX_SECS, MERGE_PARK_MAX_SECS, is_merge_claim};
@@ -39,6 +40,7 @@ pub use passive_claim::{
     PASSIVE_CLAIM_SECS, PASSIVE_REASON, PassiveOutcome, PassiveRefusal, PassiveTaken, covers,
     never_claimed, passive_path, refusal_line,
 };
+pub use pre_edit::{pre_edit_refusal_line, pre_edit_warning};
 mod merge_queue;
 pub use merge_queue::{
     CHECKING_PREFIX, DROPPED_PREFIX, DropReason, HALTED_PREFIX, Halt, HaltReason,
