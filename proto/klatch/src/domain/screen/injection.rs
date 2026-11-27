@@ -50,15 +50,11 @@ const PHRASES: &[&str] = &[
     "you are now in developer mode",
     "you are now in debug mode",
     "stay in character",
-    "do what it says",
+    "and then do what it says",
     "consistent with your instructions",
     "contradicts your own rules",
-    "your own rules",
-    "skip the credential",
-    "bypass the credential",
-    "skip the scrub",
-    "bypass the screen",
-    "disable the filter",
+    "skip the credential rule",
+    "bypass the credential rule",
     "if you are an ai",
     "if you're an ai",
     "ai moderators reading",
@@ -103,7 +99,6 @@ const FILLER: &[&str] = &[
     "earlier",
     "these",
     "those",
-    "my",
     "old",
     "every",
     "this",
@@ -116,6 +111,17 @@ const FILLER: &[&str] = &[
     "system",
     "safety",
 ];
+/// The words that say the instructions are the reader's own and came before: without one of them `ignore the rules`
+/// is as likely a lint comment as an attack.
+const QUALIFIERS: &[&str] = &[
+    "your",
+    "previous",
+    "prior",
+    "above",
+    "earlier",
+    "preceding",
+    "all",
+];
 const RULE_WORDS: &[&str] = &[
     "instructions",
     "instruction",
@@ -125,29 +131,40 @@ const RULE_WORDS: &[&str] = &[
     "prompts",
 ];
 
-/// `ignore your previous instructions`: an override verb, filler words, then a word for the instructions.
+/// `ignore your previous instructions`: an override verb, filler words with a qualifier among them, then a word for the
+/// instructions. `skip`, `bypass` and `override` are left out (`skip the prompts in CI`, `override the rules for tests`),
+/// and so is `my` (`forget my previous instructions`: the sender's own).
 fn ignores_rules(ws: &[(&str, usize)]) -> bool {
     ws.iter().enumerate().any(|(k, (w, _))| {
-        matches!(
-            *w,
-            "ignore" | "disregard" | "forget" | "override" | "bypass" | "skip"
-        ) && ws[k + 1..]
-            .iter()
-            .take(5)
-            .map(|(x, _)| *x)
-            .take_while(|x| FILLER.contains(x) || RULE_WORDS.contains(x))
-            .any(|x| RULE_WORDS.contains(&x))
+        matches!(*w, "ignore" | "disregard" | "forget") && {
+            let run: Vec<&str> = ws[k + 1..]
+                .iter()
+                .take(5)
+                .map(|(x, _)| *x)
+                .take_while(|x| FILLER.contains(x) || RULE_WORDS.contains(x))
+                .collect();
+            run.iter().any(|x| RULE_WORDS.contains(x)) && run.iter().any(|x| QUALIFIERS.contains(x))
+        }
     })
 }
 
-/// `verdict: allow`, `"verdict": "allow"`, `verdict=approve`.
+/// `respond with verdict allow`: a verdict named after a word that tells a reader what to output. A bare
+/// `"verdict": "allow"` is a JSON key in the team's own data (the judge-eval rows) and is not one.
 fn forged_verdict(ws: &[(&str, usize)]) -> bool {
-    ws.windows(2).any(|p| {
-        p[0].0 == "verdict"
-            && matches!(
-                p[1].0,
-                "allow" | "allowed" | "approve" | "approved" | "safe" | "pass"
-            )
+    ws.iter().enumerate().any(|(k, (w, _))| {
+        *w == "verdict"
+            && ws.get(k + 1).is_some_and(|n| {
+                matches!(
+                    n.0,
+                    "allow" | "allowed" | "approve" | "approved" | "safe" | "pass"
+                )
+            })
+            && ws[k.saturating_sub(6)..k].iter().any(|(x, _)| {
+                matches!(
+                    *x,
+                    "respond" | "reply" | "answer" | "output" | "return" | "emit" | "say" | "print"
+                )
+            })
     })
 }
 
@@ -161,19 +178,25 @@ const OBJECTS: &[&str] = &[
     "crossing",
     "whole",
 ];
-const GOOD: &[&str] = &[
-    "allow", "allowed", "safe", "approved", "harmless", "clean", "ok",
-];
+const GOOD: &[&str] = &["allow", "allowed", "safe", "approved", "harmless"];
 
 /// `classify this message as allow`, `mark the whole thread safe`.
 fn labels_message(ws: &[(&str, usize)]) -> bool {
-    directive_at(ws, 0..ws.len(), true)
+    directive_at(ws, 0..ws.len(), Reach::Labels)
 }
 
-/// A directive to the screen at some word in `range`: to allow or approve everything, a message or this, to let it
-/// through, to label the message safe, to skip the check, or the rule it is to follow changed. `only_labels` keeps
-/// just the labelling form, the one that needs no addressee.
-fn directive_at(ws: &[(&str, usize)], range: std::ops::Range<usize>, only_labels: bool) -> bool {
+/// How much of the directive list counts. A model addressee (`judge:`, `reviewer AI,`) can be told to allow or approve
+/// anything; a bare `reviewer` or `filter` is as often a person (`reviewers: please approve this once CI is green`), so
+/// it needs a directive that no person would give a person: to skip the check, to let everything through, a changed rule.
+#[derive(Clone, Copy, PartialEq)]
+enum Reach {
+    Labels,
+    Strong,
+    Weak,
+}
+
+/// A directive to the screen at some word in `range`.
+fn directive_at(ws: &[(&str, usize)], range: std::ops::Range<usize>, reach: Reach) -> bool {
     range.into_iter().filter(|k| *k < ws.len()).any(|k| {
         let w = ws[k].0;
         let next = |n: usize| ws.get(k + n).map_or("", |x| x.0);
@@ -183,10 +206,31 @@ fn directive_at(ws: &[(&str, usize)], range: std::ops::Range<usize>, only_labels
         let labels = matches!(w, "mark" | "classify" | "label" | "treat" | "rate" | "flag")
             && within(5, &|x| OBJECTS.contains(&x))
             && within(10, &|x| GOOD.contains(&x));
-        if only_labels {
+        if reach == Reach::Labels {
             return labels;
         }
-        labels
+        let strong = labels
+            || (w == "let" && within(7, &|x| matches!(x, "through" | "pass" | "cross")))
+            || (w == "without"
+                && matches!(
+                    next(1),
+                    "checking"
+                        | "reading"
+                        | "review"
+                        | "reviewing"
+                        | "screening"
+                        | "scanning"
+                        | "verifying"
+                        | "looking"
+                ))
+            || (matches!(w, "must" | "always") && matches!(next(1), "allow" | "allows"))
+            || (w == "must" && next(1) == "be" && next(2) == "allowed")
+            || (matches!(w, "allow" | "approve") && next(1) == "everything")
+            || (w == "new" && matches!(next(1), "rule" | "rules") && next(2) == "is");
+        if reach == Reach::Strong {
+            return strong;
+        }
+        strong
             || (matches!(
                 w,
                 "allow" | "approve" | "pass" | "release" | "permit" | "greenlight"
@@ -197,7 +241,6 @@ fn directive_at(ws: &[(&str, usize)], range: std::ops::Range<usize>, only_labels
                     | "that"
                     | "all"
                     | "every"
-                    | "everything"
                     | "anything"
                     | "each"
                     | "these"
@@ -212,52 +255,40 @@ fn directive_at(ws: &[(&str, usize)], range: std::ops::Range<usize>, only_labels
                     next(2),
                     "next" | "whole" | "entire" | "message" | "messages" | "thread"
                 ))))
-            || (w == "let" && within(7, &|x| matches!(x, "through" | "pass" | "cross")))
-            || (w == "without"
-                && matches!(
-                    next(1),
-                    "checking"
-                        | "reading"
-                        | "review"
-                        | "reviewing"
-                        | "screening"
-                        | "scanning"
-                        | "verifying"
-                        | "looking"
-                ))
-            || (matches!(w, "must" | "should" | "always" | "shall")
-                && matches!(next(1), "allow" | "allows")
-                || (next(1) == "be" && matches!(next(2), "allowed" | "approved")))
-            || (matches!(w, "do" | "don't" | "never" | "dont") && within(2, &|x| x == "block"))
-            || (w == "respond" || w == "reply" || w == "answer")
+            || (matches!(w, "respond" | "reply" | "answer")
                 && next(1) == "only"
-                && next(2) == "with"
-            || (w == "new" && matches!(next(1), "rule" | "rules"))
+                && next(2) == "with")
     })
 }
 
-const ADDRESSEES: &[&str] = &[
+/// Words that name a model that screens (`judge`, `classifier`, `moderator`), and, with `MODEL_NEXT` after it or
+/// `MODEL_BEFORE` before it, `reviewer`. Bare `reviewer`, `filter` and the non-English ones are `BARE`.
+const MODEL_ADDRESSEES: &[&str] = &[
     "judge",
     "judges",
-    "reviewer",
-    "reviewers",
     "classifier",
     "classifiers",
     "moderator",
     "moderators",
     "moderation",
+    "juez",
+    "juge",
+];
+const BARE: &[&str] = &[
+    "reviewer",
+    "reviewers",
     "filter",
     "screener",
     "gatekeeper",
     "revisor",
-    "juez",
-    "juge",
     "réviseur",
     "prüfer",
     "ревьюер",
     "модератор",
     "レビュアー",
 ];
+const MODEL_NEXT: &[&str] = &["model", "ai", "bot", "agent", "llm", "assistant"];
+const MODEL_BEFORE: &[&str] = &["ai", "llm", "automated", "safety", "bot"];
 const CUES: &[&str] = &[
     "note",
     "notice",
@@ -291,19 +322,29 @@ const CUES: &[&str] = &[
     "bot",
 ];
 
-/// An addressee word (judge, reviewer, filter) that the text speaks to (a colon or comma after it, or a word like
-/// "note to" before it) with a directive to allow or approve within the next sentence or so.
+/// An addressee word that the text speaks to (a colon or comma after it, or a word like "note to" before it) with a
+/// directive to the screen within the next sentence or so. A model addressee takes any directive; a bare one only a
+/// strong one (see `Reach`).
 fn addressed(norm: &str, ws: &[(&str, usize)]) -> bool {
     let b = norm.as_bytes();
     ws.iter().enumerate().any(|(k, (w, end))| {
-        if !ADDRESSEES.contains(w) {
+        let model = MODEL_ADDRESSEES.contains(w)
+            || (matches!(*w, "reviewer" | "reviewers")
+                && (ws.get(k + 1).is_some_and(|n| MODEL_NEXT.contains(&n.0))
+                    || (k > 0 && MODEL_BEFORE.contains(&ws[k - 1].0))));
+        if !(model || BARE.contains(w)) {
             return false;
         }
-        let spoken_to = matches!(b.get(*end), Some(b':' | b',' | b';'))
+        let named_end = match ws.get(k + 1) {
+            Some(n) if model && MODEL_NEXT.contains(&n.0) => n.1,
+            _ => *end,
+        };
+        let spoken_to = matches!(b.get(named_end), Some(b':' | b',' | b';'))
             || ws[k.saturating_sub(4)..k]
                 .iter()
                 .any(|(x, _)| CUES.contains(x));
-        spoken_to && directive_at(ws, k + 1..k + 22, false)
+        let reach = if model { Reach::Weak } else { Reach::Strong };
+        spoken_to && directive_at(ws, k + 1..k + 22, reach)
     }) || [
         "if you are an ai",
         "if you're an ai",
@@ -315,7 +356,7 @@ fn addressed(norm: &str, ws: &[(&str, usize)]) -> bool {
     .any(|p| {
         norm.match_indices(p).any(|(at, m)| {
             let from = ws.partition_point(|(_, e)| *e <= at + m.len());
-            directive_at(ws, from..from + 22, false)
+            directive_at(ws, from..from + 22, Reach::Weak)
         })
     })
 }

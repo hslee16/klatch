@@ -5,8 +5,9 @@
 //! What it covers: the scrub list through lookalike letters, invisible characters, line breaks and reversal; personal
 //! contact details and labelled identifiers (`pii`); text that addresses the screen to change its verdict
 //! (`injection`); internal host names and private addresses; and a short list of confidentiality phrases. Some checks
-//! depend on the labels (below). It never allows or redacts: a hit is a deny whose reason names the rule, never the
-//! text. What it does not do is in SECURITY.md ("Channel-safety screening").
+//! depend on the labels (below). It never allows or redacts. A scrub term found as written is a deny; every other hit
+//! is a hold (the judge defers with a note that names the rule, never the text), so the item stays for the reviewer or a
+//! model judge. What it does not do is in SECURITY.md ("Channel-safety screening").
 
 mod injection;
 mod pii;
@@ -17,44 +18,69 @@ use super::LabelChain;
 /// it). A message past the bound is held for the reviewer like any text the rules do not match.
 pub const MAX_SCREEN_BYTES: usize = 64 * 1024;
 
-/// Why the rules hold `text` crossing from `from` to `to`, or `None`. `terms` are the scrub list as (name, term).
-/// The reason names a rule and never carries the text.
+/// What the screen says about a crossing. `Deny` is final (the scrub list, a floor); `Hold` flags the text for the
+/// reviewer or a model judge to decide, with a reason that names the rule and never carries the text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Screened {
+    Deny(String),
+    Hold(String),
+}
+
+impl Screened {
+    pub fn reason(&self) -> &str {
+        match self {
+            Screened::Deny(r) | Screened::Hold(r) => r,
+        }
+    }
+}
+
+/// Why the rules flag `text` crossing from `from` to `to`, or `None`. `terms` are the scrub list as (name, term).
+/// The reason names a rule and never carries the text. Only a scrub term found as written (through lookalike letters,
+/// invisible characters and line breaks too) is a `Deny`; every heuristic family, and a term found only reversed, is a
+/// `Hold`: the item stays queued for the reviewer or a model judge, which decides.
 pub fn screen(
     text: &str,
-    from: &str,
+    _from: &str,
     to: &str,
     chain: &LabelChain,
     terms: &[(String, String)],
-) -> Option<String> {
+) -> Option<Screened> {
     let outward = chain.rank(to).is_none_or(|r| r == 0);
     let below_cap = !chain.dominates(to, chain.default_cap());
     if text.len() > MAX_SCREEN_BYTES {
         return None;
     }
-    let sensitive_source = chain.rank(from).is_none() || chain.dominates(from, chain.default_cap());
     let fold = fold(text);
     let norm = fold.to_ascii_lowercase();
-    let hit = |rule: &str| Some(format!("screen:{rule}"));
-    if below_cap && let Some(name) = scrub_hit(&norm, terms) {
-        return Some(format!("scrub:{name}"));
+    let hold = |rule: &str| Some(Screened::Hold(format!("screen:{rule}")));
+    let mut reversed_hit = None;
+    if below_cap {
+        match scrub_hit(&norm, terms) {
+            Some((name, false)) => return Some(Screened::Deny(format!("scrub:{name}"))),
+            Some((name, true)) => {
+                reversed_hit = Some(Screened::Hold(format!("scrub:{name}:reversed")))
+            }
+            None => {}
+        }
     }
     if injection::injection(&fold, &norm) {
-        return hit("injection");
+        return hold("injection");
     }
     if pii::identifier(&fold, &norm) || pii::spoken_secret(&fold, &norm) {
-        return hit("personal-identifier");
+        return hold("personal-identifier");
     }
-    if outward && (pii::contact(&norm) || internal_host(&norm)) {
-        return hit(if internal_host(&norm) {
-            "internal-host"
-        } else {
-            "personal-contact"
-        });
+    if outward {
+        if internal_host(&norm) {
+            return hold("internal-host");
+        }
+        if pii::contact(&fold, &norm) {
+            return hold("personal-contact");
+        }
+        if confidential(&norm) {
+            return hold("confidential-matter");
+        }
     }
-    if (outward || sensitive_source) && confidential(&norm) {
-        return hit("confidential-matter");
-    }
-    None
+    reversed_hit
 }
 
 /// The text without invisible characters, full-width forms folded to ASCII, a lookalike Cyrillic or Greek letter inside a
@@ -106,28 +132,51 @@ fn lookalike(c: char) -> char {
     }
 }
 
-/// The name of the first scrub term found in the text as written, through the ways of writing it that the plain
-/// substring test misses: lookalike letters, invisible characters, a line break or extra space between words, and the
-/// text reversed (terms of six or more characters only, so a short term does not match by chance).
-fn scrub_hit(norm: &str, terms: &[(String, String)]) -> Option<String> {
+/// The first scrub term found in the text as written, through the ways of writing it that the plain substring test
+/// misses (lookalike letters, invisible characters, a line break or extra space between words), as `(name, false)`;
+/// failing that, one found only reversed, as a whole word and only for terms of six or more characters, as
+/// `(name, true)`. A term that is itself a real word backwards (`reward`, `drawer`) matches that word, so reversal is a
+/// hold, never a deny. Forward matching is a plain substring match, as the floor's is.
+fn scrub_hit(norm: &str, terms: &[(String, String)]) -> Option<(String, bool)> {
     let reversed: String = norm.chars().rev().collect();
+    let mut backwards = None;
     for (name, term) in terms {
         let wanted = fold(term).to_ascii_lowercase();
         if wanted.is_empty() {
             continue;
         }
-        if norm.contains(&wanted) || (wanted.chars().count() >= 6 && reversed.contains(&wanted)) {
-            return Some(name.clone());
+        if norm.contains(&wanted) {
+            return Some((name.clone(), false));
+        }
+        if backwards.is_none() && wanted.chars().count() >= 6 && whole_word(&reversed, &wanted) {
+            backwards = Some((name.clone(), true));
         }
     }
-    None
+    backwards
+}
+
+/// Whether `needle` occurs in `hay` with no letter or digit on either side.
+fn whole_word(hay: &str, needle: &str) -> bool {
+    hay.match_indices(needle).any(|(at, m)| {
+        let before = hay[..at].chars().next_back();
+        let after = hay[at + m.len()..].chars().next();
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+    })
 }
 
 /// Labels that mark a name as inside a network when they are the last label (`db.internal`) or sit between two others
-/// (`ci-04.corp.example`). `local` is left out: `profile.local` is as likely a config table as a host.
+/// (`ci-04.corp.example`). `local`, `priv` and `intra` are left out (`profile.local` is a config table, `x.priv.pem` a
+/// file), as are package paths and file names (`jdk.internal.reflect...`, `id_ed25519.priv.pem`).
 const INTERNAL_TLDS: &[&str] = &["internal", "corp", "lan", "intranet", "localdomain"];
-const INTERNAL_LABELS: &[&str] = &[
-    "corp", "internal", "intranet", "int", "lan", "priv", "intra",
+const INTERNAL_LABELS: &[&str] = &["corp", "internal", "intranet", "int", "lan"];
+const PACKAGE_ROOTS: &[&str] = &[
+    "java", "javax", "jdk", "sun", "com", "org", "io", "net", "android", "kotlin", "scala", "std",
+    "core", "alloc", "crate", "self", "super",
+];
+const FILE_EXTENSIONS: &[&str] = &[
+    "pem", "key", "crt", "cer", "json", "yaml", "yml", "txt", "log", "toml", "md", "rs", "py",
+    "js", "ts", "sh", "conf", "cfg", "lock", "bak", "csv", "html", "css", "xml", "ini", "env",
+    "pub", "sig", "tar", "gz", "zip",
 ];
 
 fn internal_host(norm: &str) -> bool {
@@ -138,12 +187,20 @@ fn internal_host(norm: &str) -> bool {
             if labels.len() < 2 || labels.iter().any(|l| l.is_empty()) {
                 return false;
             }
-            private_address(&labels)
-                || labels.last().is_some_and(|l| INTERNAL_TLDS.contains(l))
-                || (labels.len() >= 3
-                    && labels[1..labels.len() - 1]
-                        .iter()
-                        .any(|l| INTERNAL_LABELS.contains(l)))
+            if private_address(&labels) {
+                return true;
+            }
+            let last = labels[labels.len() - 1];
+            let package = PACKAGE_ROOTS.contains(&labels[0]) || FILE_EXTENSIONS.contains(&last);
+            let word_like = last.len() >= 2 && last.bytes().all(|c| c.is_ascii_lowercase());
+            !package
+                && word_like
+                && (INTERNAL_TLDS.contains(&last)
+                    || (labels.len() >= 3
+                        && last.len() <= 8
+                        && labels[1..labels.len() - 1]
+                            .iter()
+                            .any(|l| INTERNAL_LABELS.contains(l))))
         })
 }
 
@@ -158,16 +215,16 @@ fn private_address(labels: &[&str]) -> bool {
 }
 
 /// Phrases that mark a message as one its sender wants kept inside, or that name a matter that is not for outsiders.
-/// Chosen to be rare in ordinary work chat; they will miss most private matter, which has no tell.
+/// Kept to ones that are rare in engineering talk (`reorg`, `performance review`, `settlement`, `unpatched` were
+/// dropped after the review of #1734: they are everyday words there); they will miss most private matter, which has
+/// no tell.
 const CONFIDENTIAL: &[&str] = &[
     "layoff",
     "laid off",
     "redundancies",
-    "severance",
-    "reorg",
     "term sheet",
     "in talks to acquire",
-    "embargo",
+    "embargoed",
     "under nda",
     "off the record",
     "mention it outside",
@@ -182,28 +239,20 @@ const CONFIDENTIAL: &[&str] = &[
     "hasn't told",
     "has not told",
     "not yet announced",
-    "not announced yet",
     "hasn't announced",
     "has not been announced",
-    "unannounced",
     "medical leave",
-    "performance review",
     "improvement plan",
-    "formal process",
-    "background check",
-    "conviction",
     "interviewing elsewhere",
-    "legal says",
-    "settlement",
     "patent claim",
-    "unfixed",
-    "unpatched",
 ];
 
 fn confidential(norm: &str) -> bool {
     CONFIDENTIAL.iter().any(|p| norm.contains(p))
 }
 
+#[cfg(test)]
+mod benign;
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;

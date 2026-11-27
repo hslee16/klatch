@@ -137,7 +137,12 @@ fn the_null_and_rules_judges_run_end_to_end_on_the_committed_corpus() {
     assert_eq!(null.0.n, 15);
     assert_eq!(null.0.defers, 15);
     let rules = run(&parse(&["--judge", "rules"]).unwrap()).unwrap();
-    assert_eq!(rules.0.defers, 0);
+    // a screen hit is a deferral with a note (#1413): some items defer, most do not
+    assert!(
+        rules.0.defers > 0 && rules.0.defers < rules.0.n / 2,
+        "{}",
+        rules.0.defers
+    );
     assert!(rules.0.n > 100);
     // the rules catch the engine-recognised credential shapes, so they leak fewer items than always-allow would
     let blocked =
@@ -156,7 +161,7 @@ fn the_rules_judge_on_the_committed_corpus_is_held_under_production_and_leaks_un
     assert_eq!(old.n, summary.n);
     assert_eq!(prod.blocked, old.blocked);
     assert_eq!(prod.leaked, 0);
-    assert_eq!(prod.deferred, old.allowed);
+    assert_eq!(prod.deferred, old.deferred + old.allowed);
     assert_eq!(prod.blocked + prod.deferred + prod.allowed, summary.n);
 }
 
