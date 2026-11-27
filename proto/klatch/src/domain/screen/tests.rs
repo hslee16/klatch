@@ -91,6 +91,11 @@ fn contact_details_are_not_held_for_internal_readers_or_in_non_contact_shapes() 
             "internal",
             "public",
         ),
+        (
+            "order 1234 5678 9012 3456 shipped, tracking 1234567890123456",
+            "internal",
+            "public",
+        ),
     ]);
 }
 
