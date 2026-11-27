@@ -39,6 +39,7 @@ pub(super) fn run_work(ctx: &Ctx, cmd: WorkCmd) -> Result<()> {
         })?,
         WorkCmd::Card { room, member } => card(ctx, &room, member.as_deref())?,
         WorkCmd::Asks { room } => for_rooms(t, room, |room| asks(ctx, room))?,
+        WorkCmd::Summary { room } => summary(ctx, room)?,
         WorkCmd::Stuck { room } => for_rooms(t, room, |room| {
             for e in t.stuck(room)? {
                 println!("{}", e.line());
@@ -222,5 +223,35 @@ pub(super) fn claims(ctx: &Ctx, room: &str) -> Result<()> {
             flat(&c.reason)
         );
     }
+    Ok(())
+}
+
+/// `klatch summary [ROOM]` (#1414): the human's one-screen view. It only reads, through the same guarded reads as
+/// `board`, `claims` and `stuck`. Without a room it covers the rooms the caller joined except dms and ask rooms; a room
+/// whose reads are refused is counted and never named, so it leaves no trace of what the refusal protects.
+fn summary(ctx: &Ctx, room: Option<String>) -> Result<()> {
+    let t = ctx.t;
+    let read = |room: &str| -> Result<klatch::domain::SummaryRoom> {
+        Ok(klatch::domain::SummaryRoom {
+            room: room.to_string(),
+            board: t.board(room)?,
+            claims: t.claims(room)?,
+            stuck: t.stuck(room)?,
+        })
+    };
+    if let Some(room) = room {
+        print!(
+            "{}",
+            klatch::domain::render_summary(&[read(&room)?], 0, 0, ctx.now)
+        );
+        return Ok(());
+    }
+    let mut names = t.rooms()?;
+    names.sort_by_key(|r| (r != DEFAULT_ROOM, r.clone()));
+    let g = klatch::domain::gather(names, read);
+    print!(
+        "{}",
+        klatch::domain::render_summary(&g.rooms, g.more, g.not_shown, ctx.now)
+    );
     Ok(())
 }
