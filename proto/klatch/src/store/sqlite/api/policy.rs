@@ -4,7 +4,7 @@ use super::super::SqliteStore;
 use crate::domain::{AuditRecord, Error, RefusalRecord, Result};
 use crate::store::Census;
 use crate::store::PolicyStore;
-use crate::store::area::is_proof_key;
+use crate::store::area::{is_proof_key, normalize_key};
 use crate::store::{NewAudit, NewRefusal};
 use rusqlite::{Row, params};
 
@@ -95,10 +95,11 @@ impl PolicyStore for SqliteStore {
             // at most one row a minute per key and a few per family of other keys, counting rows still queued in an
             // open transaction, so a loop of refused writes cannot fill the audit or the queue (#1588, #1701); what
             // was left out is one summary row for the minute (#1709)
-            if self.refusal_throttled(key, now) {
+            let nk = normalize_key(key);
+            if self.refusal_throttled(&nk, now) {
                 self.note_throttled(now);
             } else {
-                self.audit_refusal("policy-reserved-refused", key, now);
+                self.audit_refusal("policy-reserved-refused", &nk, now);
             }
             return Err(Error::Refused {
                 rule: "admin-passphrase-rows".into(),
