@@ -73,6 +73,9 @@ impl SqliteStore {
             let keep = self.members_that_may_return(now)?;
             let kept = |name: &str| keep.iter().any(|k| k == name);
             self.prune_sessions(cutoff, &kept)?;
+            // the lapse record is otherwise pruned only by a claim sweep: a store with no claim attempts kept its rows
+            // past the report window (#1620)
+            self.prune_lapses_past_window(now)?;
             let (removed, names) = self.prune_member_rows(cutoff, &kept)?;
             for name in names {
                 self.forget_departed(&name)?;

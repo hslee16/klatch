@@ -52,6 +52,9 @@ pub struct SqliteStore {
     labels: std::cell::RefCell<crate::keys::LabelKeys>,
     /// Claim events (#1386) that could not be recorded: the failure is swallowed so a claim never fails for it.
     claim_record_errors: std::cell::Cell<u64>,
+    /// Test hook: how many reads (`optional`, `rows`) ran, so a test can pin that a sweep does not read once per lapse.
+    #[cfg(test)]
+    selects: std::cell::Cell<u64>,
     /// Lapse rows (#1586) dropped by the per-room and total caps (#1702), counted so a flood is not silent.
     claim_lapses_dropped: std::cell::Cell<u64>,
     /// Audit rows (#1592) that could not be written, one per row however many flushes it fails: kept queued.

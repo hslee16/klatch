@@ -115,6 +115,8 @@ impl SqliteStore {
         map: impl FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
     ) -> Result<Option<T>> {
         self.clear_dead_txn()?;
+        #[cfg(test)]
+        self.selects.set(self.selects.get() + 1);
         match self.conn.query_row(sql, params, map) {
             Ok(v) => Ok(Some(v)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -130,6 +132,8 @@ impl SqliteStore {
         map: impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
     ) -> Result<Vec<T>> {
         self.clear_dead_txn()?;
+        #[cfg(test)]
+        self.selects.set(self.selects.get() + 1);
         let mut st = self.conn.prepare(sql).map_err(be)?;
         st.query_map(params, map)
             .map_err(be)?

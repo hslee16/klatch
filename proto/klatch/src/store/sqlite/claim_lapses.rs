@@ -28,10 +28,18 @@ impl SqliteStore {
         self.claim_lapses_dropped.get()
     }
 
+    /// Delete the lapse rows past the report window; how many.
+    pub(super) fn prune_lapses_past_window(&self, now: i64) -> Result<usize> {
+        self.exec(
+            "DELETE FROM claim_lapses WHERE expires<=?1",
+            params![now - LAPSED_WINDOW_SECS],
+        )
+    }
+
     /// Remember the named lapses in `claim_lapses` (#1586) so the `lapsed_claim` stuck event outlives this sweep: not
     /// passive or ask claims, not a lapse already past the report window. One row per room, path and holder (a repeat
     /// replaces it). The table is pruned past the window at every sweep (so the next claim attempt of any room clears old
-    /// rows; a store with no attempts at all runs nothing, and the report filters by the window anyway), and, when rows
+    /// rows; a store with no attempts at all is pruned by housekeeping, `prune_members`, #1620, and the report filters by the window anyway), and, when rows
     /// were added, per room that gained rows down to `LAPSE_RECORD_CAP` newest and in all down to `LAPSE_TOTAL_CAP` (the
     /// rooms with the most rows give up theirs first), the rows dropped counted in `claim_lapses_dropped`, so claiming
     /// and letting claims lapse cannot grow it without bound.
@@ -50,7 +58,7 @@ impl SqliteStore {
             }
         }
         // past the window on every sweep, a lapse or not: the next claim attempt of any room clears the old rows
-        self.exec("DELETE FROM claim_lapses WHERE expires<=?1", params![floor])?;
+        self.prune_lapses_past_window(now)?;
         if rooms.is_empty() {
             return Ok(());
         }

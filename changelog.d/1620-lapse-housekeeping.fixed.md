@@ -1,0 +1,1 @@
+- The lapse record (`claim_lapses`) is also pruned past the report window by housekeeping (`prune_members`, run at session start), so a store with no claim attempts no longer keeps expired rows; and a claim sweep reads the deadlock marks once, not once per lapse, so its reads no longer grow with the number of lapses (#1620).
