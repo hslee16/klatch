@@ -85,6 +85,35 @@ impl Home {
             .output()
             .unwrap()
     }
+    /// `run` from the directory `cwd` with `home` as HOME (what klatch reads to find hooks, #1416).
+    pub fn run_at(
+        &self,
+        who: &str,
+        args: &[&str],
+        cwd: &std::path::Path,
+        home: &std::path::Path,
+    ) -> Output {
+        let mut c = self.command_at(who, args, cwd, home);
+        c.output().unwrap()
+    }
+    pub fn command_at(
+        &self,
+        who: &str,
+        args: &[&str],
+        cwd: &std::path::Path,
+        home: &std::path::Path,
+    ) -> Command {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_klatch"));
+        c.detached()
+            .current_dir(cwd)
+            .env_remove("KLATCH_IDENTITY_FILE")
+            .env("HOME", home)
+            .env("KLATCH_HOME", &self.0)
+            .env("KLATCH_KEY_DIR", self.0.join("keys"))
+            .env("KLATCH_NAME", who)
+            .args(args);
+        c
+    }
     /// Run with `stdin` as standard input, as Claude Code runs a hook.
     pub fn run_stdin(&self, who: &str, args: &[&str], stdin: &str) -> Output {
         let mut child = self.spawn(who, args);
@@ -184,6 +213,20 @@ impl Home {
             c.env(k, v);
         }
         c.output().unwrap()
+    }
+    pub fn spawn_at(
+        &self,
+        who: &str,
+        args: &[&str],
+        cwd: &std::path::Path,
+        home: &std::path::Path,
+    ) -> Child {
+        self.command_at(who, args, cwd, home)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
     }
     pub fn spawn(&self, who: &str, args: &[&str]) -> Child {
         Command::new(env!("CARGO_BIN_EXE_klatch"))

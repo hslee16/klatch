@@ -77,7 +77,7 @@ pub(crate) fn command_with(
 
 /// A hook command klatch wrote (or a hand-written one of the same form).
 pub(crate) fn is_klatch_command(cmd: &str) -> bool {
-    cmd.contains(" hook --event ") && cmd.contains("klatch")
+    klatch::harness::hooks_pointer::command_is_klatch(cmd)
 }
 
 pub(super) fn is_ours(hook: &Value) -> bool {
