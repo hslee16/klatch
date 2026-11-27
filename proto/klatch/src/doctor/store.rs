@@ -27,7 +27,15 @@ fn key_within_patience(db: &Path) -> Option<Key> {
 }
 
 /// What the keystore says about the store key: its warning, and whether the key exists or why it could not be read.
-type KeyProbe = (Option<String>, Result<bool, String>);
+type KeyProbe = (Option<String>, Result<KeyState, String>);
+
+/// Whether the store key exists, and if it does, whether it opens the store (#1585).
+enum KeyState {
+    Missing,
+    Opens,
+    /// The key exists but opening the store with it failed: the reason, never the key.
+    DoesNotOpen(String),
+}
 
 /// Asked on a thread with a time limit, and only whether a key exists is brought back: never the key itself.
 fn probe_key(db: &Path) -> Option<KeyProbe> {
@@ -37,7 +45,15 @@ fn probe_key(db: &Path) -> Option<KeyProbe> {
         let found = key
             .source
             .get(&key.name)
-            .map(|k| k.is_some())
+            .map(|k| match k {
+                None => KeyState::Missing,
+                Some(k) => {
+                    match klatch::store::SqliteStore::read_policy_has(&asked, &k, "doctor-probe") {
+                        Ok(_) => KeyState::Opens,
+                        Err(e) => KeyState::DoesNotOpen(e.to_string()),
+                    }
+                }
+            })
             .map_err(|e| e.to_string());
         (key.warning.clone(), found)
     })
@@ -107,10 +123,15 @@ pub(super) fn check_store(r: &mut Report, home: Option<&Path>) {
 }
 
 /// The store line for an encrypted store: its key is in `place`, is not there, or could not be read.
-fn report_key(r: &mut Report, db: &Path, place: &str, found: Result<bool, String>) {
+fn report_key(r: &mut Report, db: &Path, place: &str, found: Result<KeyState, String>) {
     match found {
-        Ok(true) => r.add(Status::Ok, format!("store: {}, encrypted; the key is in {place}", db.display()), None),
-        Ok(false) => r.add(
+        Ok(KeyState::DoesNotOpen(why)) => r.add(
+            Status::Fail,
+            format!("store: the key in {place} does not open the store at {}: {why}; growth, proof and passphrase checks were skipped", db.display()),
+            Some("this is the wrong key for this store; restore the right key, or klatch admin recover (it asks for the recovery code)"),
+        ),
+        Ok(KeyState::Opens) => r.add(Status::Ok, format!("store: {}, encrypted; the key is in {place}", db.display()), None),
+        Ok(KeyState::Missing) => r.add(
             Status::Fail,
             format!("store: {} is encrypted and its key is not in {place}", db.display()),
             Some("klatch admin recover (it asks for the recovery code); without the key or the code the data cannot be read"),

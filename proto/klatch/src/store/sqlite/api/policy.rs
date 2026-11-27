@@ -92,7 +92,15 @@ impl PolicyStore for SqliteStore {
     fn policy_set(&self, key: &str, value: Option<&str>, now: i64) -> Result<()> {
         if is_proof_key(key) {
             // key name only, never the value; the audit row is kept even though the write is refused
-            self.audit_refusal("policy-reserved-refused", key, now);
+            // at most one row a minute per key, so a loop of refused writes cannot fill the audit (#1588)
+            if self
+                .last_audit_ts("policy-reserved-refused", key, now - 60)
+                .ok()
+                .flatten()
+                .is_none()
+            {
+                self.audit_refusal("policy-reserved-refused", key, now);
+            }
             return Err(Error::Refused {
                 rule: "admin-passphrase-rows".into(),
                 reason: format!(
@@ -103,7 +111,13 @@ impl PolicyStore for SqliteStore {
         self.write_policy(key, value, now)
     }
 
-    fn reserved_policy_set(&self, key: &str, value: Option<&str>, now: i64) -> Result<()> {
+    fn reserved_policy_set(
+        &self,
+        _cap: &crate::proof::ProofCap,
+        key: &str,
+        value: Option<&str>,
+        now: i64,
+    ) -> Result<()> {
         if !is_proof_key(key) {
             return Err(Error::Invalid(format!(
                 "{key} is not a key of the admin passphrase"

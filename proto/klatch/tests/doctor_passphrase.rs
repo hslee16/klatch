@@ -77,3 +77,35 @@ fn doctor_does_not_set_the_passphrase_by_warning_about_it() {
     let again = text(&doctor(&h));
     assert_eq!(lines(&again).len(), 1, "still unset after doctor: {again}");
 }
+
+/// Replace the store key file of `h` with 32 other bytes, so the key exists but does not open the store (#1585).
+fn swap_key_for_a_wrong_one(h: &Home) {
+    let dir = h.0.join("keys");
+    let files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| std::fs::metadata(p).unwrap().len() == 32)
+        .collect();
+    assert_eq!(files.len(), 1, "{files:?}");
+    std::fs::write(&files[0], [7u8; 32]).unwrap();
+}
+
+#[test]
+fn doctor_fails_when_the_key_file_does_not_open_the_store_and_says_so() {
+    let h = Home::new();
+    assert!(h.run("a", &["join", "lobby"]).status.success());
+    swap_key_for_a_wrong_one(&h);
+    let o = doctor(&h);
+    let t = text(&o);
+    let store: Vec<_> = t.lines().filter(|l| l.contains("store:")).collect();
+    assert_eq!(store.len(), 1, "{t}");
+    assert!(store[0].starts_with("FAIL"), "{t}");
+    assert!(store[0].contains("does not open the store"), "{t}");
+    assert!(!o.status.success(), "{t}");
+    assert!(!t.contains("the key is in key files"), "{t}");
+    // the other store lines are not silently skipped: they say why
+    assert!(
+        lines(&t).iter().all(|l| !l.contains("no admin passphrase")),
+        "an unreadable store must not be reported as having no passphrase: {t}"
+    );
+}

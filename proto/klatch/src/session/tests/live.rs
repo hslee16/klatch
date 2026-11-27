@@ -416,8 +416,14 @@ impl PolicyStore for FlakyStore {
     fn policy_set(&self, k: &str, v: Option<&str>, n: i64) -> Result<()> {
         self.inner.policy_set(k, v, n)
     }
-    fn reserved_policy_set(&self, k: &str, v: Option<&str>, n: i64) -> Result<()> {
-        self.inner.reserved_policy_set(k, v, n)
+    fn reserved_policy_set(
+        &self,
+        c: &crate::proof::ProofCap,
+        k: &str,
+        v: Option<&str>,
+        n: i64,
+    ) -> Result<()> {
+        self.inner.reserved_policy_set(c, k, v, n)
     }
     fn policy_list(&self, p: &str) -> Result<Vec<(String, String)>> {
         self.inner.policy_list(p)

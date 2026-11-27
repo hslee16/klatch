@@ -35,6 +35,7 @@ mod messages;
 mod migration_property;
 mod migrations;
 mod plaintext;
+mod read_only_probes;
 mod review;
 mod runs;
 mod shown;

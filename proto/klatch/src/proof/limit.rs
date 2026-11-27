@@ -6,7 +6,7 @@
 //! typed, or ten processes guessing at once, each still cost one. Only a success clears the count. The first
 //! `FREE` attempts are free; after that each must wait twice as long as the one before, up to `MAX_LOCK_SECS`.
 
-use super::terminal;
+use super::{ProofCap, terminal};
 use crate::domain::Result;
 use crate::store::areas::PolicyStore;
 use std::cell::Cell;
@@ -80,13 +80,13 @@ fn write<S: PolicyStore + ?Sized>(
         entries.truncate(MAX_TERMINALS);
     }
     if entries.is_empty() {
-        return store.reserved_policy_set(KEY, None, now);
+        return store.reserved_policy_set(&ProofCap::new(), KEY, None, now);
     }
     let text: Vec<String> = entries
         .iter()
         .map(|(l, c, t)| format!("{l}={c},{t}"))
         .collect();
-    store.reserved_policy_set(KEY, Some(&text.join(";")), now)
+    store.reserved_policy_set(&ProofCap::new(), KEY, Some(&text.join(";")), now)
 }
 
 fn of(entries: &[(String, u32, i64)], term: &str) -> (u32, i64) {
