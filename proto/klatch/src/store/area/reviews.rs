@@ -18,7 +18,7 @@ pub trait ReviewStore {
     /// queue counts and inserts in one transaction, so two processes of one member cannot both take the last place; this
     /// default counts and then queues and is not atomic.
     fn enqueue_review_capped(&self, item: &NewReview, now: i64, cap: usize) -> Result<Option<i64>> {
-        if self.waiting_crossings_of(&item.requester)? >= cap {
+        if self.waiting_crossings_of(item.requester)? >= cap {
             return Ok(None);
         }
         self.enqueue_review(item, now).map(Some)
