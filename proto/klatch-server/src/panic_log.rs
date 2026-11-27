@@ -52,6 +52,12 @@ impl Pacer {
             Due::Summary(count)
         })
     }
+
+    /// The events not yet said, at shutdown; they are handed out once.
+    pub fn last_words(&mut self) -> Option<u64> {
+        let n = std::mem::take(&mut self.unsaid);
+        (n > 0).then_some(n)
+    }
 }
 
 /// The two pacers of the process.
@@ -83,6 +89,22 @@ impl Lines {
             Due::Summary(n) => format!("{PANIC_LINE} ({n} since the last line)"),
         })
     }
+
+    /// The summaries still owed when the process ends: the panics of a burst that no later panic reported.
+    pub fn last_words(&mut self) -> Vec<String> {
+        let mut out = Vec::new();
+        out.extend(
+            self.hook
+                .last_words()
+                .map(|n| format!("klatch-server: internal error ({n} since the last line)")),
+        );
+        out.extend(
+            self.handler
+                .last_words()
+                .map(|n| format!("{PANIC_LINE} ({n} since the last line)")),
+        );
+        out
+    }
 }
 
 static LINES: Mutex<Lines> = Mutex::new(Lines::new());
@@ -109,6 +131,14 @@ pub fn handler_panicked() {
         .unwrap_or_else(|e| e.into_inner())
         .handler(Instant::now());
     said(line);
+}
+
+/// Say what a burst left unsaid, once, as the process ends (#1667). Fixed words and counts only.
+pub fn at_exit() {
+    let lines = LINES.lock().unwrap_or_else(|e| e.into_inner()).last_words();
+    for line in lines {
+        eprintln!("{line}");
+    }
 }
 
 /// `file` as a form that shows no username or build directory: a cargo registry path keeps the crate and below
@@ -200,6 +230,37 @@ mod tests {
             lines.handler(t0 + Duration::from_secs(3600)).unwrap(),
             format!("{PANIC_LINE} (1 since the last line)")
         );
+    }
+
+    #[test]
+    fn the_unsaid_count_of_a_burst_followed_by_silence_is_said_at_the_end_once() {
+        let t0 = Instant::now();
+        let mut lines = Lines::new();
+        // nothing happened: nothing to say at the end
+        assert!(lines.last_words().is_empty());
+        for i in 0..50u64 {
+            let now = t0 + Duration::from_micros(i);
+            lines.hook(now, SITE);
+            lines.handler(now);
+        }
+        // 50 of each, one of each said: 49 are unsaid
+        let end = lines.last_words();
+        assert_eq!(
+            end,
+            vec![
+                "klatch-server: internal error (49 since the last line)".to_string(),
+                format!("{PANIC_LINE} (49 since the last line)"),
+            ]
+        );
+        for l in &end {
+            assert!(!l.contains('/') && !l.contains("alice"), "{l}");
+        }
+        // said once: a second call has nothing
+        assert!(lines.last_words().is_empty());
+        // a lone panic that was said leaves nothing unsaid
+        let mut one = Lines::new();
+        one.handler(t0);
+        assert!(one.last_words().is_empty());
     }
 
     #[test]

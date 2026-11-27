@@ -389,6 +389,10 @@ bug.
   there are; the report names which.
 - The comparison that matters is each K arm against B1 and against B0, per scenario and per primary metric. The primary
   metric of each scenario is named before the run (section 3); other metrics are reported without a significance claim.
+  `report.py` reads it from `metrics.primary` in the scenario file (`--primary METRIC` overrides it for every scenario, an
+  explicit choice; a scenario file that names none falls back to `units_completed`). A primary that is not one of the
+  continuous metrics the report tests (a rate such as `integration_ok`, or `units_per_usd`) leaves the completion test as
+  that scenario's primary test; the Holm family is the primaries of all scenarios (#1670).
 - Multiple comparisons: with six scenarios and several arm pairs, the report states the number of tests made and applies
   the Holm correction to the primary-metric tests across the suite; unadjusted p values are shown next to it.
 - A difference is called real only when the corrected p is under 0.05 and the effect is at least what section 9 says

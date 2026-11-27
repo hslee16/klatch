@@ -1,0 +1,1 @@
+- coordbench report.py takes each scenario's primary metric from its scenario file (metrics.primary); --primary still overrides it for every scenario (#1670).

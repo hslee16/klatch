@@ -27,6 +27,7 @@ import fixhash
 import metricver
 import msglabel
 import scale
+import scenario as scenario_mod
 import stats
 
 DEFAULT_SEED = 20261122
@@ -167,6 +168,7 @@ def test_continuous(metric, x, y, ax, ay, primary, exploratory, seed, resamples,
 
 
 Opts = collections.namedtuple("Opts", "primary seed resamples")
+DEFAULT_PRIMARY = "units_completed"  # for a scenario whose file names none
 
 
 def _is_small(cx, cy):
@@ -238,7 +240,11 @@ def _by_scenario_and_arm(records):
     return by
 
 
-def analyse(records, primary="units_completed", seed=DEFAULT_SEED, resamples=DEFAULT_RESAMPLES):
+def analyse(records, primary=None, seed=DEFAULT_SEED, resamples=DEFAULT_RESAMPLES,
+            primary_of=scenario_mod.primary_metric):
+    """`primary` (the --primary option) names one metric for every scenario; without it each scenario's primary is what its
+    scenario file names (`primary_of`, SPEC section 6, #1670), units_completed when it names none. A primary that is not a
+    tested continuous metric (a rate such as integration_ok) leaves the completion test as that scenario's primary test."""
     newest = fixhash.newest_only(metricver.newest_only(records))  # the scaling table never mixes metric or hash versions
     records, versions = metricver.split_scenarios(records)
     records, hash_versions = fixhash.split_scenarios(records)
@@ -251,10 +257,11 @@ def analyse(records, primary="units_completed", seed=DEFAULT_SEED, resamples=DEF
     for sc in sorted(by):
         arms = sorted(by[sc])
         cells = {a: cell_of(by[sc][a], records) for a in arms}
-        tests = _scenario_tests(by[sc], arms, cells, Opts(primary, seed, resamples))
+        named = primary or primary_of(sc) or DEFAULT_PRIMARY
+        tests = _scenario_tests(by[sc], arms, cells, Opts(named, seed, resamples))
         total += len(tests)
         primary_tests += [t for t in tests if t["primary"]]
-        out["scenarios"][sc] = _scenario_entry(cells, tests)
+        out["scenarios"][sc] = dict(_scenario_entry(cells, tests), primary_metric=named)
     _holm_adjust(primary_tests)
     out["tests_made"] = total
     out["primary_tests_made"] = len(primary_tests)
@@ -508,10 +515,11 @@ def _scenario_lines(sc, s):
 
 
 def _tests_made_line(a):
-    return ("Tests made: %d (primary-metric tests %d, Holm-corrected across the whole report, primary metric `%s` plus the "
-            "completion rate). Bootstrap: %d resamples, seed %d." % (a["tests_made"], a["primary_tests_made"],
-                                                                     a["primary_metric"], a["bootstrap_resamples"],
-                                                                     a["bootstrap_seed"]))
+    which = ("primary metric `%s` for every scenario (--primary)" % a["primary_metric"] if a["primary_metric"]
+             else "the primary metric each scenario's file names")
+    return ("Tests made: %d (primary-metric tests %d, Holm-corrected across the whole report, %s, plus the "
+            "completion rate). Bootstrap: %d resamples, seed %d." % (a["tests_made"], a["primary_tests_made"], which,
+                                                                     a["bootstrap_resamples"], a["bootstrap_seed"]))
 
 
 def render_markdown(a, cmp_=None, baseline_dir=None, source=None, comparison_only=False):
@@ -571,7 +579,8 @@ def _parse(argv):
     p.add_argument("--baseline", help="a previous results directory to compare with")
     p.add_argument("--out", help="the report file (default RESULTS_DIR/REPORT.md)")
     p.add_argument("--json", help="also write the analysis as JSON to this file")
-    p.add_argument("--primary", default="units_completed", choices=sorted(CONT))
+    p.add_argument("--primary", choices=sorted(CONT),
+                   help="one primary metric for every scenario (default: the one each scenario file names)")
     p.add_argument("--seed", type=int, default=DEFAULT_SEED, help="bootstrap seed")
     p.add_argument("--resamples", type=int, default=DEFAULT_RESAMPLES)
     p.add_argument("--check-ledger", action="store_true", help="only check that LEDGER.md matches the record files")

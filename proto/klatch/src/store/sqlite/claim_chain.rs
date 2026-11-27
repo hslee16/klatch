@@ -2,7 +2,9 @@
 //! members and the requester's own path that name it (#1603).
 
 use super::claims::{Attempt, Held};
-use crate::domain::{overlaps, scopes_collide};
+use super::{SqliteStore, WAIT_WINDOW_SECS};
+use crate::domain::{Result, overlaps, scopes_collide};
+use rusqlite::params;
 
 /// A member's refused claim attempt, remembered as a wait.
 pub(super) struct Wait {
@@ -95,4 +97,47 @@ pub(super) fn path_waited_for(
             })
         })
         .map(|h| h.path.clone())
+}
+
+impl SqliteStore {
+    /// The cycles of waits standing at `now`, read only (#271): a wait (a refused claim within the window) whose
+    /// blocking holder waits, directly or through others, for something the waiter holds is on a cycle. Waiters and
+    /// holders joined by such an edge form one cycle's member set; each set is sorted, and the sets are sorted.
+    pub(super) fn standing_wait_cycles(&self, room: &str, now: i64) -> Result<Vec<Vec<String>>> {
+        let waits: Vec<Wait> = self.rows(
+            "SELECT member,path,scope FROM claim_waits WHERE room=?1 AND ts>=?2",
+            params![room, now - WAIT_WINDOW_SECS],
+            |r| {
+                Ok(Wait {
+                    member: r.get(0)?,
+                    path: r.get(1)?,
+                    scope: r.get(2)?,
+                })
+            },
+        )?;
+        let mut held = self.live_claims(room)?;
+        held.retain(|h| h.expires > now);
+        let mut groups: Vec<Vec<String>> = Vec::new();
+        for w in &waits {
+            for h in held.iter().filter(|h| {
+                h.owner != w.member
+                    && overlaps(&h.path, &w.path)
+                    && scopes_collide(&h.scope, &w.scope)
+                    && reaches(&h.owner, &w.member, &waits, &held)
+            }) {
+                let (a, b) = (w.member.clone(), h.owner.clone());
+                let (hit, rest): (Vec<_>, Vec<_>) = groups
+                    .drain(..)
+                    .partition(|g| g.contains(&a) || g.contains(&b));
+                groups = rest;
+                let mut merged: Vec<String> = hit.into_iter().flatten().collect();
+                merged.extend([a, b]);
+                merged.sort();
+                merged.dedup();
+                groups.push(merged);
+            }
+        }
+        groups.sort();
+        Ok(groups)
+    }
 }
