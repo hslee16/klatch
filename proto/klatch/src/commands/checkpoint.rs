@@ -7,7 +7,7 @@ use klatch::domain::{ToolClass, clean_path, repo_relative};
 use std::path::Path;
 
 /// The nearest directory at or above `cwd` that holds a `.git` entry; `cwd` itself when there is none.
-fn repo_root(cwd: &str) -> String {
+pub(super) fn repo_root(cwd: &str) -> String {
     let mut dir = Path::new(cwd);
     loop {
         if dir.join(".git").exists() {

@@ -109,7 +109,7 @@ pub fn set_enforce(settings: &mut Value, bin: &str, how: Switch) -> Result<(), S
     let spec = Optional {
         event: "PreToolUse",
         entry: enforce_entry,
-        owns: is_ours,
+        owns: is_enforce,
         refresh: false,
     };
     set_optional(settings, bin, (&spec, how))

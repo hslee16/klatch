@@ -27,6 +27,8 @@ pub(super) fn run_agents(ctx: &Ctx, cmd: AgentsCmd) -> Result<()> {
             machine_status,
             stop_warn,
             passive_claims,
+            pre_edit_warn,
+            pre_edit_claims,
         } => hook(
             ctx,
             &HookArgs {
@@ -37,6 +39,8 @@ pub(super) fn run_agents(ctx: &Ctx, cmd: AgentsCmd) -> Result<()> {
                 machine_status,
                 stop_warn,
                 passive_claims,
+                pre_edit_warn,
+                pre_edit_claims,
             },
         )?,
         AgentsCmd::Act { cmd } => roles::act(t, cmd)?,
@@ -141,6 +145,10 @@ pub(super) struct HookArgs {
     pub(super) stop_warn: bool,
     /// The passive claims consent (#1401): the hook command carries `--passive-claims`.
     pub(super) passive_claims: bool,
+    /// The pre-edit overlap warning consent (#1402): the PreToolUse command carries `--pre-edit-warn`.
+    pub(super) pre_edit_warn: bool,
+    /// The first-edit passive claim consent (#1458): the PreToolUse command carries `--pre-edit-claims`.
+    pub(super) pre_edit_claims: bool,
 }
 
 impl HookArgs {
@@ -202,6 +210,10 @@ pub(super) fn hook(ctx: &Ctx, args: &HookArgs) -> Result<()> {
     }
     note_permission_mode(ctx);
     if args.is("PreToolUse") {
+        // its own entry: the warning (never a block); without the flag this is the blocking hook, unchanged
+        if args.pre_edit_warn {
+            return pre_edit(ctx, args.pre_edit_claims);
+        }
         return pre_tool_use(ctx);
     }
     // A tool call made by a subagent fires this hook as the parent session, whose member did not make the call. The

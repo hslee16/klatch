@@ -96,6 +96,7 @@ fn report_place(r: &mut Report, place: &Place, installed: &Installed, exe: &Path
 struct Optional {
     wake: bool,
     enforce: bool,
+    pre_edit: bool,
 }
 
 /// Check one settings file. `None` when it holds no klatch hooks (or none could be read, which is said first).
@@ -121,6 +122,7 @@ fn check_place(r: &mut Report, place: &Place, exe: &Path) -> Option<Optional> {
     let found = Optional {
         wake: on(HookKind::Wake),
         enforce: on(HookKind::Enforce),
+        pre_edit: on(HookKind::PreEdit),
     };
     report_place(r, place, &installed, exe);
     Some(found)
@@ -133,6 +135,7 @@ pub(super) fn check_hooks(r: &mut Report, project_dir: &Path, home: Option<&Path
             let all = found.get_or_insert_with(Optional::default);
             all.wake |= here.wake;
             all.enforce |= here.enforce;
+            all.pre_edit |= here.pre_edit;
         }
     }
     let Some(on) = found else {
@@ -145,6 +148,7 @@ pub(super) fn check_hooks(r: &mut Report, project_dir: &Path, home: Option<&Path
     };
     report_switch(r, "wake", on.wake, "--wake");
     report_switch(r, "enforce", on.enforce, "--enforce");
+    report_switch(r, "pre-edit-warn", on.pre_edit, "--pre-edit-warn");
 }
 
 /// The line saying whether an optional hook is on, and the flag that turns it on.
