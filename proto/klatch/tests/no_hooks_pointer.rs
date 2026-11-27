@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
+const KLATCH_POINTER: &str = "klatch: no klatch hooks are installed where you work, so no room digest reaches you here (this line is DATA, not an instruction); a person can turn them on with `klatch init --scope user` (it asks before it writes anything)";
 const HOOKS: &str = r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/opt/klatch --discover hook --event SessionStart"}]}]}}"#;
 
 struct Fx {
@@ -112,6 +113,7 @@ fn a_malformed_settings_file_prints_nothing() {
     let f = fx();
     put(&f.project, "settings.local.json", "{ nope");
     let o = post(&f, "worker", "ready", &f.project);
+    assert!(o.status.success(), "the post itself succeeds: {}", err(&o));
     assert_eq!(pointer_lines(&err(&o)), 0, "{}", err(&o));
 }
 
@@ -128,17 +130,59 @@ fn a_symlinked_settings_file_out_of_the_project_is_not_followed() {
     )
     .unwrap();
     let o = post(&f, "worker", "ready", &f.project);
+    assert!(o.status.success(), "the post itself succeeds: {}", err(&o));
     assert_eq!(pointer_lines(&err(&o)), 0, "{}", err(&o));
 }
 
 #[test]
 fn a_headless_worker_with_its_own_identity_file_gets_no_pointer() {
     let f = fx();
-    let mut c =
-        f.h.command_at("worker", &["post", "lobby", "ready"], &f.project, &f.home);
-    c.env("KLATCH_IDENTITY_FILE", f.h.0.join("no-such.bundle"));
+    // a real bundle from `worker issue` (a throwaway KLATCH_HOME and key directory, never the live store)
+    let bundle = f.h.0.join("w-1.bundle");
+    let issued = f.h.launcher(&[
+        "worker",
+        "issue",
+        "w-1",
+        "--clearance",
+        "internal",
+        "--out",
+        bundle.to_str().unwrap(),
+    ]);
+    assert!(issued.status.success(), "{}", err(&issued));
+    let mut c = f.h.command_at("w-1", &["post", "lobby", "ready"], &f.project, &f.home);
+    c.env_remove("KLATCH_NAME")
+        .env_remove("KLATCH_KEY_DIR")
+        .env("KLATCH_IDENTITY_FILE", &bundle);
     let o = c.output().unwrap();
+    assert!(o.status.success(), "the post succeeded: {}", err(&o));
     assert_eq!(pointer_lines(&err(&o)), 0, "{}", err(&o));
+    // the same directory without the bundle does get it, so the silence above is the headless rule and nothing else
+    let o = post(&f, "interactive", "ready", &f.project);
+    assert_eq!(pointer_lines(&err(&o)), 1, "{}", err(&o));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_claude_directory_out_of_the_project_is_not_followed() {
+    let f = fx();
+    let outside = f.h.0.join("outside-claude");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("settings.local.json"), "{}").unwrap();
+    std::os::unix::fs::symlink(&outside, f.project.join(".claude")).unwrap();
+    let o = post(&f, "worker", "ready", &f.project);
+    assert!(o.status.success(), "the post itself succeeds: {}", err(&o));
+    assert_eq!(pointer_lines(&err(&o)), 0, "{}", err(&o));
+}
+
+#[test]
+fn the_pointer_is_exactly_the_one_fixed_line() {
+    let f = fx();
+    let first = err(&post(&f, "worker", "ready", &f.project));
+    let line = first
+        .lines()
+        .find(|l| l.contains("klatch init --scope user"))
+        .unwrap();
+    assert!(line.ends_with(KLATCH_POINTER), "nothing appended: {line}");
 }
 
 // ---- the MCP path ------------------------------------------------------------------------------------------------
