@@ -254,7 +254,7 @@ CLAIM_TEXT = {
 
 class ClaimKeeper:
     """Holds the named watcher claim (#1338). `run(args)` runs klatch and returns (returncode, stderr); `clock()` is
-    seconds (monotonic in the receiver, fake in the tests); `log(severity, text)` writes a line to gh-watch.log. A
+    seconds (wall time in the receiver, fake in the tests); `log(severity, text)` writes a line to gh-watch.log. A
     refusal is told by the exact prefix `Error: refused: ` that the real binary puts on a claim conflict; nothing else in
     the text is read or trusted, and klatch's text is never logged (the lines are fixed templates).
 
@@ -288,7 +288,7 @@ class ClaimKeeper:
             return state == "held"
         was_held = self.held
         self.held = state == "held"
-        word = "taken" if self.held else ("lost" if was_held else state)
+        word = "taken" if self.held else ("lost" if was_held and state == "refused" else state)
         if word != self.reported and not (quiet_refusal and word == "refused"):
             self.reported = word
             self.log(*[CLAIM_TEXT[word][0], CLAIM_TEXT[word][1] % self.name])
@@ -332,6 +332,12 @@ class ClaimKeeper:
             was, self.held = self.held, False
         if was:
             self._release()
+
+
+def claim_clock():
+    """The keeper's clock: wall time, not monotonic. A monotonic clock stops while the Mac sleeps, so the lease would
+    lapse unrenewed after the wake (#1338, #1605)."""
+    return time.time()
 
 
 def claim_home_ok(env):
@@ -496,6 +502,8 @@ def main(argv):
         shut_down()
 
     def on_fatal():
+        # the same line the monitor watches: the keeper logged "retrying", so say that the receiver is stopping (#1605)
+        sink.log("ALERT", "watcher claim %s lost: another holder has it, stopping the receiver" % CLAIM_NAME)
         fatal.set()
         shut_down()
 
@@ -507,7 +515,7 @@ def main(argv):
             # one holder name per receiver (the pid), so a second receiver with the same --as-member is a different
             # holder and is refused, and one receiver's stop never releases the other's claim
             holder = holder_name(a.as_member, os.getpid())
-            keeper = ClaimKeeper(lambda args: sink.klatch(args, holder), time.time, a.room, ttl=a.claim_ttl,
+            keeper = ClaimKeeper(lambda args: sink.klatch(args, holder), claim_clock, a.room, ttl=a.claim_ttl,
                                  interval=a.claim_renew, log=sink.log, on_fatal=on_fatal)
             if keeper.acquire() == "refused":
                 sink.log("ALERT", "second receiver refused: another holds the %s claim" % CLAIM_NAME)

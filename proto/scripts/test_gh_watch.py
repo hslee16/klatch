@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 import select
+import shutil
 import socket
 import signal
 import stat
@@ -18,6 +19,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 import urllib.error
 import urllib.request
 
@@ -718,6 +720,17 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(p.returncode, 0)
         self.assertEqual(self.klatch_calls()[-1], "release factory-status watch:gh")
 
+    def test_losing_the_claim_at_run_time_logs_the_stop_as_an_alert(self):
+        fake = self.fake_klatch()
+        p, _ = self.start("--klatch-bin", fake, "--as-member", "ghwatch", "--room", "factory-status",
+                          "--claim-ttl", "6", "--claim-renew", "1")
+        self.wait_for(lambda: len(self.klatch_calls()) >= 2, "a renewal")
+        open(self.refuse_file, "w").close()
+        p.wait(timeout=20)
+        self.assertEqual(p.returncode, 2)
+        self.assertTrue(any(" ALERT " in l and "watcher claim watch:gh lost" in l and "stopping" in l
+                            for l in self.log()), self.log())
+
     def test_second_receiver_refused_by_the_claim(self):
         fake = self.fake_klatch(refuse=True)
         p, _ = self.start("--klatch-bin", fake, "--as-member", "ghwatch", "--room", "r", expect_ready=False)
@@ -991,6 +1004,19 @@ class ClaimKeeperTests(unittest.TestCase):
         self.now -= 3600
         self.assertTrue(self.keeper.tick())
 
+    def test_the_keeper_clock_is_the_wall_clock_not_the_monotonic_one(self):
+        # a monotonic clock stops across a Mac sleep, so the lease would lapse unrenewed (#1605); the wall clock jumps
+        with mock.patch.object(ghw.time, "time", return_value=5.0), mock.patch.object(ghw.time, "monotonic", return_value=99.0):
+            self.assertEqual(ghw.claim_clock(), 5.0)
+
+    def test_a_klatch_failure_while_held_is_logged_as_klatch_failed_not_lost(self):
+        self.keeper.acquire()
+        self.k.answers.append((1, "busy"))
+        self.now += 30
+        self.keeper.tick()
+        self.assertFalse(self.keeper.held)
+        self.assertEqual(self.logged[-1], ("ALERT", "watcher claim watch:gh not held: klatch failed, retrying"))
+
     def test_startup_refusal_is_quiet_in_the_keeper_log(self):
         self.k.answers.append(self.REFUSED)
         self.keeper.acquire()
@@ -1117,6 +1143,16 @@ class ClaimHomeTests(unittest.TestCase):
         os.symlink(os.path.join(self.t, ".klatch", "x"), link)
         self.assertFalse(self.ok(link))
         self.assertFalse(self.ok(os.path.join(link, "deeper")))
+
+    def test_symlinked_live_store_to_a_dir_with_no_klatch_component(self):
+        # ~/.klatch -> kstore: only the resolved-path comparison (not the component scan) can tell (#1605)
+        shutil.rmtree(os.path.join(self.t, ".klatch"))
+        kstore = os.path.join(self.t, "kstore")
+        os.makedirs(os.path.join(kstore, "sub"))
+        os.symlink(kstore, os.path.join(self.t, ".klatch"))
+        self.assertFalse(self.ok(kstore))
+        self.assertFalse(self.ok(os.path.join(kstore, "sub")))
+        self.assertTrue(self.ok(os.path.join(self.t, "other")))
 
     def test_an_isolated_home_is_fine(self):
         self.assertTrue(self.ok(os.path.join(self.t, "factory", "home")))
