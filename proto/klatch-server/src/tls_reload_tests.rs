@@ -393,8 +393,7 @@ fn a_build_that_ended_while_being_abandoned_is_not_counted() {
     slot.ended.store(true, Ordering::SeqCst);
     let (gave_up, _guard) = slot
         .claim(Duration::from_secs(30), 3)
-        .ok()
-        .expect("the claim was refused");
+        .unwrap_or_else(|restart| panic!("the claim was refused (restart: {restart})"));
     assert!(!gave_up);
     assert_eq!(slot.abandoned_now(), 0);
 }
