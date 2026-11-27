@@ -13,6 +13,7 @@
 #   gh-watch ensure [opts]              start ONLY the receiver, detached, if it is down (never the forwarder, never gh); then status
 # serve options: --out-dir DIR --secret-file FILE --port N --klatch-bin PATH --as-member NAME --room NAME
 #                --post-min INFO|ALERT --max-body BYTES --no-claim --claim-ttl S --claim-renew S   (--bind is accepted but only loopback is allowed)
+#                --feed-room NAME --feed-rate N   GitHub events as marked data lines in a separate, muted room (#1404; never the lobby)
 # The watcher is read-only: it never calls gh or GitHub. This launcher runs gh only in clean-hooks (one read-only GET); status
 # uses ps and, when present, a read-only launchctl print.
 set -uo pipefail
@@ -21,7 +22,7 @@ receiver="$here/gh-watch-receiver.py"
 repo_slug="hslee16/klatch"
 events="pull_request,check_run,workflow_run,push,issues,issue_comment"
 
-usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; }
 die() { echo "gh-watch: $*" >&2; exit 2; }
 
 default_out="${GH_WATCH_DIR:-${XDG_STATE_HOME:-${HOME:?}/.local/state}/klatch-gh-watch}"

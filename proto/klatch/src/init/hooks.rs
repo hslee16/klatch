@@ -95,6 +95,8 @@ pub enum HookKind {
     Enforce,
     /// The asyncRewake watcher (`--wake`).
     Wake,
+    /// The PreToolUse hook that warns before an edit of a path another member holds (`--pre-edit-warn`).
+    PreEdit,
 }
 
 /// Every hook klatch installed in a settings value: its event, its command and which one it is. Read only.
@@ -130,6 +132,8 @@ pub(crate) fn hook_kind(event: &str, hook: &Value) -> Option<HookKind> {
         Some(HookKind::Wake)
     } else if !is_ours(hook) {
         None
+    } else if event == "PreToolUse" && is_pre_edit(hook) {
+        Some(HookKind::PreEdit)
     } else if event == "PreToolUse" {
         Some(HookKind::Enforce)
     } else {

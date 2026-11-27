@@ -39,6 +39,11 @@ pub struct Options {
     /// The stop warning (#1344): a flag on the PostToolUse and SessionEnd hooks and the shared Stop hook, which prints one
     /// warn-only line when a turn ends with background tasks or crons still running. Opt in, opt out, or leave as is.
     pub stop_warn: Switch,
+    /// The pre-edit warning (#1402): an own PreToolUse entry that tells a member when another holds the path it is about
+    /// to edit. Opt in, opt out, or leave as is.
+    pub pre_edit_warn: Switch,
+    /// The first-edit passive claim (#1458): the same entry also claims the path before the edit (needs passive claims).
+    pub pre_edit_claims: Switch,
     /// Remove every hook klatch wrote instead of installing (#436); nothing else in the settings is touched.
     pub uninstall: bool,
     /// Install into Codex's hooks.json instead of Claude Code's settings (#782).
@@ -72,6 +77,8 @@ struct Choices {
     passive_claims: Switch,
     machine_status: Switch,
     stop_warn: Switch,
+    pre_edit_warn: Switch,
+    pre_edit_claims: Switch,
 }
 
 /// A settings file and what it would become.
@@ -189,6 +196,8 @@ impl Io<'_> {
             passive_claims: options.passive_claims,
             machine_status: options.machine_status,
             stop_warn: options.stop_warn,
+            pre_edit_warn: options.pre_edit_warn,
+            pre_edit_claims: options.pre_edit_claims,
         })
     }
 }
@@ -247,6 +256,9 @@ fn plan(label: &'static str, path: PathBuf, bin: &str, choices: &Choices) -> any
     set_passive_claims(&mut merged, bin, choices.passive_claims).map_err(refuse)?;
     set_machine_status(&mut merged, bin, choices.machine_status).map_err(refuse)?;
     set_stop_warn(&mut merged, bin, choices.stop_warn).map_err(refuse)?;
+    drop_orphan_pre_edit_claims(&mut merged, bin).map_err(refuse)?;
+    set_pre_edit_warn(&mut merged, bin, choices.pre_edit_warn).map_err(refuse)?;
+    set_pre_edit_claims(&mut merged, bin, choices.pre_edit_claims).map_err(refuse)?;
     Ok(Plan {
         label,
         path,
@@ -448,9 +460,11 @@ mod diff;
 mod flags;
 mod hooks;
 mod optional;
+mod pre_edit;
 #[cfg(test)]
 mod tests;
 pub use diff::*;
 pub use flags::*;
 pub use hooks::*;
 pub use optional::*;
+pub use pre_edit::*;

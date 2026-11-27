@@ -6,15 +6,20 @@ use rusqlite::params;
 
 const AUDIT_SQL: &str = "INSERT INTO admin_audit(ts,action,target,detail) VALUES(?1,?2,?3,?4)";
 
+/// Whether a new seat in `room` starts muted: the feed room's does (#1404). An existing seat keeps its own choice.
+pub(super) fn starts_muted(room: &str) -> i64 {
+    i64::from(room == crate::domain::FEED_ROOM)
+}
+
 impl SqliteStore {
     /// Mark the member present: last-seen is a whole second, so a touch in the second already recorded changes nothing
     /// and writes nothing (#128); at most one write per member and room each second, however often it is called.
     pub(super) fn touch(&self, room: &str, me: &str, now: i64) -> Result<()> {
         if self.last_seen(room, me)? != Some(now) {
             self.exec(
-                "INSERT INTO members(room,name,joined,last_seen) VALUES(?1,?2,?3,?3)
+                "INSERT INTO members(room,name,joined,last_seen,muted) VALUES(?1,?2,?3,?3,?4)
                      ON CONFLICT(room,name) DO UPDATE SET last_seen=?3",
-                params![room, me, now],
+                params![room, me, now, starts_muted(room)],
             )?;
         }
         self.renew_claims(room, me, now)

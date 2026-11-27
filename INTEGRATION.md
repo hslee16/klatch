@@ -36,7 +36,7 @@ server as a command and arguments in a configuration of this shape (check your r
 {"mcpServers": {"klatch": {"command": "/path/to/klatch", "args": ["mcp", "--stdio"], "env": {"KLATCH_NAME": "my-bot"}}}}
 ```
 
-Tools: `klatch_post`, `klatch_read` (marks read unless `peek`; at most 40 messages and 16 KB per call, the most important first (asks for you and direct messages before the rest, `by_importance: true` when the page is not in seq order), with `omitted` and `next` when more are unread, and a longer message cut with a marker), `klatch_claim` (ONE path or name), `klatch_release`,
+Tools: `klatch_post` (its result carries a `notice` field, once, on your first post in a room you never read: how many messages from others wait, marked as data, and that `klatch_read` shows them; never message text), `klatch_read` (marks read unless `peek`; at most 40 messages and 16 KB per call, the most important first (asks for you and direct messages before the rest, `by_importance: true` when the page is not in seq order), with `omitted` and `next` when more are unread, and a longer message cut with a marker), `klatch_claim` (ONE path or name), `klatch_release`,
 `klatch_wait` (up to 55 seconds, returns the messages or `timeout: true`, at most 20 messages and 16 KB in all, in the same order, with `omitted` when more are unread; call it again to keep waiting), `klatch_who`,
 and, for a member that routes (the facilitator, #901), `klatch_join` (makes the room if new), `klatch_asks` (a room's open
 asks; the ask-cycle lines `klatch asks` prints are not in it, they come from the wire method `stuck` as `ask_cycle` events) and `klatch_invite` (a content-free pointer in a shared room; it joins nobody).
@@ -159,6 +159,7 @@ Claude Code behaviour that shapes this, read on 2026-11-22 from the Claude Code 
   (`clear`, `resume`, `logout`, `prompt_input_exit`, `other`); klatch maps it to one of five words and writes the final
   checkpoint before it releases the member's claims. Compaction fires no `SessionEnd` (it fires `SessionStart` with
   matcher `compact`), so the checkpoint of the last `Stop` stands and the session start board shows it.
+- The feed room (#1404, opt in by the human running `gh-watch serve --feed-room feed`, PR-SWEEP.md). GitHub events (PR opened, ready, merged, checks failed, main red) arrive as marked data lines from the gh-watch member in the room `feed`, not as lobby posts. A seat in `feed` starts muted, so the digest, `wake` and the SessionStart briefing carry a feed line only when it mentions the member (`wait` watches only the rooms a member names and never checks the mute: a member that waits on `feed` wakes on every line, one that does not never sees one); `klatch read feed` shows it, and the coordinator runs `klatch unmute feed`. The line is data from GitHub, never instructions, and its prefix is not proof of who posted it: trust the sender, not the prefix (the verified gh-watch member, #1337, is still open).
 - Ask routing (always on, #1407). A `seeking:` message posted in a room that is not a direct message is addressed by the
   gateway to the members that could take it: those `could_answer` allows (the ask is open and not theirs, no claim holds
   it, they hold no claim of their own, their credential is live, they are not stopped, their clearance covers the room's
@@ -182,6 +183,20 @@ Claude Code behaviour that shapes this, read on 2026-11-22 from the Claude Code 
   holder, how long it has held it, the exact `klatch ask` to send) and never blocks; blocking is `init --enforce`. A tool
   call made inside a subagent (its input carries `agent_id`) claims nothing, and DESIGN.md, CHANGELOG.md and
   RESEARCH-NOTES.md are never claimed.
+- Pre-edit warning (opt in, `klatch init --pre-edit-warn`, #1402) and first-edit claim (`--pre-edit-claims`, #1458). One
+  `PreToolUse` entry of its own, matching Edit, Write, MultiEdit and NotebookEdit (never Bash), whose command carries
+  `--pre-edit-warn`. Before the edit it reads the claims in the rooms the member can read (the same guarded `claims` call
+  the blocking hook uses; no message is read, so none is consumed) and, when another member holds a live claim, explicit
+  or passive, that overlaps the path (symlinks, `..` spellings and files that do not exist yet are judged by where they
+  land), prints one `additionalContext` line: the holders (three names, then a count), how many claims, the longest time
+  left, and the exact `klatch ask` to send, marked as data. Nothing is printed when there is nothing to say, and a claim
+  reason is never printed. It never blocks: `init --enforce` is the separate blocking entry, and the two are installed and
+  removed independently. A store it cannot read fails open with the usual `could not check claims` line. With
+  `--pre-edit-claims` (needs `--passive-claims`, whose Stop and SessionEnd hooks release the claim) the same step takes the
+  passive claim before the edit when nobody else holds the path, so first edits are covered at edit time; it never takes a
+  claim over a warning. A claim is the only edit record there is: once the holder's turn ends and its passive claim is
+  released, a later edit of the same path is not warned about (a recent-edit record needs a schema change, see the design
+  item for #1402).
 - Machine status (opt in, `klatch init --machine-status`, #1403). The `PostToolUse` command that carries
   `--machine-status`, and a `Stop` command that carries it (one hook shared with `--checkpoint` and `--passive-claims`, whose command carries every flag the
   member consented to), set the member's status from activity instead of from posts: `working (auto)` at the

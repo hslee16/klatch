@@ -21,6 +21,11 @@ impl<S: Store> Gateway<S> {
 
     pub fn read(&self, who: &Principal, room: &str, advance: bool) -> Result<Vec<Message>> {
         self.admit(who, room, Operation::read(room, advance))?;
+        self.read_admitted(who, room, advance)
+    }
+
+    /// The body of `read` once the caller was admitted for it.
+    fn read_admitted(&self, who: &Principal, room: &str, advance: bool) -> Result<Vec<Message>> {
         let at = Seat::new(room, &who.member);
         // a librarian only looks: its peek must not refresh its presence or make it a member (#499)
         if !advance && self.is_librarian(&who.member)? {
@@ -58,11 +63,10 @@ impl<S: Store> Gateway<S> {
     pub fn first_post_unread(&self, who: &Principal, room: &str) -> Result<usize> {
         check_member(who)?;
         check_room(room)?;
-        // The guarded peek comes first, so a refused caller reaches nothing and the guard is asked once.
-        let waiting = self.read(who, room, false)?.len();
-        if waiting == 0 {
-            return Ok(0);
-        }
+        // Admission comes first, as for a read, so a refused caller reaches nothing and the guard is asked once. Then
+        // the cheap checks; only a caller that passes them has the unread list loaded to be counted (#1415: a member
+        // that posts often and never reads must not pay a scan of everything waiting on every post).
+        self.admit(who, room, Operation::read(room, false))?;
         let shown = self
             .store
             .member_cursors(room)?
@@ -71,7 +75,7 @@ impl<S: Store> Gateway<S> {
         if shown || self.store.own_post_count(room, &who.member)? != 1 {
             return Ok(0);
         }
-        Ok(waiting)
+        Ok(self.read_admitted(who, room, false)?.len())
     }
 
     /// What a librarian's peek returns without touching presence, membership or any position (#499, #750).

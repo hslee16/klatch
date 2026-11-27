@@ -121,12 +121,12 @@ impl MessageStore for SqliteStore {
         // One statement, so it is atomic: forward only, and clamped to the room's head so an
         // acknowledgement can never skip a message that has not arrived yet.
         self.exec(
-                "INSERT INTO members(room,name,joined,last_seen,last_seq)
-                 VALUES(?1,?2,?4,?4,MAX(0,MIN(?3,(SELECT COALESCE(MAX(seq),0) FROM messages WHERE room=?1))))
+                "INSERT INTO members(room,name,joined,last_seen,last_seq,muted)
+                 VALUES(?1,?2,?4,?4,MAX(0,MIN(?3,(SELECT COALESCE(MAX(seq),0) FROM messages WHERE room=?1))),?5)
                  ON CONFLICT(room,name) DO UPDATE SET
                    last_seq=MAX(last_seq,MIN(?3,(SELECT COALESCE(MAX(seq),0) FROM messages WHERE room=?1))),
                    last_seen=?4",
-                params![room, member, seq.0, now],
+                params![room, member, seq.0, now, super::super::exec::starts_muted(room)],
             )?;
         Ok(())
     }

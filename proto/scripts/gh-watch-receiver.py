@@ -14,6 +14,7 @@ import collections
 import datetime
 import hashlib
 import hmac
+import importlib.util
 import ipaddress
 import json
 import os
@@ -43,6 +44,19 @@ CLAIM_NAME = "watch:gh"
 CLAIM_TTL = 90
 CLAIM_RENEW = 30
 CLAIM_REASON = "gh-watch receiver"
+
+
+def load_feed():
+    """The feed module (gh-watch-feed.py, next to this file), loaded by path because `python3 -I` has no script dir on
+    sys.path (#1404)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gh-watch-feed.py")
+    spec = importlib.util.spec_from_file_location("gh_watch_feed", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+FEED = load_feed()
 
 
 def clean(value, limit=FIELD_MAX):
@@ -205,10 +219,19 @@ def check_secret_file(path):
 
 
 class Sink:
-    def __init__(self, out_dir, klatch_bin, member, room, post_min):
+    def __init__(self, out_dir, klatch_bin, member, room, post_min, feed_room=None, feed_rate=None):
         os.makedirs(out_dir, mode=0o700, exist_ok=True)
         self.fd = os.open(os.path.join(out_dir, "gh-watch.log"), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         self.klatch_bin, self.member, self.room, self.post_min = klatch_bin, member, room, post_min
+        # the feed room (#1404): GitHub events as marked, bounded data lines, never the lobby
+        self.feed = None
+        if feed_room and klatch_bin:
+            self.feed = FEED.Feed(lambda line: self.klatch(["post", feed_room, line])[0] == 0, time.monotonic,
+                                  rate=feed_rate or FEED.DEFAULT_RATE, log=lambda text: self.log("INFO", text))
+
+    def feed_event(self, event, payload, state):
+        if self.feed:
+            self.feed.offer(FEED.events(event, payload, state, clean))
 
     def log(self, severity, text):
         """One line in gh-watch.log, never posted to the room (the watcher's own state, not a GitHub event)."""
@@ -417,6 +440,7 @@ class Handler(BaseHTTPRequestHandler):
             srv.seen.popitem(last=False)
         for severity, text in digest(event, payload, srv.state):
             srv.sink.emit(severity, text)
+        srv.sink.feed_event(event, payload, srv.state)
         self.reply(200, "ok")
 
 
@@ -440,6 +464,10 @@ def main(argv):
     ap.add_argument("--klatch-bin", help="installed klatch binary used to post each note (optional)")
     ap.add_argument("--as-member", help="member name the posts are made as (needs --klatch-bin)")
     ap.add_argument("--room", help="room the posts go to (needs --klatch-bin)")
+    ap.add_argument("--feed-room", help="room that gets PR opened, ready, merged, checks failed and main red as marked "
+                    "data lines (needs --klatch-bin; documented name: %s; never the lobby)" % FEED.FEED_ROOM)
+    ap.add_argument("--feed-rate", type=int, default=FEED.DEFAULT_RATE,
+                    help="most feed lines posted per minute (default %d)" % FEED.DEFAULT_RATE)
     ap.add_argument("--no-claim", action="store_true", help="do not hold the %s claim (needs --klatch-bin to be on)"
                     % CLAIM_NAME)
     ap.add_argument("--claim-ttl", type=int, default=CLAIM_TTL, help="seconds the claim lasts (default %d)" % CLAIM_TTL)
@@ -464,6 +492,15 @@ def main(argv):
     elif a.as_member or a.room:
         sys.stderr.write("gh-watch: --as-member and --room need --klatch-bin\n")
         return 2
+    if a.feed_room:
+        # only a seat in the room named FEED_ROOM starts muted (store rule), so no other name is allowed (#1404)
+        if not a.klatch_bin or a.feed_room != FEED.FEED_ROOM:
+            sys.stderr.write("gh-watch: --feed-room must be the room named %s and needs --klatch-bin (only that room "
+                             "starts muted for members)\n" % FEED.FEED_ROOM)
+            return 2
+        if not 1 <= a.feed_rate <= 600:
+            sys.stderr.write("gh-watch: --feed-rate must be between 1 and 600\n")
+            return 2
     if not 1 <= a.max_body <= 25 * 1024 * 1024:
         sys.stderr.write("gh-watch: --max-body must be between 1 and 26214400\n")
         return 2
@@ -481,7 +518,7 @@ def main(argv):
         return 2
     import socket
     family = socket.AF_INET6 if ip.version == 6 else socket.AF_INET
-    sink = Sink(a.out_dir, a.klatch_bin, a.as_member, a.room, a.post_min)
+    sink = Sink(a.out_dir, a.klatch_bin, a.as_member, a.room, a.post_min, a.feed_room, a.feed_rate)
     try:
         server = Server((a.bind, a.port), family, secret, sink, a.max_body)
     except OSError as e:

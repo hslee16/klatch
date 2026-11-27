@@ -32,6 +32,7 @@ mod machine_status;
 mod mediator;
 mod merge_claim;
 mod passive_claim;
+pub(crate) mod pre_edit;
 mod priority;
 mod session_budget;
 pub use merge_claim::{MERGE_CLAIM, MERGE_CLAIM_MAX_SECS, MERGE_PARK_MAX_SECS, is_merge_claim};
@@ -39,6 +40,7 @@ pub use passive_claim::{
     PASSIVE_CLAIM_SECS, PASSIVE_REASON, PassiveOutcome, PassiveRefusal, PassiveTaken, covers,
     never_claimed, passive_path, refusal_line,
 };
+pub use pre_edit::{pre_edit_refusal_line, pre_edit_warning};
 mod merge_queue;
 pub use merge_queue::{
     CHECKING_PREFIX, DROPPED_PREFIX, DropReason, HALTED_PREFIX, Halt, HaltReason,
@@ -115,7 +117,7 @@ pub use cascade_judge::{
     Reading, ReadingTransport, Stage,
 };
 pub use claim_age::{AgedClaim, FIRST_MILESTONE_SECS, due_milestone, milestone};
-pub use convention::{CONVENTION_MARKER, convention, convention_in, subagent_brief};
+pub use convention::{CONVENTION_MARKER, FEED_ROOM, convention, convention_in, subagent_brief};
 pub use convention_words::{CONVENTION_WORDS, ConventionWord};
 pub use could_answer::{Blocker, CouldAnswer};
 pub use credentials::credential_kind;

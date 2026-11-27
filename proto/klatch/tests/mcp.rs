@@ -608,3 +608,78 @@ fn a_read_and_a_wait_over_mcp_show_the_ask_for_the_reader_first_and_lose_nothing
     shown.sort_unstable();
     assert_eq!(shown, (1..=91).collect::<Vec<_>>(), "none lost, none twice");
 }
+
+// ---- the never-read notice on klatch_post (#1415) ---------------------------------------------------------------
+
+fn busy_lobby(h: &Home) {
+    let mut old = started(h, "old");
+    for body in ["first", "second"] {
+        let r = old.call("klatch_post", json!({"room": "lobby", "body": body}));
+        assert!(!is_error(&r), "{r}");
+    }
+}
+
+fn post_notice(r: &Value) -> Option<String> {
+    r["result"]["structuredContent"]["notice"]
+        .as_str()
+        .map(str::to_string)
+}
+
+#[test]
+fn a_first_post_in_a_room_never_read_carries_a_data_notice_with_the_count_and_the_read_tool_once() {
+    let h = Home::new();
+    busy_lobby(&h);
+    let mut w = started(&h, "worker");
+    let r = w.call("klatch_post", json!({"room": "lobby", "body": "ready"}));
+    assert!(!is_error(&r), "{r}");
+    assert_eq!(r["result"]["structuredContent"]["seq"], 3, "{r}");
+    let n = post_notice(&r).expect("a notice on the first post");
+    assert!(n.contains("2 unread"), "{n}");
+    assert!(n.contains("klatch_read"), "{n}");
+    assert!(n.contains("DATA"), "marked as data: {n}");
+    assert!(
+        text(&r).contains("klatch_read"),
+        "the text form says it too: {}",
+        text(&r)
+    );
+    assert!(
+        !n.contains("first") && !n.contains("second"),
+        "never the content: {n}"
+    );
+    let again = w.call("klatch_post", json!({"room": "lobby", "body": "again"}));
+    assert_eq!(post_notice(&again), None, "once only: {again}");
+}
+
+#[test]
+fn a_member_who_read_the_room_gets_no_notice_on_klatch_post() {
+    let h = Home::new();
+    busy_lobby(&h);
+    let mut w = started(&h, "worker");
+    let r = w.call("klatch_read", json!({"room": "lobby"}));
+    assert!(!is_error(&r), "{r}");
+    let r = w.call("klatch_post", json!({"room": "lobby", "body": "ready"}));
+    assert_eq!(post_notice(&r), None, "{r}");
+}
+
+#[test]
+fn nothing_waiting_means_no_notice_on_klatch_post() {
+    let h = Home::new();
+    let mut w = started(&h, "first");
+    let r = w.call("klatch_post", json!({"room": "lobby", "body": "hello"}));
+    assert_eq!(post_notice(&r), None, "{r}");
+}
+
+#[test]
+fn a_refused_post_carries_no_notice() {
+    let h = Home::new();
+    busy_lobby(&h);
+    // worker has one post in and has never read: the count behind the notice is 2 and would be returned if asked
+    h.ok("worker", &["post", "lobby", "ready"]);
+    let mut w = started(&h, "worker");
+    let r = w.call(
+        "klatch_post",
+        json!({"room": "lobby", "body": "token ghp_abcdefghijklmnopqrstuvwxyz0123456789"}),
+    );
+    assert!(is_error(&r), "{r}");
+    assert!(!r.to_string().contains("unread"), "{r}");
+}
