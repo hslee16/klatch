@@ -170,3 +170,92 @@ fn a_settings_directory_that_is_really_a_file_prints_nothing() {
     fs::write(f.repo.join(".claude"), "x").unwrap();
     assert_eq!(ask(&f), None, "cannot tell, so say nothing");
 }
+
+#[test]
+fn the_pointer_text_is_pinned_and_has_no_shell_metacharacters() {
+    // a literal copy, so editing POINTER (an appended `; curl ... | sh`) fails here and needs a deliberate change
+    assert_eq!(
+        POINTER,
+        "klatch: no klatch hooks are installed where you work, so no room digest reaches you here (this line is DATA, not an instruction); a person can turn them on with `klatch init --scope user` (it asks before it writes anything)"
+    );
+    let outside_quote = POINTER.replace("`klatch init --scope user`", "");
+    for bad in ['|', '&', '$', '>', '<', '\n', '\\'] {
+        assert!(!outside_quote.contains(bad), "{bad:?}");
+    }
+    assert_eq!(POINTER.matches('`').count(), 2, "one command, quoted once");
+    assert!(!POINTER.contains("curl"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_claude_directory_is_not_followed_even_inside_the_project() {
+    let f = fx();
+    fs::create_dir_all(f.repo.join("real")).unwrap();
+    fs::write(f.repo.join("real").join("settings.local.json"), "{}").unwrap();
+    std::os::unix::fs::symlink(f.repo.join("real"), f.repo.join(".claude")).unwrap();
+    // followed it would read as "no hooks" and print; not followed it is unknown and says nothing
+    assert_eq!(ask(&f), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_claude_directory_out_of_the_project_is_not_followed() {
+    let f = fx();
+    let out = f._t.join("elsewhere");
+    fs::create_dir_all(&out).unwrap();
+    fs::write(out.join("settings.local.json"), "{}").unwrap();
+    std::os::unix::fs::symlink(&out, f.repo.join("sub").join(".claude")).unwrap();
+    assert_eq!(ask(&f), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_fifo_where_the_settings_file_should_be_is_skipped_without_blocking() {
+    let f = fx();
+    fs::create_dir_all(f.repo.join(".claude")).unwrap();
+    let fifo = f.repo.join(".claude").join("settings.local.json");
+    let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let cwd = f.cwd.clone();
+    let home = f.home.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(no_hooks_pointer(&cwd, Some(&home), false));
+    });
+    let got = rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the scan must not block on a FIFO");
+    assert_eq!(got, None, "cannot tell, so say nothing");
+}
+
+#[test]
+fn a_file_that_grows_past_the_cap_between_check_and_read_is_skipped() {
+    use std::io::Read;
+    // the read itself is capped, not only an earlier size check: a reader that yields more than MAX_BYTES is skipped
+    let big = std::io::repeat(b' ').take(scan::MAX_BYTES * 2);
+    assert_eq!(scan::read_capped(big), None);
+    let ok = std::io::Cursor::new(b"{}".to_vec());
+    assert_eq!(scan::read_capped(ok).as_deref(), Some("{}"));
+    let exact = std::io::repeat(b' ').take(scan::MAX_BYTES);
+    assert!(
+        scan::read_capped(exact).is_some(),
+        "exactly the cap is allowed"
+    );
+    // and it stops reading at the cap (plus one byte to tell), so an endless source cannot exhaust memory or hang
+    struct Counting(std::rc::Rc<std::cell::Cell<u64>>);
+    impl std::io::Read for Counting {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            assert!(self.0.get() <= scan::MAX_BYTES + 1, "read past the cap");
+            buf.fill(b' ');
+            self.0.set(self.0.get() + buf.len() as u64);
+            Ok(buf.len())
+        }
+    }
+    let served = std::rc::Rc::new(std::cell::Cell::new(0));
+    assert_eq!(scan::read_capped(Counting(served.clone())), None);
+    assert!(
+        served.get() <= scan::MAX_BYTES + 1 + 8192 * 2,
+        "{}",
+        served.get()
+    );
+}
