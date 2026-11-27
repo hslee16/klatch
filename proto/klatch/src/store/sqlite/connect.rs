@@ -283,6 +283,8 @@ impl SqliteStore {
             read_only_txn: std::cell::Cell::default(),
             #[cfg(test)]
             fail_rollbacks: std::cell::Cell::default(),
+            #[cfg(test)]
+            fail_summaries: std::cell::Cell::default(),
         })
     }
 }

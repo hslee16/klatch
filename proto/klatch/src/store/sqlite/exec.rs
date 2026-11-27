@@ -240,36 +240,49 @@ impl SqliteStore {
     /// the audit shows that a flood happened and how big it was. Inside a transaction the count waits for the flush.
     pub(super) fn note_throttled(&self, now: i64) {
         self.count_audit_row_dropped();
-        let minute = now - now.rem_euclid(60);
-        if !self.conn.is_autocommit() || self.write_summary(minute, 1).is_err() {
-            *self.throttled.borrow_mut().entry(minute).or_default() += 1;
+        *self
+            .throttled
+            .borrow_mut()
+            .entry(now - now.rem_euclid(60))
+            .or_default() += 1;
+        if self.conn.is_autocommit() {
+            self.flush_throttled();
         }
     }
 
     /// Add `n` to the summary row of the minute starting at `minute`, making it if there is none. The row names no
-    /// key and holds only a count.
+    /// key and holds only a count. One immediate transaction around the update and the insert, so two processes
+    /// cannot both make the row for one minute.
     fn write_summary(&self, minute: i64, n: u64) -> Result<()> {
-        let changed = self.exec(
-            "UPDATE admin_audit SET detail=(CAST(substr(detail,1,instr(detail,' ')-1) AS INTEGER)+?3)||' refusals throttled' \
-             WHERE action=?1 AND ts=?2",
-            params![THROTTLED_ACTION, minute, n as i64],
-        )?;
-        if changed == 0 {
-            self.exec(
-                AUDIT_SQL,
-                params![
-                    minute,
-                    THROTTLED_ACTION,
-                    "",
-                    format!("{n} refusals throttled")
-                ],
-            )?;
+        #[cfg(test)]
+        if self.fail_summaries.get() > 0 {
+            self.fail_summaries.set(self.fail_summaries.get() - 1);
+            return Err(crate::domain::Error::Backend("injected".into()));
         }
-        Ok(())
+        self.immediate(|| {
+            let changed = self.exec(
+                "UPDATE admin_audit SET detail=(CAST(substr(detail,1,instr(detail,' ')-1) AS INTEGER)+?3)||' refusals throttled' \
+                 WHERE action=?1 AND target='' AND ts=?2",
+                params![THROTTLED_ACTION, minute, n as i64],
+            )?;
+            if changed == 0 {
+                self.exec(
+                    AUDIT_SQL,
+                    params![
+                        minute,
+                        THROTTLED_ACTION,
+                        "",
+                        format!("{n} refusals throttled")
+                    ],
+                )?;
+            }
+            Ok(())
+        })
     }
 
     fn flush_throttled(&self) {
-        for (minute, n) in std::mem::take(&mut *self.throttled.borrow_mut()) {
+        let pending = std::mem::take(&mut *self.throttled.borrow_mut());
+        for (minute, n) in pending {
             if self.write_summary(minute, n).is_err() {
                 *self.throttled.borrow_mut().entry(minute).or_default() += n;
             }

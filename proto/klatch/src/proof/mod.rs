@@ -10,12 +10,11 @@
 //! is a person, and it is no defence against a process of the same user that can read the store key and write the
 //! store directly, that watches the keyboard, or that reads the memory of an unlocked process (SECURITY.md).
 //!
-//! Policy keys: `admin-passphrase` (the verifier), `admin-passphrase-fails` (the failure count, `limit`) and
-//! `admin-unlock-secs` (the unlock window, default `DEFAULT_WINDOW_SECS`).
+//! Policy keys: `admin-passphrase` (verifier), `admin-passphrase-fails` (`limit`), `admin-unlock-secs` (window).
 
 pub mod alarm;
 mod filelimit;
-pub(crate) mod limit;
+mod limit;
 mod terminal;
 mod tty;
 mod verifier;
@@ -43,6 +42,7 @@ use crate::store::areas::PolicyStore;
 use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 
+pub(crate) use limit::KEY as FAILS_KEY;
 pub const VERIFIER_KEY: &str = "admin-passphrase";
 pub const WINDOW_KEY: &str = "admin-unlock-secs";
 /// The member name of the person, once proved. Reserved: no member may take it.

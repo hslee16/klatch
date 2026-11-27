@@ -222,7 +222,7 @@ fn the_summary_survives_a_flood_inside_one_transaction() {
 }
 
 #[test]
-fn real_admin_acts_are_never_throttled() {
+fn ordinary_audit_writes_and_notes_are_untouched_by_a_flood() {
     let s = store();
     junk_flood(&s, "admin-unlock-", 300, 8000);
     for action in ["administer", "admin_note", "judge", "renew-credential"] {
@@ -245,4 +245,69 @@ fn real_admin_acts_are_never_throttled() {
     for action in ["administer", "admin_note", "judge", "renew-credential"] {
         assert_eq!(log.iter().filter(|a| a.action == action).count(), 40);
     }
+}
+
+#[test]
+fn a_real_key_then_junk_inside_one_transaction_leaves_every_row() {
+    let s = store();
+    s.atomically(&mut || {
+        assert!(s.policy_set("admin-passphrase", Some("x"), 9000).is_err());
+        junk_flood(&s, "admin-passphrase-", 8, 9001);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(all_refusals(&s), 9, "a real key's row is not the family's");
+    assert!(summaries(&s).is_empty());
+}
+
+#[test]
+fn the_summary_is_stamped_at_the_start_of_the_minute() {
+    let s = store();
+    junk_flood(&s, "admin-unlock-", 8, 12_000 + 5);
+    for sec in [37, 59] {
+        assert!(
+            s.policy_set("admin-unlock-x", Some("x"), 12_000 + sec)
+                .is_err()
+        );
+    }
+    let rows = summaries(&s);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, 12_000);
+    // a negative clock floors too, not truncates
+    assert!(s.policy_set("admin-unlock-neg", Some("x"), -1).is_err());
+    junk_flood(&s, "admin-unlock-n", 9, -1);
+    assert!(
+        summaries(&s).iter().any(|r| r.0 == -60),
+        "{:?}",
+        summaries(&s)
+    );
+}
+
+#[test]
+fn a_transaction_adds_its_whole_count_to_a_summary_that_exists() {
+    let s = store();
+    junk_flood(&s, "admin-unlock-", 10, 13_020);
+    assert_eq!(summaries(&s)[0].2, "2 refusals throttled");
+    s.atomically(&mut || {
+        junk_flood(&s, "admin-unlock-t", 5, 13_050);
+        Ok(())
+    })
+    .unwrap();
+    let rows = summaries(&s);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].2, "7 refusals throttled");
+}
+
+#[test]
+fn a_rolled_back_transaction_still_leaves_its_summary_and_its_refusal_rows() {
+    let s = store();
+    let r = s.atomically(&mut || {
+        junk_flood(&s, "admin-unlock-", 20, 14_040);
+        Err(crate::domain::Error::Invalid("rolled back".into()))
+    });
+    assert!(r.is_err());
+    assert_eq!(all_refusals(&s), 8);
+    let rows = summaries(&s);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].2, "12 refusals throttled");
 }

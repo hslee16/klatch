@@ -59,7 +59,8 @@ pub struct SqliteStore {
     /// with it. Names only, never a value.
     deferred_audit: std::cell::RefCell<Vec<QueuedAudit>>,
     /// Refusal audit rows lost: (#1677) dropped from the full queue, oldest first, each also counted in
-    /// `audit_flush_errors` as a failed row; and (#1701) refusals the throttle left unwritten, counted only here.
+    /// `audit_flush_errors` as a failed row; and (#1701) refusals the throttle left unwritten, which are also in the
+    /// minute's summary row (#1709).
     audit_rows_dropped: std::cell::Cell<u64>,
     /// Refusals the throttle left unwritten that are not yet in their minute's summary row (#1709): minute, count.
     throttled: std::cell::RefCell<std::collections::BTreeMap<i64, u64>>,
@@ -72,6 +73,9 @@ pub struct SqliteStore {
     /// Test hook: how many of the next ROLLBACKs report failure without running.
     #[cfg(test)]
     fail_rollbacks: std::cell::Cell<u32>,
+    /// Test hook: how many of the next summary row writes fail (#1709).
+    #[cfg(test)]
+    fail_summaries: std::cell::Cell<u32>,
 }
 
 /// A refusal audit row waiting for a flush: `(action, target, ts, failed)`; `failed` once a flush of it has failed,

@@ -256,7 +256,7 @@ const FAMILY_CAP: u64 = 8;
 fn is_real_key(key: &str) -> bool {
     [
         crate::proof::VERIFIER_KEY,
-        crate::proof::limit::KEY,
+        crate::proof::FAILS_KEY,
         crate::proof::WINDOW_KEY,
     ]
     .contains(&key)
@@ -290,7 +290,7 @@ impl SqliteStore {
                     now,
                     fam,
                     crate::proof::VERIFIER_KEY,
-                    crate::proof::limit::KEY,
+                    crate::proof::FAILS_KEY,
                     crate::proof::WINDOW_KEY
                 ],
                 |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
