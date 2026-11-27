@@ -52,13 +52,29 @@ pub struct SqliteStore {
     labels: std::cell::RefCell<crate::keys::LabelKeys>,
     /// Claim events (#1386) that could not be recorded: the failure is swallowed so a claim never fails for it.
     claim_record_errors: std::cell::Cell<u64>,
-    /// Audit rows (#1592) that could not be written: counted, and kept queued for the next flush.
+    /// Audit rows (#1592) that could not be written, one per row however many flushes it fails: kept queued.
     audit_flush_errors: std::cell::Cell<u64>,
     /// Audit rows (#1275) of refused writes made inside a transaction, kept as `(action, target, ts)` until the
     /// outermost transaction has closed: a refusal rolls its own transaction back, and a row written inside would go
     /// with it. Names only, never a value.
-    deferred_audit: std::cell::RefCell<Vec<(&'static str, String, i64)>>,
+    deferred_audit: std::cell::RefCell<Vec<QueuedAudit>>,
+    /// Refusal audit rows (#1677) dropped from the full queue, oldest first: lost. Every dropped row was also counted
+    /// in `audit_flush_errors` as a failed row, so the two overlap; this one says how many of those are gone.
+    audit_rows_dropped: std::cell::Cell<u64>,
+    /// ROLLBACKs that failed (#1678): the transaction they should have closed may still be open.
+    rollback_errors: std::cell::Cell<u64>,
+    /// Whether this store opened the transaction now open on the connection (#1678): `immediate` joins only that.
+    owns_txn: std::cell::Cell<bool>,
+    /// Whether that transaction is a `snapshot` (read only): a write inside it is an error.
+    read_only_txn: std::cell::Cell<bool>,
+    /// Test hook: how many of the next ROLLBACKs report failure without running.
+    #[cfg(test)]
+    fail_rollbacks: std::cell::Cell<u32>,
 }
+
+/// A refusal audit row waiting for a flush: `(action, target, ts, failed)`; `failed` once a flush of it has failed,
+/// so a row that fails N flushes is one failure (#1677).
+type QueuedAudit = (&'static str, String, i64, bool);
 
 fn credential_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<crate::store::CredentialRecord> {
     Ok(crate::store::CredentialRecord {
