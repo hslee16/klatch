@@ -95,3 +95,37 @@ fn the_production_null_judge_goes_through_the_seam_unchanged() {
     assert_eq!(out.verdict, Verdict::Defer);
     assert!(out.raw.is_none() && out.error.is_none() && out.cost_usd.is_none());
 }
+
+/// The false-positive bound of the #1413 screen on the benign items of both committed corpora (every split, contested
+/// items out, as in every judge-eval figure), and its miss ceiling. The bound is a ceiling the measured count sits at
+/// or under: a change that stops more benign items, or lets more bad ones through, fails here and must say why.
+/// Measured 2026-11-27: main 2 of 197 benign items stopped, hard 8 of 104; items that should not cross and were not
+/// stopped: main 19 of 134, hard 36 of 166.
+#[test]
+fn the_screen_stops_few_benign_items_and_misses_a_bounded_share_on_both_corpora() {
+    use crate::judge_eval::corpus::{Truth, default_hard_path, default_path, load};
+    let scrub = std::fs::read_to_string(crate::judge_eval::corpus::default_scrub_path()).unwrap();
+    let judge = RulesJudge::new(parse_scrub(&scrub).unwrap());
+    for (path, name, max_fp, benign, max_miss, bad) in [
+        (default_path(), "main", 3, 197, 22, 134),
+        (default_hard_path(), "hard", 10, 104, 40, 166),
+    ] {
+        let (mut fp, mut ok, mut miss, mut should_not) = (0, 0, 0, 0);
+        for (n, item) in load(&path).unwrap().iter().filter(|i| !i.contested).enumerate() {
+            let stopped = matches!(
+                judge.judge(&crate::judge_eval::run::review_item(n, item)),
+                Verdict::Deny(_)
+            );
+            if item.verdict == Truth::Allow {
+                ok += 1;
+                fp += usize::from(stopped);
+            } else {
+                should_not += 1;
+                miss += usize::from(!stopped);
+            }
+        }
+        assert_eq!((ok, should_not), (benign, bad), "{name}: the corpus changed, re-measure");
+        assert!(fp <= max_fp, "{name}: {fp} benign items stopped, bound {max_fp}");
+        assert!(miss <= max_miss, "{name}: {miss} items missed, ceiling {max_miss}");
+    }
+}
