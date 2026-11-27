@@ -3,6 +3,7 @@
 
 use crate::harness::own_records::{read_regular_named, scan_records};
 use crate::harness::process::squash;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,11 +47,14 @@ pub trait Registry {
     }
 }
 
-/// Whether a file name is exactly `<pid>.json`. Nothing else in the registry directory is ever opened: the
+/// Whether a file name is exactly `<pid>.json` with the pid written canonically (no leading zero, so `05000.json` is
+/// never filed under pid 5000 beside `5000.json`, #1692). Nothing else in the registry directory is ever opened: the
 /// `<pid>.<hash>.key` files hold secrets.
 pub fn is_record_file(name: &str) -> bool {
-    name.strip_suffix(".json")
-        .is_some_and(|pid| !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()))
+    name.strip_suffix(".json").is_some_and(|pid| {
+        pid.bytes().all(|b| b.is_ascii_digit())
+            && pid.as_bytes().first().is_some_and(|b| *b != b'0')
+    })
 }
 
 /// The registry directory on disk (Claude Code: `~/.claude/sessions`).
@@ -58,11 +62,20 @@ pub struct FsRegistry {
     pub dir: PathBuf,
 }
 
+impl FsRegistry {
+    /// `records`, with the records of the pids in `alive` (the pids of a readable process table, `None` when there is
+    /// none) read before the others, whatever their age: a forged record for a pid that does not run cannot push a
+    /// record of a running process out of the bound (#1692).
+    pub fn records_alive(&self, alive: Option<&HashSet<u32>>) -> (Vec<Record>, usize) {
+        // through one descriptor opened without following a symlink or blocking on a FIFO, size capped (#1567)
+        scan_records(&self.dir, alive, |name| read_regular_named(&self.dir, name))
+            .unwrap_or((Vec::new(), 0))
+    }
+}
+
 impl Registry for FsRegistry {
     fn records(&self) -> (Vec<Record>, usize) {
-        // through one descriptor opened without following a symlink or blocking on a FIFO, size capped (#1567)
-        scan_records(&self.dir, |name| read_regular_named(&self.dir, name))
-            .unwrap_or((Vec::new(), 0))
+        self.records_alive(None)
     }
 
     fn record_for(&self, pid: u32) -> Option<Record> {

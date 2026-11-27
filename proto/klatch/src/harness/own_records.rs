@@ -4,9 +4,11 @@
 //! nothing can be swapped in between the check and the read. At most `MAX_RECORD_BYTES` are read, and at most
 //! `MAX_ENTRIES` valid records are read in one pass (and at most `MAX_OPENED` files opened). Only names that look like a
 //! record (or a temporary file) are considered, and only a file that parses counts toward the record bound, so junk
-//! cannot starve a real file (#1574, #1662); newest first, a future mtime counting as the oldest.
+//! cannot starve a real file (#1574, #1662); the pids of running processes first when a process table was read, then
+//! newest first, an mtime far in the future counting as the oldest (#1692).
 
 use crate::harness::record::{Record, Registry, is_record_file, parse_record};
+use std::collections::HashSet;
 use std::io::Read;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -46,10 +48,22 @@ fn wanted_names(dir: &Path, wanted: impl Fn(&str) -> bool) -> Option<Vec<String>
     wanted_names_capped(dir, MAX_SCANNED, wanted)
 }
 
-/// The names of `dir` that look like records (`<pid>.json`), most likely live first: the newest by modification time. A
-/// name that cannot be looked at, or whose mtime is in the future (a same-user file can claim any time, #1662), counts
-/// as the oldest; the name breaks a tie so the order is stable. `None` when `dir` cannot be listed.
-fn ordered_record_names(dir: &Path, scanned: usize, keep_all_below: usize) -> Option<Vec<String>> {
+/// How far ahead of now a modification time may be and still be believed: a clock stepped back (NTP) leaves a live
+/// record ahead of the clock by the size of the step. Further ahead than this, a same-user file is claiming any time it
+/// likes (#1662) and counts as the oldest.
+const CLOCK_SKEW: std::time::Duration = std::time::Duration::from_secs(86_400);
+
+/// The names of `dir` that look like records (`<pid>.json`), most likely live first: those whose pid is in `alive` (the
+/// pids of a readable process table; `None` when there is none, which changes nothing), then the newest by modification
+/// time. A name that cannot be looked at, or whose mtime is further in the future than `CLOCK_SKEW`, counts as the
+/// oldest; one a little ahead counts as now. The name breaks a tie so the order is stable. `None` when `dir` cannot be
+/// listed.
+fn ordered_record_names(
+    dir: &Path,
+    scanned: usize,
+    keep_all_below: usize,
+    alive: Option<&HashSet<u32>>,
+) -> Option<Vec<String>> {
     let mut names = wanted_names_capped(dir, scanned, is_record_file)?;
     if names.len() > keep_all_below {
         let now = std::time::SystemTime::now();
@@ -57,9 +71,20 @@ fn ordered_record_names(dir: &Path, scanned: usize, keep_all_below: usize) -> Op
             std::fs::symlink_metadata(dir.join(n))
                 .and_then(|m| m.modified())
                 .ok()
-                .filter(|t| *t <= now)
+                .filter(|t| *t <= now + CLOCK_SKEW)
+                .map(|t| t.min(now))
         };
-        names.sort_by_cached_key(|n| (std::cmp::Reverse(modified(n)), n.clone()));
+        let running = |n: &String| {
+            let pid = n.trim_end_matches(".json").parse::<u32>().ok();
+            alive.is_some_and(|set| pid.is_some_and(|p| set.contains(&p)))
+        };
+        names.sort_by_cached_key(|n| {
+            (
+                std::cmp::Reverse(running(n)),
+                std::cmp::Reverse(modified(n)),
+                n.clone(),
+            )
+        });
     }
     Some(names)
 }
@@ -74,9 +99,10 @@ pub(crate) fn scan_records_with(
     scanned: usize,
     max_records: usize,
     max_opened: usize,
+    alive: Option<&HashSet<u32>>,
     read: impl Fn(&str) -> Option<String>,
 ) -> Option<(Vec<Record>, usize)> {
-    let names = ordered_record_names(dir, scanned, max_records)?;
+    let names = ordered_record_names(dir, scanned, max_records, alive)?;
     let (mut records, mut malformed) = (Vec::new(), 0);
     for name in names.iter().take(max_opened) {
         if records.len() >= max_records {
@@ -95,9 +121,10 @@ pub(crate) fn scan_records_with(
 /// `scan_records_with` under the module bounds.
 pub(crate) fn scan_records(
     dir: &Path,
+    alive: Option<&HashSet<u32>>,
     read: impl Fn(&str) -> Option<String>,
 ) -> Option<(Vec<Record>, usize)> {
-    scan_records_with(dir, MAX_SCANNED, MAX_ENTRIES, MAX_OPENED, read)
+    scan_records_with(dir, MAX_SCANNED, MAX_ENTRIES, MAX_OPENED, alive, read)
 }
 
 /// Whether `meta` is of something this user owns that no one else can write.
@@ -176,8 +203,10 @@ impl Registry for OwnRegistry {
         if !dir_is_ours(&self.dir, self.uid) {
             return (Vec::new(), 0);
         }
-        scan_records(&self.dir, |name| read_named(&self.dir, name, self.uid))
-            .unwrap_or((Vec::new(), 0))
+        scan_records(&self.dir, None, |name| {
+            read_named(&self.dir, name, self.uid)
+        })
+        .unwrap_or((Vec::new(), 0))
     }
 }
 

@@ -5,7 +5,7 @@
 use crate::gateway::{LeaseSource, Observed};
 use crate::harness::Record;
 use crate::harness::{
-    FileMeta, FsRegistry, Host, ProcRow, PsTable, Registry, SysHost, Thresholds, Turn, probe,
+    FileMeta, FsRegistry, Host, ProcRow, PsTable, SysHost, Thresholds, Turn, probe,
 };
 use std::path::Path;
 
@@ -53,9 +53,16 @@ impl Host for AtTime<'_> {
     }
 }
 
+impl SysLeaseSource {
+    /// The pids in a readable process table; `None` when it cannot be read (the listing is then ranked by age alone).
+    fn alive(&self) -> Option<std::collections::HashSet<u32>> {
+        Some(self.host.procs()?.iter().map(|p| p.pid).collect())
+    }
+}
+
 impl LeaseSource for SysLeaseSource {
     fn observe(&self, _member: &str, session_id: &str, now_ms: u64) -> Option<Observed> {
-        let (records, _) = self.registry.records();
+        let (records, _) = self.registry.records_alive(self.alive().as_ref());
         let rec = records.into_iter().find(|r| r.session_id == session_id)?;
         let host = AtTime {
             inner: &self.host,
@@ -123,5 +130,40 @@ mod tests {
             .observe("m", "sess-1", 5_000)
             .unwrap();
         assert_eq!(seen.verdict, Verdict::Gone);
+    }
+}
+
+#[cfg(test)]
+mod forged_tests {
+    use super::*;
+    use crate::harness::ProcessTable;
+
+    #[test]
+    fn forged_records_for_pids_that_do_not_run_do_not_hide_a_running_session() {
+        let h = crate::store::test_dir::TestDir::new("syslease-forged");
+        let dir = h.join(".claude/sessions");
+        std::fs::create_dir_all(&dir).unwrap();
+        let pid = std::process::id();
+        let start = crate::harness::PsTable.info(pid).unwrap().start_utc;
+        let rec = |pid: u32, session: &str, start: &str| {
+            format!(
+                r#"{{"pid":{pid},"sessionId":"{session}","cwd":"/w","procStart":"{start}","pidDomain":"x"}}"#
+            )
+        };
+        let real = dir.join(format!("{pid}.json"));
+        std::fs::write(&real, rec(pid, "real", &start)).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&real)
+            .unwrap()
+            .set_modified(
+                std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 86_400),
+            )
+            .unwrap();
+        for forged in 4_000_000..4_000_000 + 300u32 {
+            std::fs::write(dir.join(format!("{forged}.json")), rec(forged, "fake", "t")).unwrap();
+        }
+        let seen = SysLeaseSource::under_home(&h).observe("m", "real", 5_000);
+        assert!(seen.is_some(), "the running session was hidden");
     }
 }

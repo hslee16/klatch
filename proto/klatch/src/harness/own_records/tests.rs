@@ -357,7 +357,7 @@ fn junk_with_a_future_mtime_does_not_hide_a_valid_record() {
     std::fs::write(d.join("5000.json"), record_text(5000)).unwrap();
     let year = std::time::SystemTime::now() + Duration::from_secs(365 * 86_400);
     for i in 0..MAX_ENTRIES {
-        let f = d.join(format!("{i}.json"));
+        let f = d.join(format!("{}.json", i + 1));
         std::fs::write(&f, "junk").unwrap();
         set_mtime(&f, year);
     }
@@ -390,9 +390,9 @@ fn a_listing_looks_at_no_more_than_the_scan_bound_of_entries() {
         std::fs::write(d.join(format!("{pid}.json")), record_text(pid)).unwrap();
     }
     let read = |n: &str| read_named(&d, n, me());
-    let (records, malformed) = scan_records_with(&d, 3, 256, 4096, read).unwrap();
+    let (records, malformed) = scan_records_with(&d, 3, 256, 4096, None, read).unwrap();
     assert_eq!(records.len() + malformed, 3);
-    let (records, _) = scan_records_with(&d, 10, 256, 4096, read).unwrap();
+    let (records, _) = scan_records_with(&d, 10, 256, 4096, None, read).unwrap();
     assert_eq!(records.len(), 10);
 }
 
@@ -405,7 +405,7 @@ fn a_listing_opens_no_more_than_the_open_bound_of_files() {
     }
     let read = |n: &str| read_named(&d, n, me());
     assert_eq!(
-        scan_records_with(&d, 100, 256, 5, read).unwrap(),
+        scan_records_with(&d, 100, 256, 5, None, read).unwrap(),
         (vec![], 5)
     );
 }
@@ -469,4 +469,104 @@ fn a_name_swapped_to_a_symlink_while_it_is_read_never_gives_the_text_behind_the_
         leaked, 0,
         "the text behind a swapped-in symlink was believed ({reads} reads)"
     );
+}
+
+fn aged_record(d: &Path, pid: usize, secs: u64) {
+    let f = d.join(format!("{pid}.json"));
+    std::fs::write(&f, record_text(pid)).unwrap();
+    set_mtime(&f, std::time::SystemTime::now() - Duration::from_secs(secs));
+}
+
+#[test]
+fn forged_parseable_records_for_pids_that_do_not_run_do_not_hide_a_running_one() {
+    let d = dir("forged");
+    mode(&d, 0o700);
+    aged_record(&d, 5000, 30 * 86_400);
+    for pid in 100_000..100_000 + MAX_ENTRIES + 44 {
+        aged_record(&d, pid, 1);
+    }
+    let alive: HashSet<u32> = [5000].into();
+    let read = |n: &str| read_named(&d, n, me());
+    let (with, _) = scan_records_with(&d, 1 << 16, MAX_ENTRIES, 4096, Some(&alive), read).unwrap();
+    assert!(
+        with.iter().any(|r| r.pid == 5000),
+        "the running one is read"
+    );
+    assert_eq!(with.len(), MAX_ENTRIES);
+    // a table that could not be read changes nothing: the order is by age alone
+    let (without, _) = scan_records_with(&d, 1 << 16, MAX_ENTRIES, 4096, None, read).unwrap();
+    assert!(!without.iter().any(|r| r.pid == 5000));
+}
+
+#[test]
+fn a_record_a_little_in_the_future_is_not_ranked_oldest() {
+    let d = dir("skew");
+    mode(&d, 0o700);
+    for pid in 100..100 + MAX_ENTRIES + 10 {
+        aged_record(&d, pid, 86_400);
+    }
+    let f = d.join("5000.json");
+    std::fs::write(&f, record_text(5000)).unwrap();
+    set_mtime(&f, std::time::SystemTime::now() + Duration::from_secs(3600));
+    assert!(own(&d).records().0.iter().any(|r| r.pid == 5000));
+}
+
+#[test]
+fn a_record_far_in_the_future_is_still_ranked_oldest() {
+    let d = dir("far-future");
+    mode(&d, 0o700);
+    for pid in 100..100 + MAX_ENTRIES + 10 {
+        aged_record(&d, pid, 86_400);
+    }
+    let f = d.join("5000.json");
+    std::fs::write(&f, record_text(5000)).unwrap();
+    set_mtime(
+        &f,
+        std::time::SystemTime::now() + Duration::from_secs(365 * 86_400),
+    );
+    assert!(!own(&d).records().0.iter().any(|r| r.pid == 5000));
+}
+
+#[test]
+fn only_canonical_names_are_records_so_one_pid_has_one_record() {
+    for not in ["05000.json", "0.json", "00.json", "007.json"] {
+        assert!(!crate::harness::record::is_record_file(not), "{not}");
+    }
+    assert!(crate::harness::record::is_record_file("5000.json"));
+    let d = dir("canonical");
+    mode(&d, 0o700);
+    std::fs::write(d.join("5000.json"), record_text(5000)).unwrap();
+    std::fs::write(d.join("05000.json"), record_text(5000)).unwrap();
+    let (records, malformed) = own(&d).records();
+    assert_eq!((records.len(), malformed), (1, 0));
+}
+
+#[test]
+fn many_future_junk_files_do_not_use_up_the_open_bound() {
+    let d = dir("future-many");
+    mode(&d, 0o700);
+    aged_record(&d, 5000, 30 * 86_400);
+    let year = std::time::SystemTime::now() + Duration::from_secs(365 * 86_400);
+    for i in 0..MAX_OPENED + 50 {
+        let f = d.join(format!("{}.json", 100_000 + i));
+        std::fs::write(&f, "junk").unwrap();
+        set_mtime(&f, year);
+    }
+    assert!(own(&d).records().0.iter().any(|r| r.pid == 5000));
+}
+
+#[test]
+fn a_listing_under_the_module_bounds_opens_at_most_the_open_bound() {
+    let d = dir("module-open");
+    mode(&d, 0o700);
+    for i in 0..MAX_OPENED + 100 {
+        std::fs::write(d.join(format!("{}.json", 100_000 + i)), "junk").unwrap();
+    }
+    let opened = std::cell::Cell::new(0usize);
+    let (_, malformed) = scan_records(&d, None, |n| {
+        opened.set(opened.get() + 1);
+        read_named(&d, n, me())
+    })
+    .unwrap();
+    assert_eq!((opened.get(), malformed), (MAX_OPENED, MAX_OPENED));
 }
