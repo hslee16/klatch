@@ -9,6 +9,7 @@
 # OPTIONS are the ones the receiver was started with (they are handed to `gh-watch ensure` as they are):
 #   --klatch-bin PATH --as-member NAME --room NAME   required: the claim is read with `klatch claims ROOM`
 #   --out-dir DIR (default $GH_WATCH_DIR or ~/.local/state/klatch-gh-watch)  --port N (default 8787)  --secret-file FILE
+#   --post-min INFO|ALERT  --claim-ttl S  --claim-renew S  --no-claim   (the receiver's own options, handed to ensure too)
 # KLATCH_HOME must name the isolated status store (the receiver's own), never ~/.klatch: unset or a path with a .klatch
 # component (case-folded, symlinks resolved) is refused with exit 2 and nothing is run.
 #
@@ -43,6 +44,15 @@
 # Log: one fixed-template line per change of state (never per pass) appended to OUT_DIR/gh-watch.log (TIME INFO|ALERT text,
 # the file the session Monitor already tails) and printed. No claim, room, webhook or stuck text is ever logged or run:
 # only the numbers it counted itself. State (restart times, flags) is in GHWS_STATE (default OUT_DIR/supervisor).
+# Trust: the holder match is NOT a security boundary. KLATCH_NAME is free text and the recorded holder (MEMBER.PID) is visible
+# to every member of the store, so a member of the same store can claim watch:gh under that exact name after a clean stop
+# and make the supervisor run `ensure` (at most GHWS_MAX_RESTARTS times per GHWS_WINDOW_SECS, then the loop exits 3 and
+# supervision stops). That is all it can do: nothing beyond `ensure` (no kill, no credential, no forwarder). Run it on a store
+# whose members you trust. The pid file is checked against the process command line (it must name gh-watch-receiver), so a
+# reused pid is not taken for the receiver; the lock holder must name this script, so a reused pid does not block supervision.
+# SIGINT is ignored by a background job started with & from a non-interactive shell; stop it with TERM (or HUP).
+# Files: the state dir and out dir must be owned by you (else exit 1) and are set to mode 700; a state dir that is a symlink
+# is refused. A backward clock jump drops restart times and a backoff dated after now.
 # Test knobs: GHWS_NOW_FILE (a file holding the clock as epoch seconds; passes then never sleep), GHWS_MAX_TICKS (stop the
 # loop after that many passes), GHWS_GH_WATCH (the gh-watch to run). Other settings: GHWS_POLL_SECS (default 15).
 set -uo pipefail
@@ -51,17 +61,20 @@ here="$(cd "$(dirname "$0")" && pwd)"
 usage() { sed -n '2,/^set -uo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; echo; echo "Usage: gh-watch-supervise [--once] --klatch-bin PATH --as-member NAME --room NAME [--out-dir DIR] [--port N] [--secret-file FILE]"; }
 die() { echo "gh-watch-supervise: $*" >&2; exit "${2:-1}"; }
 
+stopping=0 # set by the INT, TERM and HUP trap of the loop: a stop in progress is not a failure to report
 once=0 out_dir="${GH_WATCH_DIR:-${XDG_STATE_HOME:-${HOME:?}/.local/state}/klatch-gh-watch}" port=8787 secret_file=""
-klatch_bin="" member="" room=""
+klatch_bin="" member="" room="" post_min="" claim_ttl="" claim_renew="" no_claim=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help) usage; exit 0 ;;
     --once) once=1; shift ;;
-    --out-dir | --port | --secret-file | --klatch-bin | --as-member | --room)
+    --no-claim) no_claim=1; shift ;;
+    --out-dir | --port | --secret-file | --klatch-bin | --as-member | --room | --post-min | --claim-ttl | --claim-renew)
       [ $# -ge 2 ] || die "$1 needs a value"
       case "$1" in
         --out-dir) out_dir="$2" ;; --port) port="$2" ;; --secret-file) secret_file="$2" ;;
         --klatch-bin) klatch_bin="$2" ;; --as-member) member="$2" ;; --room) room="$2" ;;
+        --post-min) post_min="$2" ;; --claim-ttl) claim_ttl="$2" ;; --claim-renew) claim_renew="$2" ;;
       esac
       shift 2 ;;
     *) die "unknown argument $1 (Usage: gh-watch-supervise [--once] --klatch-bin PATH --as-member NAME --room NAME [--out-dir DIR])" ;;
@@ -72,6 +85,8 @@ done
 name_re='^[A-Za-z0-9._-]{1,40}$'
 [[ $member =~ $name_re ]] && [[ $room =~ $name_re ]] || die "--as-member and --room must be plain names (letters, digits, dot, dash, underscore)"
 case "$port" in '' | *[!0-9]*) die "--port must be a number" ;; esac
+case "$post_min" in '' | INFO | ALERT) ;; *) die "--post-min must be INFO or ALERT" ;; esac
+for v in "$claim_ttl" "$claim_renew"; do case "$v" in *[!0-9]*) die "--claim-ttl and --claim-renew must be numbers" ;; esac; done
 case "$out_dir/" in */.klatch/*) die "--out-dir must not be inside .klatch (never the live store)" ;; esac
 
 gh_watch="${GHWS_GH_WATCH:-$here/gh-watch}"
@@ -109,7 +124,14 @@ home_ok || die "KLATCH_HOME is unset or inside .klatch (the status room is an is
 # klatch claims would CREATE a store in a missing home: only read a store that is already there
 [ -f "$KLATCH_HOME/rooms.db" ] || die "KLATCH_HOME has no rooms.db: not reading it (klatch would create a store there); point it at the factory store's home" 2
 
+[ ! -L "$state" ] || die "the state dir $state is a symlink: refusing to write through it"
 (umask 077; mkdir -p "$out_dir" "$state") || die "cannot create $out_dir or $state"
+# mkdir -p under umask 077 does not fix an existing dir: it must be ours and closed to others (a planted file or symlink in
+# a dir others can write would be followed by every state write)
+for d in "$out_dir" "$state"; do
+  [ "$(stat -f %u "$d" 2> /dev/null || stat -c %u "$d" 2> /dev/null)" = "$(id -u)" ] || die "$d is not owned by you: refusing to use it"
+  chmod 700 "$d" 2> /dev/null || die "cannot set $d to mode 700"
+done
 log_file="$out_dir/gh-watch.log"
 
 now_s() { if [ -n "${GHWS_NOW_FILE:-}" ]; then cat "$GHWS_NOW_FILE"; else date +%s; fi; }
@@ -126,18 +148,33 @@ note() { # key severity text: written when the key differs from the last one wri
 }
 flag() { [ -e "$state/$1" ]; }
 
-# one supervisor at a time per state dir: a symlink named lock whose target is the pid (made and read atomically).
-# A dead holder's lock is moved aside (a rename, so only one cleaner wins) and taken again.
-lock="$state/lock"
+# one supervisor at a time per state dir: a symlink named lock whose target is the pid (made and read atomically). The holder
+# counts only while it is alive AND its command line names this script (a reused pid does not block supervision forever).
+# A stale lock is judged and replaced by one process at a time, under a gate made with mkdir (atomic), so two cleaners can
+# never both win: the lock only changes hands inside the gate or when it is absent (ln -s is atomic).
+lock="$state/lock" lock_gate="$state/lock.gate" self_name="$(basename "$0")"
+lock_holder_live() { # pid
+  local c
+  case "$1" in '' | *[!0-9]*) return 1 ;; esac
+  kill -0 "$1" 2> /dev/null || return 1
+  c="$(ps -p "$1" -o command= 2> /dev/null)"
+  [[ $c == *"$self_name"* ]]
+}
 take_lock() {
-  local p tries=0
-  while ! ln -s "$$" "$lock" 2> /dev/null; do
-    p="$(readlink "$lock" 2> /dev/null)"
-    case "$p" in '' | *[!0-9]*) ;; *) kill -0 "$p" 2> /dev/null && return 1 ;; esac
-    tries=$((tries + 1)); [ "$tries" -le 3 ] || return 1
-    mv "$lock" "$lock.stale.$$" 2> /dev/null && rm -f "$lock.stale.$$"
+  local tries=0 rc=0
+  ln -s "$$" "$lock" 2> /dev/null && return 0
+  lock_holder_live "$(readlink "$lock" 2> /dev/null)" && return 1
+  while ! mkdir "$lock_gate" 2> /dev/null; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 20 ]; then # a gate left by a killed cleaner: older than a minute is dropped, and this pass gives up
+      find "$lock_gate" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2> /dev/null
+      return 1
+    fi
+    /bin/sleep 0.1
   done
-  return 0
+  if lock_holder_live "$(readlink "$lock" 2> /dev/null)"; then rc=1; else rm -f "$lock"; ln -s "$$" "$lock" 2> /dev/null || rc=1; fi
+  rmdir "$lock_gate" 2> /dev/null
+  return "$rc"
 }
 # shellcheck disable=SC2329 # called from traps
 release_lock() { [ "$(readlink "$lock" 2> /dev/null)" = "$$" ] && rm -f "$lock"; return 0; }
@@ -154,6 +191,7 @@ kcall() {
   ( /bin/sleep "$ktimeout"; : > "$state/ktimeout"; kill_tree "$cp" ) > /dev/null 2>&1 &
   wd=$!
   wait "$cp" 2> /dev/null; rc=$?
+  [ "$stopping" -eq 0 ] || kill_tree "$cp" # a stop arrived during the call: do not leave klatch running
   # the watchdog first (its sleep ending must not run the kill), then its sleep
   wc="$(pgrep -P "$wd" 2> /dev/null)"; kill -9 "$wd" 2> /dev/null; for wk in $wc; do kill -9 "$wk" 2> /dev/null; done
   wait "$wd" 2> /dev/null
@@ -162,11 +200,16 @@ kcall() {
   [ "$rc" -eq 0 ]
 }
 
-pid_of_receiver() { # the receiver pid when it is alive; empty otherwise
-  local p
+# the receiver pid when it is alive AND its command line names gh-watch-receiver (a stale pid file whose pid was reused by
+# another process is not the receiver); empty otherwise
+recmd="${GHWS_RECEIVER_CMD:-gh-watch-receiver}"
+pid_of_receiver() {
+  local p c
   p="$(head -n 1 "$out_dir/gh-watch.pid" 2> /dev/null)"
   case "$p" in '' | *[!0-9]*) return 0 ;; esac
-  kill -0 "$p" 2> /dev/null && printf '%s' "$p"
+  kill -0 "$p" 2> /dev/null || return 0
+  c="$(ps -p "$p" -o command= 2> /dev/null)"
+  [[ $c == *"$recmd"* ]] && printf '%s' "$p"
   return 0
 }
 
@@ -176,8 +219,7 @@ is_ours() { # holder: the one recorded while our receiver was alive; with none r
   local rec re
   rec="$(cat "$state/holder" 2> /dev/null)"
   if [ -n "$rec" ]; then [ "$1" = "$rec" ]; return; fi
-  re="^${member:0:30}\\.[0-9]+\$"
-  [[ $1 =~ $re ]]
+  [[ $1 == "${member:0:30}".* ]] && [[ ${1#"${member:0:30}".} =~ ^[0-9]+$ ]]
 }
 
 # sets cstate: held (the watch:gh claim is held, cholder is its holder), none (absent or lapsed), err, timeout
@@ -199,7 +241,9 @@ read_claim() {
 stuck_lapse() {
   local line rc=0 re="lapsed_claim room $room claim watch:gh holder ([^ ]+) lapsed ([0-9]+)s"
   kcall stuck "$room" || rc=$?
-  if [ "$rc" -eq 124 ]; then note "timeout" ALERT "klatch call timed out after $ktimeout s, not restarting"; return 1; fi
+  if [ "$rc" -eq 124 ]; then
+    [ "$stopping" -eq 0 ] || return 2
+    note "timeout" ALERT "klatch call timed out after $ktimeout s, not restarting"; return 2; fi
   [ "$rc" -eq 0 ] || return 1
   while IFS= read -r line; do
     if [[ $line =~ $re ]] && [ "${BASH_REMATCH[2]}" -le "$lapse_max" ] && is_ours "${BASH_REMATCH[1]}"; then return 0; fi
@@ -222,8 +266,9 @@ crash_fresh() { # now
 restarts_in_window() { # now: prune attempts older than the window, print how many are left
   local now="$1" t keep=""
   [ -f "$state/restarts" ] || : > "$state/restarts"
+  # a time after now means the clock went back: it is dropped, not counted against the limit
   while IFS= read -r t; do
-    [ -n "$t" ] && [ $((now - t)) -lt "$window" ] && keep="$keep$t"$'\n'
+    [[ $t =~ ^[0-9]+$ ]] && [ "$t" -le "$now" ] && [ $((now - t)) -lt "$window" ] && keep="$keep$t"$'\n'
   done < "$state/restarts"
   printf '%s' "$keep" > "$state/restarts"
   printf '%s' "$keep" | grep -c '' | tr -d ' '
@@ -243,6 +288,8 @@ restart() {
   local now="$1" n next delay rc=0 i rp
   n="$(restarts_in_window "$now")"
   next="$(cat "$state/next-ok" 2> /dev/null || echo 0)"
+  [[ $next =~ ^[0-9]+$ ]] || next=0
+  [ "$next" -le $((now + 600)) ] || next=0 # no wait is longer than 600 s: a later time is from before a clock jump back
   if [ "$now" -lt "$next" ]; then
     note "backoff" INFO "receiver is down and the watch:gh claim lapsed, waiting out the backoff before the next ensure"
     return 0
@@ -261,6 +308,10 @@ restart() {
   say INFO "claim lapsed and receiver pid dead, running gh-watch ensure (attempt $n of $max_restarts in the last $window s)"
   local -a eargs=(ensure --out-dir "$out_dir" --port "$port" --klatch-bin "$klatch_bin" --as-member "$member" --room "$room")
   [ -z "$secret_file" ] || eargs+=(--secret-file "$secret_file")
+  [ -z "$post_min" ] || eargs+=(--post-min "$post_min")
+  [ -z "$claim_ttl" ] || eargs+=(--claim-ttl "$claim_ttl")
+  [ -z "$claim_renew" ] || eargs+=(--claim-renew "$claim_renew")
+  [ "$no_claim" -eq 0 ] || eargs+=(--no-claim)
   detached "$gh_watch" "${eargs[@]}" < /dev/null > /dev/null 2>&1 || rc=$?
   rp="$(pid_of_receiver)"
   [ -z "$rp" ] || holder_for "$rp" > "$state/holder"
@@ -274,10 +325,11 @@ restart() {
 }
 
 tick() {
-  local now pid
+  local now pid lrc
   now="$(now_s)"
   if [ -e "$off_file" ]; then note "off" INFO "off file present, no restart"; return 0; fi
   read_claim
+  [ "$stopping" -eq 0 ] || return 0 # a stop during the call is a clean shutdown, not an unreadable claim
   case "$cstate" in
     err) note "unreadable" ALERT "claim state unreadable, not restarting"; return 0 ;;
     timeout) note "timeout" ALERT "klatch call timed out after $ktimeout s, not restarting"; return 0 ;;
@@ -307,7 +359,11 @@ tick() {
     fi
     return 0
   fi
-  if ! crash_fresh "$now" && stuck_lapse; then set_crash "$now"; fi
+  if ! crash_fresh "$now"; then
+    lrc=0; stuck_lapse || lrc=$?
+    [ "$lrc" -ne 2 ] || return 0 # klatch stuck hung: already reported once; not "no lapse seen" on top of it
+    [ "$lrc" -ne 0 ] || set_crash "$now"
+  fi
   if crash_fresh "$now"; then restart "$now"; return $?; fi
   note "no-lapse" INFO "receiver is down but no lapse of our claim was seen (a clean stop, or it never ran); not restarting"
   return 0
@@ -320,7 +376,6 @@ if [ "$once" -eq 1 ]; then
 fi
 
 take_lock || die "another supervisor is running on $state (pid $(readlink "$lock" 2> /dev/null))"
-stopping=0
 trap release_lock EXIT
 trap 'stopping=1' INT TERM HUP
 # a new run starts without old evidence; the claim and the pid decide again

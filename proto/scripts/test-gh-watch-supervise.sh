@@ -49,6 +49,7 @@ newworld() {
   export FAKE_DIR="$fake" FAKE_ALIVE="$alive" KLATCH_HOME="$work/factory-home" GHWS_NOW_FILE="$fake/now" GHWS_GH_WATCH="$bin/gh-watch"
   export GHWS_OFF_FILE="$work/off" GHWS_POLL_SECS=1 GHWS_MAX_RESTARTS=3 GHWS_WINDOW_SECS=3600 GHWS_BACKOFF_SECS=60 GHWS_EVIDENCE_SECS=180 GHWS_KLATCH_TIMEOUT_SECS=10
   unset GHWS_MAX_TICKS FAKE_ENSURE_RC GHWS_STATE
+  export GHWS_RECEIVER_CMD=test-gh-watch-supervise # the fake receiver pid is this shell, whose command line names this file
   rm -f "$work/off"
 }
 pid_alive() { echo "$alive" > "$od/gh-watch.pid"; }
@@ -274,5 +275,98 @@ if [ "$rc" -eq 0 ] && [ "$(ensures)" -eq 1 ]; then ok "loop mode runs the bounde
 newworld; pid_dead; claim_none; touch "$fake/ensure-fails"; printf 'lapsed_claim room factory-status claim watch:gh holder ghwatch.4242 lapsed 5s\n' > "$fake/stuck.txt"
 rc=0; GHWS_BACKOFF_SECS=0 GHWS_MAX_RESTARTS=1 GHWS_MAX_TICKS=50 "$sup" "${args[@]}" > "$fake/out" 2>&1 || rc=$?
 if [ "$rc" -eq 3 ] && [ "$(ensures)" -eq 1 ]; then ok "loop mode stops with exit 3 when the restart limit is reached"; else bad "loop limit: rc=$rc ensures=$(ensures)"; fi
+
+# ---- #1609 and #1611 review findings ----
+# a process that looks like a receiver (its command line names gh-watch-receiver) and one that looks like a supervisor
+printf '#!/bin/sh\n/bin/sleep 60\n' > "$bin/gh-watch-receiver.py"; chmod +x "$bin/gh-watch-receiver.py"
+printf '#!/bin/sh\n/bin/sleep 60\n' > "$bin/gh-watch-supervise-holder"; chmod +x "$bin/gh-watch-supervise-holder"
+holders=()
+start_holder() { sh "$bin/$1" & holders+=("$!"); held_pid=$!; }
+stop_holders() { local h; for h in ${holders[@]+"${holders[@]}"}; do kill -9 "$h" 2> /dev/null; wait "$h" 2> /dev/null; done; holders=(); }
+trap 'stop_holders; cleanup' EXIT
+stuck_ours='lapsed_claim room factory-status claim watch:gh holder ghwatch.4242 lapsed 5s'
+
+# pid reuse: a pid file naming a live process that is not the receiver is not a receiver
+newworld; unset GHWS_RECEIVER_CMD; pid_alive; claim_none; printf '%s\n' "$stuck_ours" > "$fake/stuck.txt"; tick
+if [ "$(ensures)" -eq 1 ]; then ok "a pid file naming a live process that is not the receiver (a reused pid) counts as dead"; else bad "reused pid: ensures=$(ensures) $(log)"; fi
+newworld; unset GHWS_RECEIVER_CMD; start_holder gh-watch-receiver.py; echo "$held_pid" > "$od/gh-watch.pid"; claim_live 60 "$held_pid"; tick; claim_none
+printf '%s\n' "$stuck_ours" > "$fake/stuck.txt"; tick
+if [ "$(ensures)" -eq 0 ] && log_has 'receiver pid is alive but the watch:gh claim lapsed'; then ok "a live process whose command is gh-watch-receiver is the receiver (no restart on a lapsed claim: a hung receiver)"; else bad "real receiver pid: ensures=$(ensures) $(log)"; fi
+stop_holders
+
+# ensure gets every receiver option
+newworld; pid_dead; claim_none; printf '%s\n' "$stuck_ours" > "$fake/stuck.txt"
+"$sup" --once "${args[@]}" --post-min ALERT --claim-ttl 60 --claim-renew 20 --no-claim > "$fake/out" 2>&1
+ea="$(grep '^gh-watch ensure' "$fake/calls.log")"
+if grep -q -- '--post-min ALERT' <<< "$ea" && grep -q -- '--claim-ttl 60' <<< "$ea" && grep -q -- '--claim-renew 20' <<< "$ea" && grep -q -- '--no-claim' <<< "$ea"; then ok "ensure gets --post-min, --claim-ttl, --claim-renew and --no-claim too (a restarted receiver keeps its options)"; else bad "ensure options: $ea"; fi
+newworld; rc=0; "$sup" --once "${args[@]}" --post-min LOUD > "$fake/out" 2>&1 || rc=$?
+if [ "$rc" -eq 1 ]; then ok "a --post-min that is not INFO or ALERT is refused"; else bad "bad post-min rc=$rc"; fi
+
+# the holder record is written after ensure (mutant M8 deleted it)
+newworld; pid_dead; claim_none; printf '%s\n' "$stuck_ours" > "$fake/stuck.txt"; tick
+if [ "$(cat "$st/holder" 2> /dev/null)" = "ghwatch.$alive" ]; then ok "after ensure the receiver's holder name is recorded in the state dir"; else bad "holder record: '$(cat "$st/holder" 2> /dev/null)'"; fi
+
+# a backward clock jump: entries dated in the future must not hold the supervisor at the limit or in backoff
+newworld; pid_dead; claim_none; printf '%s\n' "$stuck_ours" > "$fake/stuck.txt"; mkdir -p "$st"
+printf '200000\n200001\n200002\n' > "$st/restarts"; echo 200500 > "$st/next-ok"; tick
+if [ "$(ensures)" -eq 1 ]; then ok "restart times and a backoff dated after now (the clock went back) are dropped, not counted"; else bad "future entries: ensures=$(ensures) $(log)"; fi
+
+# state dir mode, owner and symlinks
+newworld; mkdir -p "$od/supervisor"; chmod 755 "$od" "$od/supervisor"; pid_alive; claim_live 60; tick
+modes="$(stat -f %Lp "$od" 2> /dev/null || stat -c %a "$od")/$(stat -f %Lp "$od/supervisor" 2> /dev/null || stat -c %a "$od/supervisor")"
+if [ "$modes" = "700/700" ]; then ok "an existing out dir and state dir are set to mode 700"; else bad "modes $modes"; fi
+newworld; mkdir -p "$work/real-state"; ln -sfn "$work/real-state" "$work/link-state"; rc=0; GHWS_STATE="$work/link-state" tick || rc=$?
+if [ "$rc" -ne 0 ] && [ ! -s "$fake/calls.log" ] && grep -q 'symlink' "$fake/out"; then ok "a state dir that is a symlink is refused, nothing run"; else bad "symlink state rc=$rc $(cat "$fake/out")"; fi
+
+# a hung klatch ALERTs once, not an ALERT and an INFO on every pass
+newworld; pid_dead; claim_none; touch "$fake/stuck-hang"; export GHWS_KLATCH_TIMEOUT_SECS=1
+tick; tick; tick
+if [ "$(log | grep -c 'timed out')" -eq 1 ] && ! log_has 'INFO watcher supervisor: receiver is down but no lapse'; then ok "a klatch stuck that keeps hanging logs one ALERT, with no INFO flapping in between"; else bad "flapping: $(log)"; fi
+export GHWS_KLATCH_TIMEOUT_SECS=10
+
+# the dot in the member name is a dot
+dargs=(--out-dir "$od" --port 18787 --klatch-bin "$bin/klatch" --as-member gh.watch --room factory-status)
+newworld; pid_dead; claim_by 'ghXwatch.5' 60; "$sup" --once "${dargs[@]}" > "$fake/out" 2>&1
+if log_has 'held by another holder'; then ok "with no holder recorded, a name that differs from the member only where the member has a dot is not ours"; else bad "dot regex: $(log)"; fi
+newworld; pid_dead; claim_by 'gh.watch.5' 60; "$sup" --once "${dargs[@]}" > "$fake/out" 2>&1
+if log_has 'waiting for the watch:gh claim to lapse'; then ok "(control) the member name with its dot and a pid is ours"; else bad "dot control: $(log)"; fi
+
+# a lock that names a live pid which is not a supervisor is stale (a reused pid must not block supervision forever)
+newworld; mkdir -p "$st"; /bin/sleep 60 & sp=$!; holders+=("$sp"); ln -s "$sp" "$st/lock"; pid_dead; claim_none
+tick
+if grep -q '^klatch claims' "$fake/calls.log"; then ok "a lock naming a live process that is not a supervisor is taken over"; else bad "reused lock pid blocks: $(cat "$fake/out")"; fi
+newworld; mkdir -p "$st"; start_holder gh-watch-supervise-holder; ln -s "$held_pid" "$st/lock"; pid_dead; claim_none
+tick
+if ! grep -q '^klatch' "$fake/calls.log"; then ok "(control) a lock naming a live supervisor is respected"; else bad "live supervisor lock taken"; fi
+stop_holders
+
+# a lock takeover is atomic: twelve loops started together against a stale lock leave exactly one running
+real_clock() { unset GHWS_NOW_FILE; export GHWS_POLL_SECS=30; }
+round=1; race_bad=""
+while [ "$round" -le 3 ]; do
+  newworld; real_clock; pid_dead; claim_none; mkdir -p "$st"; ln -s "$dead" "$st/lock"
+  pids=(); i=0
+  while [ "$i" -lt 12 ]; do "$sup" "${args[@]}" > "$fake/out.$i" 2>&1 & pids+=("$!"); i=$((i + 1)); done
+  /bin/sleep 3
+  running=0; for h in "${pids[@]}"; do kill -0 "$h" 2> /dev/null && running=$((running + 1)); done
+  for h in "${pids[@]}"; do kill -9 "$h" 2> /dev/null; done; wait 2> /dev/null
+  [ "$running" -eq 1 ] || race_bad="$race_bad round$round=$running"
+  round=$((round + 1))
+done
+if [ -z "$race_bad" ]; then ok "twelve loops racing for a stale lock: exactly one runs, in each of three rounds"; else bad "lock race:$race_bad"; fi
+
+# loop mode under the real clock: the pass runs, and a TERM during the poll wait ends it within seconds (the one-second slices)
+newworld; real_clock; pid_alive; claim_live 60
+"$sup" "${args[@]}" > "$fake/out" 2>&1 & lp=$!
+n=0; while [ "$n" -lt 50 ] && ! grep -q '^klatch claims' "$fake/calls.log"; do /bin/sleep 0.1; n=$((n + 1)); done
+t0=$SECONDS; kill -TERM "$lp"; wait "$lp" 2> /dev/null; rc=$?; took=$((SECONDS - t0))
+if [ "$rc" -eq 0 ] && [ "$took" -le 3 ] && [ ! -L "$st/lock" ]; then ok "loop mode, real clock: TERM during the 30 s poll wait exits 0 within seconds and releases the lock"; else bad "real clock loop: rc=$rc took=${took}s"; fi
+
+# TERM while a klatch call is running is a clean stop, not a "claim state unreadable" ALERT
+newworld; real_clock; pid_dead; touch "$fake/claims-hang"
+"$sup" "${args[@]}" > "$fake/out" 2>&1 & lp=$!
+n=0; while [ "$n" -lt 50 ] && ! grep -q '^klatch claims' "$fake/calls.log"; do /bin/sleep 0.1; n=$((n + 1)); done
+kill -TERM "$lp"; wait "$lp" 2> /dev/null
+if ! log_has 'unreadable' && ! log_has 'timed out'; then ok "TERM during a klatch call logs no false claim-state ALERT"; else bad "false alert on clean stop: $(log)"; fi
 
 if [ "$fails" -eq 0 ]; then echo "all gh-watch-supervise tests passed"; else echo "$fails FAILED"; exit 1; fi
