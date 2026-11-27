@@ -6,13 +6,19 @@
 //! still stops it, and every outcome is audited without the text.
 
 use super::*;
-use crate::domain::{Attribution, CrossingStatus};
+use crate::domain::{Attribution, CrossingStatus, NEXT_STEP};
 use crate::gateway::judge::load_item;
 use crate::store::{NewAudit, NewMessage, NewReview, QueuedReview};
 
 /// What a call to `release_crossings` did to one item.
 pub type Applied = (i64, &'static str);
 
+/// How many crossings one member may have waiting for a verdict at once (#1736). Raisable or lowerable by the human
+/// through the policy key `crossing:cap` (`admin_set_crossing_cap`).
+pub const DEFAULT_CROSSING_CAP: usize = 20;
+/// The most the cap may be set to.
+const MAX_CROSSING_CAP: usize = 10_000;
+const CAP_KEY: &str = "crossing:cap";
 const RELEASED: &str = "released";
 const BLOCKED: &str = "blocked";
 /// The message kind of a released crossing (#679); its payload is `room#seq` of the source.
@@ -46,8 +52,54 @@ impl<S: Store> Gateway<S> {
             )));
         }
         self.refuse_text(who, (to, "crossing"), &item.text)?;
+        self.check_crossing_cap(who, from)?;
         let new = NewReview::new(from, seq, &to_label, "crossing").crossing(to, &who.member);
         self.store.enqueue_review(&new, self.now())
+    }
+
+    /// The cap on one member's waiting crossings: the human's setting, else the default. A stored value that does not
+    /// parse or is out of range is ignored, so the cap stays in force.
+    pub(super) fn crossing_cap(&self) -> Result<usize> {
+        Ok(self
+            .store
+            .policy_get(CAP_KEY)?
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .filter(|n| (1..=MAX_CROSSING_CAP).contains(n))
+            .unwrap_or(DEFAULT_CROSSING_CAP))
+    }
+
+    /// Only the human: set how many crossings one member may have waiting (1 to 10000), or with `None` put the default
+    /// back (#1736).
+    pub fn admin_set_crossing_cap(&self, who: &Principal, cap: Option<usize>) -> Result<()> {
+        if cap.is_some_and(|n| !(1..=MAX_CROSSING_CAP).contains(&n)) {
+            return Err(Error::Invalid(format!(
+                "the crossing cap is 1 to {MAX_CROSSING_CAP} waiting crossings per member, or off for the default"
+            )));
+        }
+        let target = cap.map_or("off".to_string(), |n| n.to_string());
+        self.administer(who, ("crossing-cap", &target), |now| {
+            self.store
+                .policy_set(CAP_KEY, cap.map(|n| n.to_string()).as_deref(), now)?;
+            Ok(String::new())
+        })
+    }
+
+    /// Fail closed when `who` already has the cap of crossings waiting. The refusal names the number and what frees a
+    /// place, never a message or its text; it is kept as a refusal record like any other (not a safety rule, so it does
+    /// not trip the breaker).
+    fn check_crossing_cap(&self, who: &Principal, from: &str) -> Result<()> {
+        let cap = self.crossing_cap()?;
+        if self.store.waiting_crossings_of(&who.member)? < cap {
+            return Ok(());
+        }
+        let e = Error::Refused {
+            rule: "crossing-cap".into(),
+            reason: format!(
+                "you already have {cap} crossings waiting for a verdict, the most allowed; {NEXT_STEP}wait for a verdict on one (klatch crossings), then ask again"
+            ),
+        };
+        self.note_refusal(who, (from, "crossing"), &e);
+        Err(e)
     }
 
     /// The label the message was posted under.

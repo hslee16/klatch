@@ -166,3 +166,29 @@ pub fn a_crossing_is_told_to_its_requester_once_while_waiting_and_once_for_its_o
     assert!(s.crossing_notices("v", "alice").unwrap().is_empty());
     assert_eq!(ids(&s.crossing_notices("v", "bob").unwrap()), vec![other]);
 }
+
+pub fn pending_pages_by_cursor_and_waiting_crossings_are_counted_per_requester<S: Store>(
+    make: fn() -> S,
+) {
+    let s = make();
+    let cross = |seq: i64, who: &str| {
+        let it = NewReview::new("r", seq, "public", "crossing").crossing("open", who);
+        s.enqueue_review(&it, 10).unwrap()
+    };
+    let a1 = cross(1, "alice");
+    let b1 = cross(2, "bob");
+    let a2 = cross(3, "alice");
+    let a3 = cross(4, "alice");
+    assert_eq!(ids(&s.pending_reviews_after(0, 2).unwrap()), vec![a1, b1]);
+    assert_eq!(ids(&s.pending_reviews_after(b1, 2).unwrap()), vec![a2, a3]);
+    assert!(s.pending_reviews_after(a3, 2).unwrap().is_empty());
+    assert_eq!(s.waiting_crossings_of("alice").unwrap(), 3);
+    assert_eq!(s.waiting_crossings_of("bob").unwrap(), 1);
+    assert_eq!(s.waiting_crossings_of("carol").unwrap(), 0);
+    s.resolve_review(&ReviewResolution::new(a1, "deny", ""), 20)
+        .unwrap();
+    assert_eq!(s.waiting_crossings_of("alice").unwrap(), 2);
+    // a plain item (no target room) is no crossing
+    s.enqueue_review(&item("r", 9), 11).unwrap();
+    assert_eq!(s.waiting_crossings_of("").unwrap(), 0);
+}

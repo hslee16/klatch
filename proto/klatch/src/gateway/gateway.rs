@@ -29,6 +29,7 @@ pub use anchors::{AnchorAdapter, valid_anchor};
 use github_anchor::{normalize_anchor, parse_events};
 mod budget;
 mod crossing;
+pub use crossing::DEFAULT_CROSSING_CAP;
 mod delivery;
 pub use delivery::DeliveryView;
 mod dm;

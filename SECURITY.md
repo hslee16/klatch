@@ -283,6 +283,18 @@ check of quality or correctness. Two floors run first, with no judge involved: t
 scrubber list refuse a post and a crossing request that match them (the scrubber only below the agent cap; the
 scanner at every label). Then a judge decides the queued crossing.
 
+**The queue is bounded per member (#1736).** One member may have at most 20 crossings waiting for a verdict (default;
+the human changes it with the policy key `crossing:cap`, 1 to 10000, through `admin_set_crossing_cap`; an unreadable or
+out-of-range stored value is ignored and the default stays). A request over the cap fails closed: it is refused with the
+rule `crossing-cap`, kept as a refusal record, and the message names only the number and what frees a place, never the
+message or its text. The cap counts waiting items only (one that has a verdict no longer counts), so a decided crossing
+frees a place and another member's queue is unaffected. The judge drain and the reviewer's `review_next` walk the whole
+waiting queue by age in pages of 100 (`DRAIN_LIMIT`), so items behind 100 deferred or unreadable ones are still judged
+and shown; nothing is starved. The verdict semantics, the one-row-per-item audit and the fail-closed release are
+unchanged, and no schema changed. A member can still hold at most the cap of waiting items at a time, so a drain run is
+bounded by the cap times the number of members. A repeat request for a message already waiting counts against the cap
+while the member is at it (it is refused, never queued twice).
+
 **What the default judge does.** The default is the local rules judge (`klatch judge run`; no model, no network, no
 cost, no new dependency). It has these checks, in this order, and the first to match decides. (1) The credential scanner:
 private key blocks; keys and tokens of well-known shapes (npm, AWS access keys, GitHub, Slack, Stripe, Google API keys,

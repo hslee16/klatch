@@ -567,3 +567,8 @@ fn sqlite_declares_every_feature_and_keeps_each_one() {
     assert!(store().features().missing().is_empty());
     c::features::every_declared_feature_works(store);
 }
+
+#[test]
+fn reviews_pending_pages_by_cursor_and_waiting_crossings_are_counted_per_requester() {
+    c::reviews::pending_pages_by_cursor_and_waiting_crossings_are_counted_per_requester(store);
+}

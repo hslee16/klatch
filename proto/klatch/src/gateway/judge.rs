@@ -5,7 +5,8 @@
 use crate::domain::{Judge, LabelChain, Result, ReviewItem, RulesJudge, Verdict};
 use crate::store::{NewAudit, QueuedReview, ReviewResolution, Store};
 
-/// How many items one drain looks at, so a run is bounded.
+/// How many items one page of the queue holds. A drain walks every page by age (#1736), so items behind a full page
+/// of deferred ones are still judged; the run is bounded by the per-requester cap on waiting crossings.
 pub const DRAIN_LIMIT: usize = 100;
 
 /// What one drain did.
@@ -46,33 +47,50 @@ pub(crate) fn load_item<S: Store>(store: &S, q: &QueuedReview) -> Result<Option<
 /// Run every pending item past `judge` once. A vanished message is denied: there is nothing left to let across.
 pub fn drain<S: Store>(store: &S, judge: &dyn Judge, now: i64) -> Result<Drained> {
     let mut out = Drained::default();
-    for q in store.pending_reviews(DRAIN_LIMIT)? {
-        let (verdict, detail, note) = match load_item(store, &q)? {
-            Some(item) => {
-                let (verdict, note) = judge.judge_noted(&item);
-                (verdict, String::new(), note)
-            }
-            None => (
-                Verdict::Deny("message missing".into()),
-                "message missing".to_string(),
-                None,
-            ),
-        };
-        if let (Verdict::Defer, Some(note)) = (&verdict, &note) {
-            audit_deferral(store, &q, note, now)?;
-            store.set_review_flag(q.id, &flag_text(note))?;
-        }
-        match &verdict {
-            Verdict::Defer => out.deferred += 1,
-            Verdict::Allow => out.allowed += 1,
-            Verdict::Redact(_) => out.redacted += 1,
-            Verdict::Deny(_) => out.denied += 1,
-        }
-        if verdict != Verdict::Defer {
-            record(store, &q, (&verdict, &detail), ("judge", now))?;
+    let mut after = 0;
+    loop {
+        let page = store.pending_reviews_after(after, DRAIN_LIMIT)?;
+        let Some(last) = page.last() else { break };
+        after = last.id;
+        for q in page {
+            drain_one(store, judge, &q, now, &mut out)?;
         }
     }
     Ok(out)
+}
+
+fn drain_one<S: Store>(
+    store: &S,
+    judge: &dyn Judge,
+    q: &QueuedReview,
+    now: i64,
+    out: &mut Drained,
+) -> Result<()> {
+    let (verdict, detail, note) = match load_item(store, q)? {
+        Some(item) => {
+            let (verdict, note) = judge.judge_noted(&item);
+            (verdict, String::new(), note)
+        }
+        None => (
+            Verdict::Deny("message missing".into()),
+            "message missing".to_string(),
+            None,
+        ),
+    };
+    if let (Verdict::Defer, Some(note)) = (&verdict, &note) {
+        audit_deferral(store, q, note, now)?;
+        store.set_review_flag(q.id, &flag_text(note))?;
+    }
+    match &verdict {
+        Verdict::Defer => out.deferred += 1,
+        Verdict::Allow => out.allowed += 1,
+        Verdict::Redact(_) => out.redacted += 1,
+        Verdict::Deny(_) => out.denied += 1,
+    }
+    if verdict != Verdict::Defer {
+        record(store, q, (&verdict, &detail), ("judge", now))?;
+    }
+    Ok(())
 }
 
 /// The most a reviewer is shown of a judge's deferral note.
@@ -165,6 +183,35 @@ mod tests {
         s.enqueue_review(&NewReview::new("r", 1, "public", "crosses"), 3)
             .unwrap();
         s
+    }
+
+    /// Defers the first `n` seqs (as a screen that flags them does) and allows the rest.
+    struct DefersFirst(i64);
+    impl Judge for DefersFirst {
+        fn judge(&self, item: &ReviewItem) -> Verdict {
+            if item.seq <= self.0 {
+                Verdict::Defer
+            } else {
+                Verdict::Allow
+            }
+        }
+    }
+
+    #[test]
+    fn items_behind_a_full_page_of_deferred_ones_are_still_judged() {
+        // #1736: the drain used to look at the oldest DRAIN_LIMIT items only, so 100 stuck ones starved the rest
+        let s = SqliteStore::open_in_memory().unwrap();
+        s.join("r", "alice", 1).unwrap();
+        let total = DRAIN_LIMIT as i64 + 5;
+        for seq in 1..=total {
+            s.post(crate::store::Seat::new("r", "alice"), "hello", 2)
+                .unwrap();
+            s.enqueue_review(&NewReview::new("r", seq, "public", "crosses"), 3)
+                .unwrap();
+        }
+        let out = drain(&s, &DefersFirst(DRAIN_LIMIT as i64), 10).unwrap();
+        assert_eq!((out.allowed, out.deferred), (5, DRAIN_LIMIT));
+        assert_eq!(s.pending_reviews(1000).unwrap().len(), DRAIN_LIMIT);
     }
 
     #[test]

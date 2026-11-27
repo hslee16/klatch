@@ -416,3 +416,73 @@ fn a_principal_without_the_role_cannot_release() {
         "admin-scope"
     );
 }
+
+/// Post `n` more messages in the vault, so crossings have distinct sources.
+fn more_vault_messages(g: &Gateway<SpyStore>, n: usize) {
+    for i in 0..n {
+        g.post(&alice(), "vault", &format!("another fact {i}")).unwrap();
+    }
+}
+
+#[test]
+fn a_requester_cannot_have_more_than_the_cap_of_crossings_waiting() {
+    let (g, _) = world();
+    let cap = DEFAULT_CROSSING_CAP;
+    more_vault_messages(&g, cap);
+    for seq in 1..=cap as i64 {
+        g.request_crossing(&alice(), "vault", seq, "open").unwrap();
+    }
+    let e = g
+        .request_crossing(&alice(), "vault", cap as i64 + 1, "open")
+        .unwrap_err();
+    let shown = format!("{e}");
+    assert_eq!(rule_of(e), "crossing-cap");
+    assert!(shown.contains(&cap.to_string()), "{shown}");
+    assert!(
+        !shown.contains("another fact") && !shown.contains("the plan"),
+        "the refusal echoed message text: {shown}"
+    );
+    assert_eq!(g.store.pending_reviews(1000).unwrap().len(), cap);
+}
+
+#[test]
+fn the_cap_is_per_requester_and_frees_up_when_an_item_is_decided() {
+    let (g, _) = world();
+    g.admin_set_clearance(&admin(), "bob", "private").unwrap();
+    g.join(&bob(), "vault").unwrap();
+    g.admin_set_crossing_cap(&admin(), Some(2)).unwrap();
+    more_vault_messages(&g, 3);
+    g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    let second = g.request_crossing(&alice(), "vault", 2, "open").unwrap();
+    assert!(g.request_crossing(&alice(), "vault", 3, "open").is_err());
+    // another requester is not held up by alice's queue
+    g.request_crossing(&bob(), "vault", 3, "open").unwrap();
+    // a decided item no longer waits
+    g.store
+        .resolve_review(&crate::store::ReviewResolution::new(second, "deny", ""), 5)
+        .unwrap();
+    g.request_crossing(&alice(), "vault", 3, "open").unwrap();
+}
+
+#[test]
+fn the_human_sets_the_cap_and_off_restores_the_default() {
+    let (g, _) = world();
+    assert_eq!(g.crossing_cap().unwrap(), DEFAULT_CROSSING_CAP);
+    g.admin_set_crossing_cap(&admin(), Some(7)).unwrap();
+    assert_eq!(g.crossing_cap().unwrap(), 7);
+    assert_eq!(
+        g.store.policy_get("crossing:cap").unwrap().as_deref(),
+        Some("7")
+    );
+    assert!(g.admin_set_crossing_cap(&admin(), Some(0)).is_err());
+    g.admin_set_crossing_cap(&admin(), None).unwrap();
+    assert_eq!(g.crossing_cap().unwrap(), DEFAULT_CROSSING_CAP);
+    // an unreadable stored value falls back to the default, so the cap stays in force
+    g.store.policy_set("crossing:cap", Some("junk"), 1).unwrap();
+    assert_eq!(g.crossing_cap().unwrap(), DEFAULT_CROSSING_CAP);
+    // zero would refuse every crossing and a huge value would lift the bound: both are ignored
+    for bad in ["0", "99999999"] {
+        g.store.policy_set("crossing:cap", Some(bad), 1).unwrap();
+        assert_eq!(g.crossing_cap().unwrap(), DEFAULT_CROSSING_CAP, "{bad}");
+    }
+}

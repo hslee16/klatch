@@ -36,6 +36,29 @@ impl SqliteStore {
         self.review_rows("resolved IS NULL ORDER BY id", limit)
     }
 
+    pub(super) fn pending_review_rows_after(
+        &self,
+        after: i64,
+        limit: usize,
+    ) -> Result<Vec<QueuedReview>> {
+        // `after` is an integer, so formatting it in cannot carry input into the statement
+        self.review_rows(
+            &format!("resolved IS NULL AND id>{} ORDER BY id", after),
+            limit,
+        )
+    }
+
+    pub(super) fn waiting_crossing_count(&self, requester: &str) -> Result<usize> {
+        let n: i64 = self
+            .optional(
+                "SELECT COUNT(*) FROM review_queue WHERE resolved IS NULL AND to_room<>'' AND requester=?1",
+                params![requester],
+                |r| r.get(0),
+            )?
+            .unwrap_or(0);
+        Ok(usize::try_from(n).unwrap_or(0))
+    }
+
     /// Rows matching a fixed `WHERE ... ORDER BY` tail (never built from input).
     pub(super) fn review_rows(&self, tail: &str, limit: usize) -> Result<Vec<QueuedReview>> {
         let sql = format!(

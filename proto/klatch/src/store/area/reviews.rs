@@ -17,6 +17,27 @@ pub trait ReviewStore {
         Ok(Vec::new())
     }
 
+    /// Waiting items after id `after`, oldest first, at most `limit`: one page of the queue, so a caller can walk all of
+    /// it by age and not only its first page (#1736). The default reads the whole queue and cuts it; a store with a
+    /// real queue answers from an index.
+    fn pending_reviews_after(&self, after: i64, limit: usize) -> Result<Vec<QueuedReview>> {
+        Ok(self
+            .pending_reviews(usize::MAX >> 1)?
+            .into_iter()
+            .filter(|q| q.id > after)
+            .take(limit)
+            .collect())
+    }
+
+    /// How many crossings `requester` has waiting for a verdict (#1736). The default counts the whole queue.
+    fn waiting_crossings_of(&self, requester: &str) -> Result<usize> {
+        Ok(self
+            .pending_reviews(usize::MAX >> 1)?
+            .iter()
+            .filter(|q| !q.to_room.is_empty() && q.requester == requester)
+            .count())
+    }
+
     /// Record the verdict word and a short detail for a pending item; false when it was not pending.
     fn resolve_review(&self, _resolution: &ReviewResolution, _now: i64) -> Result<bool> {
         Ok(false)

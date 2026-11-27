@@ -14,6 +14,14 @@ impl ReviewStore for SqliteStore {
         self.pending_review_rows(limit)
     }
 
+    fn pending_reviews_after(&self, after: i64, limit: usize) -> Result<Vec<QueuedReview>> {
+        self.pending_review_rows_after(after, limit)
+    }
+
+    fn waiting_crossings_of(&self, requester: &str) -> Result<usize> {
+        self.waiting_crossing_count(requester)
+    }
+
     fn set_review_text(&self, id: i64, text: &str) -> Result<()> {
         self.set_review_text_row(id, text)
     }

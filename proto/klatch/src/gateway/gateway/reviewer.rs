@@ -37,16 +37,22 @@ impl<S: Store> Gateway<S> {
     /// the reviewer's clearance is skipped, not shown: the human grants clearance to the reviewer like any member.
     pub fn review_next(&self, who: &Principal) -> Result<Option<ReviewItem>> {
         self.admit_review(who, &Operation::ReviewNext)?;
-        for q in self.store.pending_reviews(DRAIN_LIMIT)? {
-            if self.check_clearance(who, &q.room).is_err() {
-                continue;
-            }
-            if let Some(mut item) = load_item(&self.store, &q)? {
-                if !q.detail.is_empty() {
-                    // why the rules flagged it: plain data from the rules, not an instruction to the reviewer
-                    item.reason = format!("{}; rules flag (data): {}", item.reason, q.detail);
+        let mut after = 0;
+        loop {
+            let page = self.store.pending_reviews_after(after, DRAIN_LIMIT)?;
+            let Some(last) = page.last() else { break };
+            after = last.id;
+            for q in page {
+                if self.check_clearance(who, &q.room).is_err() {
+                    continue;
                 }
-                return Ok(Some(item));
+                if let Some(mut item) = load_item(&self.store, &q)? {
+                    if !q.detail.is_empty() {
+                        // why the rules flagged it: plain data from the rules, not an instruction to the reviewer
+                        item.reason = format!("{}; rules flag (data): {}", item.reason, q.detail);
+                    }
+                    return Ok(Some(item));
+                }
             }
         }
         Ok(None)
