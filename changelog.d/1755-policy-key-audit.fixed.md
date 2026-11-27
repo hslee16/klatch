@@ -1,0 +1,1 @@
+- The refusal audit row of a reserved admin policy key is capped at 128 bytes (cut with a `...[truncated]` marker) and shows control, zero-width and bidirectional characters as `\u{..}` escapes; matching and the throttle still use the normalized key, and tests pin that the throttle counts it (#1755).

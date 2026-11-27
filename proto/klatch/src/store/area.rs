@@ -30,6 +30,8 @@ pub use claims::ClaimStore;
 pub use credentials::CredentialStore;
 pub use members::MemberStore;
 pub use messages::{MessageStore, Shown};
-pub use policy::{Census, PolicyStore, is_proof_key, normalize_key};
+pub use policy::{Census, PolicyStore, audit_target, is_proof_key, normalize_key};
+#[cfg(test)]
+pub use policy::{MAX_AUDIT_TARGET, TRUNCATED};
 pub use reviews::ReviewStore;
 pub use rooms::RoomStore;

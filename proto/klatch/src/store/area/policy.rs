@@ -32,6 +32,51 @@ pub fn normalize_key(key: &str) -> String {
     key.trim().to_ascii_lowercase()
 }
 
+/// The marker that ends a refusal audit target cut to `MAX_AUDIT_TARGET` (#1755).
+pub const TRUNCATED: &str = "...[truncated]";
+
+/// The most bytes a refusal audit target holds, marker included.
+pub const MAX_AUDIT_TARGET: usize = 128;
+
+/// Whether a character is shown as an escape in an audit target: controls (NUL, newline, ESC, DEL, C1), the
+/// zero-width and bidirectional formatting characters, the line and paragraph separators, the BOM, and the
+/// backslash itself (so a typed `\u{202e}` cannot pass for an escape).
+fn needs_escape(c: char) -> bool {
+    c.is_control()
+        || c == '\\'
+        || matches!(c,
+            '\u{ad}' | '\u{61c}' | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}'
+            | '\u{2060}'..='\u{206f}' | '\u{feff}' | '\u{fff9}'..='\u{fffb}')
+}
+
+/// The form of a normalized key that is stored and shown in the refusal audit (#1755): characters that are
+/// invisible or reorder the display are written as `\u{..}` escapes, and what is longer than `MAX_AUDIT_TARGET` bytes
+/// is cut and ends with `TRUNCATED`. Matching, the family test and the throttle's key use `normalize_key`, never
+/// this; the throttle compares rows by this form, so keys equal up to the cut share one row a minute.
+pub fn audit_target(nk: &str) -> String {
+    let room = MAX_AUDIT_TARGET - TRUNCATED.len();
+    let mut out = String::new();
+    // the length of `out` at the last piece boundary that still leaves room for the marker
+    let mut cut = 0;
+    for c in nk.chars() {
+        if needs_escape(c) {
+            out.push_str(&format!("\\u{{{:x}}}", c as u32));
+        } else {
+            out.push(c);
+        }
+        if out.len() <= room {
+            cut = out.len();
+        }
+        if out.len() > MAX_AUDIT_TARGET {
+            // the rest is not looked at, so a 100 KB key costs no more than a short one
+            out.truncate(cut);
+            out.push_str(TRUNCATED);
+            return out;
+        }
+    }
+    out
+}
+
 pub trait PolicyStore {
     /// Keep a record of an administrative act, and read the latest ones, newest first.
     fn record_audit(&self, _entry: &NewAudit, _now: i64) -> Result<()> {
