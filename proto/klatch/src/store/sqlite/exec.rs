@@ -219,7 +219,8 @@ impl SqliteStore {
         self.audit_flush_errors.get()
     }
 
-    /// Refusal rows lost because the retry queue was full (#1677).
+    /// Refusal rows lost because the retry queue was full (#1677), or left unwritten by the throttle on refused writes
+    /// to the admin passphrase keys (#1701).
     pub fn audit_rows_dropped(&self) -> u64 {
         self.audit_rows_dropped.get()
     }
@@ -227,6 +228,12 @@ impl SqliteStore {
     /// ROLLBACKs that failed (#1678).
     pub fn rollback_errors(&self) -> u64 {
         self.rollback_errors.get()
+    }
+
+    /// A refusal row left unwritten by the throttle (#1701), counted with the rows lost from the full queue.
+    pub(super) fn count_audit_row_dropped(&self) {
+        self.audit_rows_dropped
+            .set(self.audit_rows_dropped.get() + 1);
     }
 
     fn count_audit_flush_error(&self) {

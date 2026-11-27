@@ -58,8 +58,8 @@ pub struct SqliteStore {
     /// outermost transaction has closed: a refusal rolls its own transaction back, and a row written inside would go
     /// with it. Names only, never a value.
     deferred_audit: std::cell::RefCell<Vec<QueuedAudit>>,
-    /// Refusal audit rows (#1677) dropped from the full queue, oldest first: lost. Every dropped row was also counted
-    /// in `audit_flush_errors` as a failed row, so the two overlap; this one says how many of those are gone.
+    /// Refusal audit rows lost: (#1677) dropped from the full queue, oldest first, each also counted in
+    /// `audit_flush_errors` as a failed row; and (#1701) refusals the throttle left unwritten, counted only here.
     audit_rows_dropped: std::cell::Cell<u64>,
     /// ROLLBACKs that failed (#1678): the transaction they should have closed may still be open.
     rollback_errors: std::cell::Cell<u64>,

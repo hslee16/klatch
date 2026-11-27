@@ -29,15 +29,20 @@ fn key_within_patience(db: &Path) -> Option<Key> {
 /// What the keystore says about the store key: its warning, and whether the key exists or why it could not be read.
 type KeyProbe = (Option<String>, Result<KeyState, String>);
 
-/// Whether the store key exists, and if it does, whether it opens the store (#1585).
+/// Whether the store key exists, and if it does, whether it opens the store (#1585), and if not whether the key is
+/// at fault (#1701).
 enum KeyState {
     Missing,
     Opens,
-    /// The key exists but opening the store with it failed: the reason, never the key.
+    /// The key exists but the store could not be opened for another reason (permissions, a lock, a damaged file): the
+    /// reason, never the key.
     DoesNotOpen(String),
+    /// SQLite said "not a database": this key is the wrong one for the file, or the file is no encrypted store.
+    WrongKey(String),
 }
 
-/// Asked on a thread with a time limit, and only whether a key exists is brought back: never the key itself.
+/// Asked on a thread with a time limit; brought back is whether a key exists and whether it opens the store, never
+/// the key itself.
 fn probe_key(db: &Path) -> Option<KeyProbe> {
     let asked = db.to_path_buf();
     within(KEYSTORE_PATIENCE, move || {
@@ -50,6 +55,9 @@ fn probe_key(db: &Path) -> Option<KeyProbe> {
                 Some(k) => {
                     match klatch::store::SqliteStore::read_policy_has(&asked, &k, "doctor-probe") {
                         Ok(_) => KeyState::Opens,
+                        Err(e) if klatch::store::SqliteStore::is_wrong_key_error(&e) => {
+                            KeyState::WrongKey(e.to_string())
+                        }
                         Err(e) => KeyState::DoesNotOpen(e.to_string()),
                     }
                 }
@@ -125,10 +133,15 @@ pub(super) fn check_store(r: &mut Report, home: Option<&Path>) {
 /// The store line for an encrypted store: its key is in `place`, is not there, or could not be read.
 fn report_key(r: &mut Report, db: &Path, place: &str, found: Result<KeyState, String>) {
     match found {
-        Ok(KeyState::DoesNotOpen(why)) => r.add(
+        Ok(KeyState::WrongKey(why)) => r.add(
             Status::Fail,
             format!("store: the key in {place} does not open the store at {}: {why}; growth, proof and passphrase checks were skipped", db.display()),
             Some("this is the wrong key for this store; restore the right key, or klatch admin recover (it asks for the recovery code)"),
+        ),
+        Ok(KeyState::DoesNotOpen(why)) => r.add(
+            Status::Fail,
+            format!("store: the store at {} could not be opened (the key in {place} was found): {why}; growth, proof and passphrase checks were skipped", db.display()),
+            Some("check the file's permissions and owner, and that no other program holds it open; the key is not known to be at fault"),
         ),
         Ok(KeyState::Opens) => r.add(Status::Ok, format!("store: {}, encrypted; the key is in {place}", db.display()), None),
         Ok(KeyState::Missing) => r.add(

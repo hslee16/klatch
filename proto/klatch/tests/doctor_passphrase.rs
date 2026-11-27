@@ -109,3 +109,31 @@ fn doctor_fails_when_the_key_file_does_not_open_the_store_and_says_so() {
         "an unreadable store must not be reported as having no passphrase: {t}"
     );
 }
+
+#[test]
+fn doctor_gives_the_wrong_key_hint_only_for_a_wrong_key() {
+    let h = Home::new();
+    assert!(h.run("a", &["join", "lobby"]).status.success());
+    swap_key_for_a_wrong_one(&h);
+    let t = text(&doctor(&h));
+    assert!(t.contains("this is the wrong key for this store"), "{t}");
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_does_not_call_an_unreadable_store_a_wrong_key() {
+    use std::os::unix::fs::PermissionsExt;
+    let h = Home::new();
+    assert!(h.run("a", &["join", "lobby"]).status.success());
+    let db = h.0.join("rooms.db");
+    std::fs::set_permissions(&db, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let t = text(&doctor(&h));
+    std::fs::set_permissions(&db, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(
+        t.lines()
+            .any(|l| l.contains("store:") && l.starts_with("FAIL")),
+        "{t}"
+    );
+    assert!(!t.contains("wrong key"), "{t}");
+    assert!(!t.contains("klatch admin recover"), "{t}");
+}
