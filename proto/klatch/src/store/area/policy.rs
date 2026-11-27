@@ -21,7 +21,15 @@ pub struct Census<'a> {
 /// The policy keys the admin passphrase proof owns (#1275): the verifier, the failure counter, the unlock window,
 /// anything else under the `admin-passphrase` prefix, and the `admin-unlock-` family (#1588). Only `PolicyStore::reserved_policy_set` writes them.
 pub fn is_proof_key(key: &str) -> bool {
-    key.starts_with("admin-passphrase") || key.starts_with("admin-unlock-")
+    let k = normalize_key(key);
+    k.starts_with("admin-passphrase") || k.starts_with("admin-unlock-")
+}
+
+/// A key with surrounding whitespace (Unicode) removed and ASCII letters lowercased: the form the reserved-key
+/// match, the refusal audit and its throttle use, so `ADMIN-PASSPHRASE` or ` admin-unlock-secs` is refused like the
+/// exact key and cannot dodge the throttle by variant (#1588).
+pub fn normalize_key(key: &str) -> String {
+    key.trim().to_ascii_lowercase()
 }
 
 pub trait PolicyStore {

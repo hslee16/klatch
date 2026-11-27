@@ -1,0 +1,1 @@
+- The admin passphrase and unlock policy keys are now matched ignoring surrounding whitespace and ASCII case, so a write to `ADMIN-PASSPHRASE` or ` admin-unlock-secs` is refused like the exact key. The refusal audit and its throttle use that normalized key, so variants share one family cap and cannot flood the audit (#1588).

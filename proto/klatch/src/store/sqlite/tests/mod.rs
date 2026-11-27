@@ -26,6 +26,7 @@ mod encryption;
 mod false_deadlock;
 mod immediate_txn;
 mod import;
+mod key_variants;
 mod label_keys;
 mod long_tasks;
 mod machine_checkpoint;
