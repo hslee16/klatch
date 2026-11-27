@@ -90,8 +90,12 @@ impl LeaseSource for SysLeaseSource {
 ///
 /// A listing a bound cut (more records than the scan reads, a flood of fresher ones) is an incomplete view: the record
 /// found may be a forged one with the real one cut out, and what is absent may be only unread. The answer is then `None`
-/// whatever was found, never `Gone` (which shortens claims) and never alive (which extends them); an unreadable process
-/// table is not affected (it leaves the order by age and fails closed as before).
+/// whatever was found (a planted `Gone`, which shortens claims, and a single forged alive record are no longer acted on).
+/// Not closed: a cut is reported only when a running pid's record was left unread, so a dead member's real record
+/// (dead pid) left unread behind a flood of running-pid records, plus one forged alive record of the same session id,
+/// still reads as one alive record and extends the claims, as on main (#1706 1d through a flood; tracked in a new
+/// ticket). With no process table (it fails closed) any cut is reported, so more than `MAX_ENTRIES` record files give
+/// `None`.
 fn observe_in(
     registry: &FsRegistry,
     procs: &dyn ProcessTable,

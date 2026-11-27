@@ -323,3 +323,26 @@ fn a_failed_insert_in_a_sweep_batch_is_counted_and_the_rest_is_still_recorded() 
     assert_eq!(rooms, ["a", "b", "c"]);
     assert_eq!(s.claim_record_errors(), 2, "each failed insert counts once");
 }
+
+#[test]
+fn a_failed_prune_is_counted() {
+    // #1702: the insert works, the prune that follows does not; the failure is counted, not lost
+    let s = store();
+    let old = 100 * 86_400 - crate::store::sqlite::claim_events::CLAIM_EVENT_MAX_AGE_SECS - 1;
+    s.conn
+        .execute_batch(&format!(
+            "INSERT INTO claim_events(ts,room,event,class,reason,held,waited) VALUES({old},'r','expired','file','',1,NULL);
+             CREATE TRIGGER refuse_prune BEFORE DELETE ON claim_events BEGIN SELECT RAISE(ABORT,'refused'); END;"
+        ))
+        .unwrap();
+    let ev = crate::store::sqlite::claim_events::ClaimEvent {
+        room: "r",
+        path: "p",
+        event: "expired",
+        reason: "",
+        held: 1,
+        waited: None,
+    };
+    s.record_claim_events(100 * 86_400, &[ev]);
+    assert_eq!(s.claim_record_errors(), 1);
+}

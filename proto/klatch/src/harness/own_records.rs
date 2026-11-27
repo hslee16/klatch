@@ -108,8 +108,12 @@ pub(crate) fn scan_records_with(
 }
 
 /// Whether `unread` (names left unread by a bound) may hold a record that matters: any of them when there is no process
-/// table, else one whose pid runs (the order puts those first, so what is left is of pids that do not run, and a
-/// record of a pid that does not run can only read as gone).
+/// table, else one whose pid runs (the order puts those first, so what is left is of pids that do not run).
+///
+/// Known gap (#1706, tracked in a new ticket): an unread dead-pid record is not nothing. A dead member's real record
+/// under a dead pid, left unread behind a flood of records of running pids, is the second (Gone) claim that would turn
+/// a forged alive record of the same session id from an extension into `None`. With it unread, that forgery still
+/// extends the claims, as on main. The listing is therefore reported complete here only as far as running pids go.
 fn cut_running(unread: &[String], alive: Option<&HashSet<u32>>) -> bool {
     match alive {
         None => !unread.is_empty(),
