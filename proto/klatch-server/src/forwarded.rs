@@ -125,11 +125,30 @@ impl Counts {
         self.requests == 0
     }
 
-    /// What was counted since `earlier` (an earlier reading of the same counters): each number minus its old value.
+    /// What was counted since `earlier` (an earlier reading of the same counters): each number minus its old value, and
+    /// no name above the requests of the difference. The two readings are each consistent but their difference need
+    /// not be (a request half counted at the first reading has its names in the difference and itself in the one
+    /// after), so a name is held to the request difference; what is held back stays unflushed (`plus` moves the baseline by
+    /// what a row held, not to the reading) and goes into a later row only once requests arrive without it. Where every
+    /// request carries the name (behind a proxy) a backlog never drains, so the rows are a lower bound for a name over a
+    /// whole run; only the shutdown summary (`Ignored::summary`) has the true total.
     pub(crate) fn since(&self, earlier: &Counts) -> Counts {
+        let requests = self.requests.saturating_sub(earlier.requests);
         Counts {
-            requests: self.requests.saturating_sub(earlier.requests),
-            by_name: std::array::from_fn(|i| self.by_name[i].saturating_sub(earlier.by_name[i])),
+            requests,
+            by_name: std::array::from_fn(|i| {
+                self.by_name[i]
+                    .saturating_sub(earlier.by_name[i])
+                    .min(requests)
+            }),
+        }
+    }
+
+    /// These counts and `more` added together (saturating): the baseline after a row of `more` was kept.
+    pub(crate) fn plus(&self, more: &Counts) -> Counts {
+        Counts {
+            requests: self.requests.saturating_add(more.requests),
+            by_name: std::array::from_fn(|i| self.by_name[i].saturating_add(more.by_name[i])),
         }
     }
 
@@ -142,6 +161,16 @@ impl Counts {
             line.push_str(&format!(" {name}={n}"));
         }
         line
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_requests(&mut self, n: u64) {
+        self.requests = n;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_name0(&mut self, n: u64) {
+        self.by_name[0] = n;
     }
 
     /// A reading with `n` requests, all under the first listed name (for tests of what counts do, not of what they name).
@@ -241,5 +270,28 @@ mod tests {
         for w in writers {
             w.join().unwrap();
         }
+    }
+
+    #[test]
+    fn a_difference_never_shows_a_name_above_its_requests_and_holds_the_rest_for_a_later_row() {
+        // row 1 was read while a request was half counted; row 2 sees that request's names
+        let first = Counts {
+            requests: 1,
+            ..Counts::default()
+        };
+        let mut second = Counts {
+            requests: 2,
+            ..Counts::default()
+        };
+        second.by_name[0] = 3;
+        let row = second.since(&first);
+        assert_eq!(row.requests, 1);
+        assert_eq!(row.by_name[0], 1, "held to the request difference");
+        // after the row is kept the baseline moves by the row, so the held-back name is not lost
+        let baseline = first.plus(&row);
+        let mut later = second.clone();
+        later.requests = 3;
+        let next = later.since(&baseline);
+        assert_eq!((next.requests, next.by_name[0]), (1, 1));
     }
 }

@@ -331,22 +331,23 @@ impl SqliteStore {
         self.record_lapses(&lapsed, now)?;
         for l in &lapsed {
             self.note_yield_end(&l.room, (&l.owner, &l.path), l.expires)?;
-            self.record_claim_event(
-                now,
-                &ClaimEvent {
-                    room: &l.room,
-                    path: &l.path,
-                    event: if l.passive {
-                        "passive_expired"
-                    } else {
-                        "expired"
-                    },
-                    reason: "",
-                    held: l.held,
-                    waited: None,
-                },
-            );
         }
+        let events: Vec<ClaimEvent> = lapsed
+            .iter()
+            .map(|l| ClaimEvent {
+                room: &l.room,
+                path: &l.path,
+                event: if l.passive {
+                    "passive_expired"
+                } else {
+                    "expired"
+                },
+                reason: "",
+                held: l.held,
+                waited: None,
+            })
+            .collect();
+        self.record_claim_events(now, &events);
         Ok(lapsed)
     }
 

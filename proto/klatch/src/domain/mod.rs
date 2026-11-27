@@ -156,8 +156,8 @@ pub use scope::{
 };
 pub use session_budget::{BudgetLevel, PROMPT_BUDGET_BYTES, SESSION_BUDGET_BYTES};
 pub use stuck::{
-    LAPSE_RECORD_CAP, LAPSED_CLAIM_MAX, LAPSED_WINDOW_SECS, StuckEvent, YIELD_WINDOW_SECS,
-    claim_label, stuck_events,
+    LAPSE_RECORD_CAP, LAPSE_TOTAL_CAP, LAPSED_CLAIM_MAX, LAPSED_WINDOW_SECS, StuckEvent,
+    YIELD_WINDOW_SECS, claim_label, stuck_events,
 };
 pub use subagent_name::invokes_klatch_unnamed;
 #[cfg(kani)]

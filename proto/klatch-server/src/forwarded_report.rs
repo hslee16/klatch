@@ -5,7 +5,8 @@
 //!   counts changed since the last line (`klatch-server: forwarded identity headers seen so far: requests=N name=K ...`);
 //! - **durable**: one audit row (`forwarded-ignored`, `Backend::note_forwarded_ignored`) per flush interval, only when
 //!   the counts changed, holding what was counted since the last row; plus one at shutdown. `klatch admin audit` shows
-//!   the rows, and summing them gives the total across restarts.
+//!   the rows; summing them gives a lower bound of the total across restarts (a name can be held back in a row, see
+//!   `Counts::since`), the shutdown summary line has the whole-run total.
 //!
 //! Nothing here runs on a request. A request only bumps an in-memory counter; the timer thread is the only writer, so
 //! a flood of requests with these headers cannot cause more lines or rows than one per interval (and one at stop). The
@@ -14,6 +15,7 @@
 
 use crate::forwarded::{Counts, Ignored};
 use klatch::session::Backend;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -97,9 +99,12 @@ impl Pacer {
         due
     }
 
-    /// The row handed out by `due` was kept: the next row holds what is counted after `counts`.
+    /// The row handed out by `due` (or `last`) from `counts` was kept: the next row holds what is counted after that
+    /// row. The baseline moves by what the row held, not to `counts`, so a name held back by `Counts::since` (more
+    /// than the request difference) waits for a later row. It drains only when requests arrive without that name, so the
+    /// audit rows are a lower bound for a name over a whole run; the shutdown summary line has the true total.
     pub(crate) fn kept(&mut self, counts: &Counts) {
-        self.flushed = counts.clone();
+        self.flushed = self.flushed.plus(&counts.since(&self.flushed));
         self.refusal_said = false;
     }
 
@@ -141,26 +146,31 @@ impl Drop for EndOnDrop<'_> {
 
 /// One line to stderr. A write that fails (a closed stderr) is dropped: it must not end the timer, whose periodic rows
 /// do not depend on the terminal (`eprintln!` panics on a failed write).
-fn say(line: &str) {
-    say_to(&mut std::io::stderr().lock(), line);
+fn say(out: &Out, line: &str) {
+    if let Ok(mut out) = out.lock() {
+        let _ = writeln!(out, "{line}");
+    }
 }
 
-fn say_to(out: &mut dyn std::io::Write, line: &str) {
-    let _ = writeln!(out, "{line}");
-}
+/// Where the lines go: stderr in the server, a test's own writer in a test (so a closed one can be passed in).
+pub(crate) type Out = Mutex<Box<dyn std::io::Write + Send>>;
 
 /// The timer thread: look every `TICK`, write what the pacer says is due. It returns its pacer so that shutdown can
 /// keep what is left. The only writer of the live line and of the periodic rows.
-fn timer(ignored: &Ignored, sink: &dyn RowSink, done: &AtomicBool, mut pacer: Pacer) -> Pacer {
+fn timer(
+    (ignored, sink, out): (&Ignored, &dyn RowSink, &Out),
+    done: &AtomicBool,
+    mut pacer: Pacer,
+) -> Pacer {
     while !done.load(Ordering::SeqCst) {
         std::thread::sleep(TICK);
         let counts = ignored.snapshot();
         let due = pacer.due(Instant::now(), &counts);
         if let Some(line) = due.line {
-            say(&line);
+            say(out, &line);
         }
         if let Some(text) = due.flush {
-            keep_or_say(&mut pacer, sink, (&text, &counts));
+            keep_or_say(&mut pacer, (sink, out), (&text, &counts));
         }
     }
     pacer
@@ -168,11 +178,15 @@ fn timer(ignored: &Ignored, sink: &dyn RowSink, done: &AtomicBool, mut pacer: Pa
 
 /// Offer one row to the sink: kept, the pacer moves on; refused, one fixed line says so (the first time, and again
 /// only after a row was kept) and the counts stay unkept for the next row.
-fn keep_or_say(pacer: &mut Pacer, sink: &dyn RowSink, (text, counts): (&str, &Counts)) {
+fn keep_or_say(
+    pacer: &mut Pacer,
+    (sink, out): (&dyn RowSink, &Out),
+    (text, counts): (&str, &Counts),
+) {
     if sink.keep(text) {
         pacer.kept(counts);
     } else if let Some(line) = pacer.refused() {
-        say(&line);
+        say(out, &line);
     }
 }
 
@@ -184,34 +198,35 @@ pub(crate) fn while_reporting<R>(
     backend: &(dyn Backend + Sync),
     serve: impl FnOnce() -> R,
 ) -> R {
-    while_reporting_with(ignored, &Audit(backend), Schedule::current(), serve)
+    let out: Out = Mutex::new(Box::new(std::io::stderr()));
+    while_reporting_with(ignored, (&Audit(backend), &out), Schedule::current(), serve)
 }
 
 /// `while_reporting` with the sink and the intervals given.
 fn while_reporting_with<R>(
     ignored: &Ignored,
-    sink: &dyn RowSink,
+    (sink, out): (&dyn RowSink, &Out),
     sched: Schedule,
     serve: impl FnOnce() -> R,
 ) -> R {
     let done = AtomicBool::new(false);
     let pacer = Pacer::new(Instant::now(), sched);
-    let (out, pacer) = std::thread::scope(|scope| {
-        let timer = scope.spawn(|| timer(ignored, sink, &done, pacer));
-        let out = {
+    let (served, pacer) = std::thread::scope(|scope| {
+        let timer = scope.spawn(|| timer((ignored, sink, out), &done, pacer));
+        let served = {
             let _end = EndOnDrop(&done);
             serve()
         };
-        (out, timer.join())
+        (served, timer.join())
     });
     let counts = ignored.snapshot();
     if let Ok(mut pacer) = pacer
         && let Some(text) = pacer.last(&counts)
     {
-        keep_or_say(&mut pacer, sink, (&text, &counts));
+        keep_or_say(&mut pacer, (sink, out), (&text, &counts));
     }
-    say(&ignored.summary());
-    out
+    say(out, &ignored.summary());
+    served
 }
 
 /// What is said when the store refuses a row. Fixed text.
@@ -317,6 +332,33 @@ mod tests {
     }
 
     #[test]
+    fn a_row_never_shows_a_name_above_its_requests_and_nothing_is_lost_for_the_next_row() {
+        let t0 = Instant::now();
+        let mut p = Pacer::new(t0, S);
+        // a request half counted: its requests but not yet its name
+        let mut c1 = Counts::of(0);
+        c1.set_requests(1);
+        let row = p.due(at(t0, 600), &c1).flush.expect("a row");
+        assert_eq!(row, "requests=1");
+        p.kept(&c1);
+        // the next reading has that request's name twice over
+        let mut c2 = Counts::of(2);
+        c2.set_name0(3);
+        let row = p.due(at(t0, 1200), &c2).flush.expect("a row");
+        assert_eq!(row, "requests=1 forwarded=1", "held to the requests");
+        p.kept(&c2);
+        // a reading whose requests did not grow has no row, however much a name grew
+        let mut same = c2.clone();
+        same.set_name0(5);
+        assert_eq!(p.due(at(t0, 1800), &same).flush, None);
+        // the held-back names come with the next requests
+        let mut c3 = Counts::of(4);
+        c3.set_name0(3);
+        let row = p.due(at(t0, 2400), &c3).flush.expect("a row");
+        assert_eq!(row, "requests=2 forwarded=2");
+    }
+
+    #[test]
     fn what_is_handed_out_is_names_and_numbers_only() {
         let text = Counts::of(9).render();
         assert!(
@@ -381,7 +423,7 @@ mod tests {
             let ignored = Ignored::default();
             ignored.bump(3);
             let sink = Sink::new(1);
-            while_reporting_with(&ignored, &sink, quick(), || {
+            while_reporting_with(&ignored, (&sink, &stderr()), quick(), || {
                 let until = Instant::now() + Duration::from_secs(8);
                 while sink.offered().len() < 2 && Instant::now() < until {
                     std::thread::sleep(Duration::from_millis(10));
@@ -397,13 +439,13 @@ mod tests {
         within_ten_seconds(|| {
             let ignored = Ignored::default();
             let sink = Sink::new(0);
-            while_reporting_with(&ignored, &sink, quick(), || ignored.bump(2));
+            while_reporting_with(&ignored, (&sink, &stderr()), quick(), || ignored.bump(2));
             assert_eq!(
                 sink.offered(),
                 [("requests=2 forwarded=2".to_string(), true)]
             );
             let none = Sink::new(0);
-            while_reporting_with(&Ignored::default(), &none, quick(), || ());
+            while_reporting_with(&Ignored::default(), (&none, &stderr()), quick(), || ());
             assert!(none.offered().is_empty(), "nothing counted, nothing kept");
         });
     }
@@ -414,7 +456,7 @@ mod tests {
             let ignored = Ignored::default();
             let sink = Sink::new(0);
             let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                while_reporting_with(&ignored, &sink, quick(), || -> () {
+                while_reporting_with(&ignored, (&sink, &stderr()), quick(), || -> () {
                     panic!("serve failed")
                 })
             }));
@@ -455,12 +497,57 @@ mod tests {
         }
     }
 
+    /// stderr as the server passes it, for the tests that do not look at what is said.
+    fn stderr() -> Out {
+        Mutex::new(Box::new(std::io::stderr()))
+    }
+
+    /// A writer that keeps what it is given, readable after the thread ends.
+    #[derive(Clone, Default)]
+    struct Capture(std::sync::Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Capture {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
     #[test]
-    fn saying_a_line_to_a_closed_stream_does_not_panic_and_a_good_one_gets_the_line() {
-        say_to(&mut Closed, "a line");
-        let mut out = Vec::new();
-        say_to(&mut out, "a line");
-        assert_eq!(out, b"a line\n");
+    fn a_closed_output_does_not_end_the_timer_and_a_good_one_gets_the_lines() {
+        within_ten_seconds(|| {
+            // every write fails: the periodic rows must still be kept (a panicking write would end the timer first)
+            let ignored = Ignored::default();
+            ignored.bump(3);
+            let sink = Sink::new(0);
+            let closed: Out = Mutex::new(Box::new(Closed));
+            while_reporting_with(&ignored, (&sink, &closed), quick(), || {
+                let until = Instant::now() + Duration::from_secs(8);
+                while sink.offered().is_empty() && Instant::now() < until {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            });
+            assert_eq!(
+                sink.offered(),
+                [("requests=3 forwarded=3".to_string(), true)]
+            );
+            // the same run into a writer that works: the live line and the shutdown summary arrive
+            let cap = Capture::default();
+            let out: Out = Mutex::new(Box::new(cap.clone()));
+            let sink = Sink::new(0);
+            while_reporting_with(&ignored, (&sink, &out), quick(), || {
+                std::thread::sleep(Duration::from_millis(300));
+            });
+            let said = String::from_utf8(cap.0.lock().unwrap().clone()).unwrap();
+            assert!(said.contains(LINE_PREFIX), "{said}");
+            assert!(
+                said.contains("forwarded identity headers ignored"),
+                "{said}"
+            );
+        });
     }
 
     #[test]
@@ -468,7 +555,7 @@ mod tests {
         within_ten_seconds(|| {
             let ignored = Ignored::default();
             let sink = Sink::new(0);
-            while_reporting_with(&ignored, &sink, quick(), || {
+            while_reporting_with(&ignored, (&sink, &stderr()), quick(), || {
                 std::thread::sleep(Duration::from_millis(500));
             });
             // one look every 50 ms is 10 in half a second; without the sleep it is millions

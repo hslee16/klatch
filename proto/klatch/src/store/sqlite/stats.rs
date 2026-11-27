@@ -17,6 +17,7 @@ use crate::domain::{
     ClaimCounts, Counts, Result, StatsOptions, UsageStats, claim_class, day_of, vocab,
 };
 use crate::keys::Key;
+use crate::store::FORWARDED_IGNORED_ACTION;
 use rusqlite::types::Value;
 use rusqlite::{Connection, Params, params_from_iter};
 use std::collections::{BTreeMap, HashSet};
@@ -334,7 +335,10 @@ fn collect(conn: &Connection, o: &StatsOptions) -> Result<UsageStats> {
     s.audit = words(
         conn,
         "admin_audit",
-        "SELECT action,COUNT(*) c FROM admin_audit WHERE ?1 IS NOT 0 AND ts>=?2 AND action<>'forwarded-ignored' GROUP BY action ORDER BY c DESC, 1",
+        &format!(
+            "SELECT action,COUNT(*) c FROM admin_audit WHERE ?1 IS NOT 0 AND ts>=?2 AND action<>'{}' GROUP BY action ORDER BY c DESC, 1",
+            FORWARDED_IGNORED_ACTION
+        ),
         o,
     )?;
     fill_credentials(conn, o, &mut s)?;

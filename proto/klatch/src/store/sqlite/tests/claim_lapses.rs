@@ -3,7 +3,9 @@
 //! passive, ask and released claims are never recorded; it holds room, path, owner and times, never a reason.
 
 use super::*;
-use crate::domain::{LAPSE_RECORD_CAP, LAPSED_CLAIM_MAX, LAPSED_WINDOW_SECS, PASSIVE_REASON};
+use crate::domain::{
+    LAPSE_RECORD_CAP, LAPSE_TOTAL_CAP, LAPSED_CLAIM_MAX, LAPSED_WINDOW_SECS, PASSIVE_REASON,
+};
 
 const WINDOW: (i64, usize) = (LAPSED_WINDOW_SECS, LAPSED_CLAIM_MAX);
 
@@ -294,4 +296,75 @@ fn a_swept_record_and_a_newer_unswept_row_for_one_holder_and_path_are_one_event(
         lapses(&s, "r", 250),
         [("job".to_string(), "bob".to_string(), 200)]
     );
+}
+
+#[test]
+fn a_record_past_the_window_is_pruned_by_a_sweep_in_which_nothing_lapsed() {
+    let s = store();
+    take(&s, ("r", "bob", "job"), 100, 0);
+    take(&s, ("r", "alice", "x"), 50_000, 150);
+    assert_eq!(rows(&s), 1);
+    // no lapse at all this time: an attempt long after the window still clears the old record
+    take(
+        &s,
+        ("r", "carol", "y"),
+        50_000,
+        100 + LAPSED_WINDOW_SECS + 5,
+    );
+    assert_eq!(rows(&s), 0);
+}
+
+#[test]
+fn the_total_across_rooms_is_capped_and_the_oldest_lapses_go_first() {
+    let s = store();
+    let n = LAPSE_TOTAL_CAP + 20;
+    for i in 0..n {
+        // one lapse per room, all taken at once and lapsing in order, four to a second
+        take(
+            &s,
+            (&format!("room{i}"), "bob", "job"),
+            10 + i as i64 / 4,
+            0,
+        );
+    }
+    take(&s, ("sweeper", "alice", "x"), 50_000, 400);
+    assert_eq!(rows(&s) as usize, LAPSE_TOTAL_CAP, "the total cap");
+    assert_eq!(
+        lapses(&s, &format!("room{}", n - 1), 401).len(),
+        1,
+        "newest kept"
+    );
+    assert!(lapses(&s, "room0", 401).is_empty(), "oldest dropped");
+}
+
+#[test]
+fn a_removed_member_has_no_lapse_left_to_report() {
+    let s = store();
+    s.join("r", "bob", 0).unwrap();
+    take(&s, ("r", "bob", "job"), 100, 0);
+    take(&s, ("r", "dave", "other"), 100, 0);
+    take(&s, ("r", "alice", "x"), 50_000, 150);
+    assert_eq!(lapses(&s, "r", 160).len(), 2);
+    s.remove_member("r", "bob", 160).unwrap();
+    let left = lapses(&s, "r", 161);
+    assert_eq!(left.len(), 1, "{left:?}");
+    assert_eq!(left[0].1, "dave", "other holders keep their record");
+}
+
+#[test]
+fn a_sweep_of_many_lapses_records_each_as_an_expiry() {
+    let s = store();
+    for i in 0..30 {
+        take(&s, ("r", "bob", &format!("job{i}")), 100, 0);
+    }
+    take(&s, ("r", "alice", "x"), 50_000, 150);
+    let expired: i64 = s
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM claim_events WHERE event='expired'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(expired, 30);
 }

@@ -58,35 +58,52 @@ impl SqliteStore {
 
     /// Record an event; a failure is counted and swallowed.
     pub(super) fn record_claim_event(&self, now: i64, e: &ClaimEvent) {
-        if self.try_record(now, e).is_err() {
+        self.record_claim_events(now, std::slice::from_ref(e));
+    }
+
+    /// Record several events with one prune after the last insert, not one per event (a sweep of thousands of lapses
+    /// paid for a prune each, #1620). The rows kept are the same as with one call each: the prune keeps the newest
+    /// rows by id. A failure is counted once and swallowed.
+    pub(super) fn record_claim_events(&self, now: i64, events: &[ClaimEvent]) {
+        if events.is_empty() {
+            return;
+        }
+        if self.try_record(now, events).is_err() {
             self.claim_record_errors
                 .set(self.claim_record_errors.get() + 1);
         }
     }
 
-    fn try_record(&self, now: i64, e: &ClaimEvent) -> Result<()> {
-        self.exec(
-            "INSERT INTO claim_events(ts,room,event,class,reason,held,waited) VALUES(?1,?2,?3,?4,?5,?6,?7)",
-            params![now, e.room, e.event, claim_class(e.path), e.reason, e.held, e.waited],
-        )?;
+    fn try_record(&self, now: i64, events: &[ClaimEvent]) -> Result<()> {
+        for e in events {
+            self.exec(
+                "INSERT INTO claim_events(ts,room,event,class,reason,held,waited) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                params![now, e.room, e.event, claim_class(e.path), e.reason, e.held, e.waited],
+            )?;
+        }
         self.exec(
             "DELETE FROM claim_events WHERE ts<?1",
             params![now - CLAIM_EVENT_MAX_AGE_SECS],
         )?;
         // each kind keeps its own newest rows: the explicit events and the passive ones never evict each other
-        let (like, cap) = if e.event.starts_with("passive_") {
-            ("LIKE", PASSIVE_EVENT_MAX_ROWS)
-        } else {
-            ("NOT LIKE", CLAIM_EVENT_MAX_ROWS)
-        };
-        self.exec(
-            &format!(
-                "DELETE FROM claim_events WHERE event {like} 'passive\\_%' ESCAPE '\\' AND id <= \
-                 COALESCE((SELECT id FROM claim_events WHERE event {like} 'passive\\_%' ESCAPE '\\' \
-                 ORDER BY id DESC LIMIT 1 OFFSET ?1), 0)"
-            ),
-            params![cap],
-        )?;
+        let passive = events.iter().any(|e| e.event.starts_with("passive_"));
+        let explicit = events.iter().any(|e| !e.event.starts_with("passive_"));
+        for (wanted, like, cap) in [
+            (explicit, "NOT LIKE", CLAIM_EVENT_MAX_ROWS),
+            (passive, "LIKE", PASSIVE_EVENT_MAX_ROWS),
+        ] {
+            if !wanted {
+                continue;
+            }
+            self.exec(
+                &format!(
+                    "DELETE FROM claim_events WHERE event {like} 'passive\\_%' ESCAPE '\\' AND id <= \
+                     COALESCE((SELECT id FROM claim_events WHERE event {like} 'passive\\_%' ESCAPE '\\' \
+                     ORDER BY id DESC LIMIT 1 OFFSET ?1), 0)"
+                ),
+                params![cap],
+            )?;
+        }
         Ok(())
     }
 
