@@ -364,7 +364,7 @@ fn luhn(ds: &[u8]) -> bool {
             }
         })
         .sum();
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 const PASSWORD_WORDS: &[&str] = &[
