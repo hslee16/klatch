@@ -15,7 +15,7 @@ pub type Applied = (i64, &'static str);
 
 /// How many crossings one member may have waiting for a verdict at once (#1736). Raisable or lowerable by the human
 /// through the policy key `crossing:cap` (`admin_set_crossing_cap`).
-pub const DEFAULT_CROSSING_CAP: usize = 20;
+pub(super) const DEFAULT_CROSSING_CAP: usize = 20;
 /// The most the cap may be set to.
 const MAX_CROSSING_CAP: usize = 10_000;
 const CAP_KEY: &str = "crossing:cap";

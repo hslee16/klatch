@@ -2,6 +2,7 @@
 //! The request is queued as a pointer; a verdict (judge or reviewer) releases, redacts or blocks it; the floors are
 //! checked again at release.
 
+use super::super::crossing::DEFAULT_CROSSING_CAP;
 use super::*;
 use crate::domain::Verdict;
 
