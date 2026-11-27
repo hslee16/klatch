@@ -587,3 +587,10 @@ fn reviews_a_capped_enqueue_stops_at_the_requesters_cap_and_returns_a_waiting_du
 fn reviews_a_capped_enqueue_never_hands_a_requester_another_requesters_item() {
     c::reviews::a_capped_enqueue_never_hands_a_requester_another_requesters_item(store);
 }
+
+#[test]
+fn reviews_an_enqueue_matches_a_waiting_item_only_for_the_same_requester_and_target_room() {
+    c::reviews::an_enqueue_matches_a_waiting_item_only_for_the_same_requester_and_target_room(
+        store,
+    );
+}

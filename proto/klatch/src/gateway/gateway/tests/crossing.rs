@@ -573,3 +573,89 @@ fn a_member_at_the_cap_asking_for_a_message_another_member_queued_is_refused_not
     assert_eq!(g.request_crossing(&bob(), "vault", 2, "open").unwrap(), own);
     assert_ne!(first, own);
 }
+
+fn carol() -> Principal {
+    Principal::unattributed("carol")
+}
+
+/// `vault` with alice and bob both cleared and joined, a second public room `other` that both joined (#1743).
+fn two_askers() -> (Gateway<SpyStore>, Rc<std::cell::Cell<i64>>) {
+    let (g, t) = world();
+    g.admin_set_clearance(&admin(), "bob", "private").unwrap();
+    g.join(&bob(), "vault").unwrap();
+    g.join(&alice(), "other").unwrap();
+    g.join(&bob(), "other").unwrap();
+    g.join(&carol(), "open").unwrap();
+    g.join(&carol(), "other").unwrap();
+    (g, t)
+}
+
+fn sees(g: &Gateway<SpyStore>, room: &str) -> Vec<String> {
+    g.read(&carol(), room, false)
+        .unwrap()
+        .into_iter()
+        .map(|m| m.body)
+        .collect()
+}
+
+#[test]
+fn a_second_member_asking_for_the_same_crossing_gets_their_own_item_and_target() {
+    let (g, _) = two_askers();
+    let a = g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    let b = g.request_crossing(&bob(), "vault", 1, "other").unwrap();
+    assert_ne!(a, b, "bob was handed alice's queue id");
+    let q = g.store.pending_reviews(10).unwrap();
+    assert_eq!(q.len(), 2);
+    let row = |id: i64| q.iter().find(|r| r.id == id).unwrap();
+    assert_eq!(
+        (row(a).requester.as_str(), row(a).to_room.as_str()),
+        ("alice", "open")
+    );
+    assert_eq!(
+        (row(b).requester.as_str(), row(b).to_room.as_str()),
+        ("bob", "other")
+    );
+}
+
+#[test]
+fn a_member_retrying_gets_their_own_id_back_and_one_item_stays() {
+    let (g, _) = two_askers();
+    let a = g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    let b = g.request_crossing(&bob(), "vault", 1, "open").unwrap();
+    assert_ne!(a, b);
+    assert_eq!(g.request_crossing(&alice(), "vault", 1, "open").unwrap(), a);
+    assert_eq!(g.request_crossing(&bob(), "vault", 1, "open").unwrap(), b);
+    assert_eq!(g.store.pending_reviews(10).unwrap().len(), 2);
+}
+
+#[test]
+fn the_same_member_asking_for_another_room_makes_a_separate_item() {
+    let (g, _) = two_askers();
+    let a = g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    let b = g.request_crossing(&alice(), "vault", 1, "other").unwrap();
+    assert_ne!(a, b);
+    assert_eq!(
+        g.request_crossing(&alice(), "vault", 1, "other").unwrap(),
+        b
+    );
+}
+
+#[test]
+fn a_verdict_releases_into_the_target_of_its_own_item_and_no_other_room() {
+    let (g, _) = two_askers();
+    let a = g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    let b = g.request_crossing(&bob(), "vault", 1, "other").unwrap();
+    g.review_verdict(&rev(), b, &Verdict::Allow).unwrap();
+    assert_eq!(sees(&g, "other"), vec!["the plan is blue"]);
+    assert!(
+        sees(&g, "open").is_empty(),
+        "bob's verdict reached alice's room"
+    );
+    let left = g.store.pending_reviews(10).unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].id, a);
+    g.review_verdict(&rev(), a, &Verdict::Deny("no".into()))
+        .unwrap();
+    assert!(sees(&g, "open").is_empty(), "a deny released something");
+    assert_eq!(sees(&g, "other").len(), 1);
+}

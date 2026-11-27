@@ -312,3 +312,61 @@ pub fn a_capped_enqueue_never_hands_a_requester_another_requesters_item<S: Store
         .unwrap();
     assert_ne!(other, bob);
 }
+
+/// The "already waiting" match is the whole crossing: message, label, requester and target room (#1743). The uncapped
+/// enqueue must agree with the capped one, so a second member, or a second target room, is never handed the first item.
+pub fn an_enqueue_matches_a_waiting_item_only_for_the_same_requester_and_target_room<S: Store>(
+    make: fn() -> S,
+) {
+    fn cross<'a>(seq: i64, who: &'a str, to: &'a str) -> NewReview<'a> {
+        NewReview::new("v", seq, "public", "crossing").crossing(to, who)
+    }
+    let s = make();
+    let first = s.enqueue_review(&cross(1, "alice", "open"), 10).unwrap();
+    // the same member and target is the same item
+    assert_eq!(
+        s.enqueue_review(&cross(1, "alice", "open"), 11).unwrap(),
+        first
+    );
+    // another member asking for the same crossing is queued as their own item
+    let bob = s.enqueue_review(&cross(1, "bob", "open"), 12).unwrap();
+    assert_ne!(bob, first, "bob was handed alice's item");
+    // the same member asking for another room is a separate item
+    let other = s.enqueue_review(&cross(1, "alice", "other"), 13).unwrap();
+    assert!(other != first && other != bob);
+    // each keeps its own requester and target room, and a repeat finds its own
+    let rows = s.pending_reviews(10).unwrap();
+    let find = |id: i64| rows.iter().find(|r| r.id == id).unwrap();
+    assert_eq!(
+        (find(first).requester.as_str(), find(first).to_room.as_str()),
+        ("alice", "open")
+    );
+    assert_eq!(
+        (find(bob).requester.as_str(), find(bob).to_room.as_str()),
+        ("bob", "open")
+    );
+    assert_eq!(
+        (find(other).requester.as_str(), find(other).to_room.as_str()),
+        ("alice", "other")
+    );
+    assert_eq!(rows.len(), 3);
+    assert_eq!(s.enqueue_review(&cross(1, "bob", "open"), 14).unwrap(), bob);
+    assert_eq!(
+        s.enqueue_review(&cross(1, "alice", "other"), 14).unwrap(),
+        other
+    );
+    // a plain item (no target, no requester) still queues once per label
+    let plain = s.enqueue_review(&item("v", 1), 15).unwrap();
+    assert!(![first, bob, other].contains(&plain));
+    assert_eq!(s.enqueue_review(&item("v", 1), 16).unwrap(), plain);
+    // a verdict on one item leaves the others waiting, and a new ask after it is a new item
+    assert!(
+        s.resolve_review(&ReviewResolution::new(first, "allow", ""), 20)
+            .unwrap()
+    );
+    assert_eq!(s.enqueue_review(&cross(1, "bob", "open"), 21).unwrap(), bob);
+    assert_ne!(
+        s.enqueue_review(&cross(1, "alice", "open"), 22).unwrap(),
+        first
+    );
+}
