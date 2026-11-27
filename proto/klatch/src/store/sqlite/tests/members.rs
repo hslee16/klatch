@@ -109,3 +109,35 @@ fn a_status_remembers_when_it_was_set_and_a_return_clears_only_done() {
     let m = &s.members("r").unwrap()[0];
     assert_eq!((m.status.as_deref(), m.status_ts), (None, 0));
 }
+
+// The feed room (#1404): gh-watch posts GitHub events there; a seat in it starts muted, so only an explicit read, a
+// mention or an unmute shows the events to a member.
+#[test]
+fn a_seat_in_the_feed_room_starts_muted_however_it_is_made() {
+    let s = SqliteStore::open(&temp_db("feed-muted"), &crate::store::insecure_test_key()).unwrap();
+    let feed = crate::domain::FEED_ROOM;
+    s.join(feed, "joined", 1).unwrap();
+    s.post(Seat::new(feed, "poster"), "PR #1 opened", 2)
+        .unwrap();
+    s.read(Seat::new(feed, "reader"), true, 3).unwrap();
+    s.advance_cursor(Seat::new(feed, "acker"), Seq(1), 4)
+        .unwrap();
+    for who in ["joined", "poster", "reader", "acker"] {
+        assert!(s.is_muted(Seat::new(feed, who)).unwrap(), "{who}");
+    }
+}
+
+#[test]
+fn only_the_feed_room_starts_muted_and_a_member_can_unmute_it() {
+    let s = SqliteStore::open(&temp_db("feed-only"), &crate::store::insecure_test_key()).unwrap();
+    s.join("lobby", "alice", 1).unwrap();
+    s.join("feed2", "alice", 1).unwrap();
+    assert!(!s.is_muted(Seat::new("lobby", "alice")).unwrap());
+    assert!(!s.is_muted(Seat::new("feed2", "alice")).unwrap());
+    let at = Seat::new(crate::domain::FEED_ROOM, "alice");
+    s.join(at.room, "alice", 1).unwrap();
+    s.set_muted(at, false, 2).unwrap();
+    s.join(at.room, "alice", 3).unwrap();
+    s.read(at, true, 4).unwrap();
+    assert!(!s.is_muted(at).unwrap(), "an unmute is kept");
+}

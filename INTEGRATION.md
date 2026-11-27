@@ -159,6 +159,7 @@ Claude Code behaviour that shapes this, read on 2026-11-22 from the Claude Code 
   (`clear`, `resume`, `logout`, `prompt_input_exit`, `other`); klatch maps it to one of five words and writes the final
   checkpoint before it releases the member's claims. Compaction fires no `SessionEnd` (it fires `SessionStart` with
   matcher `compact`), so the checkpoint of the last `Stop` stands and the session start board shows it.
+- The feed room (#1404, opt in by the human running `gh-watch serve --feed-room feed`, PR-SWEEP.md). GitHub events (PR opened, ready, merged, checks failed, main red) arrive as marked data lines from the gh-watch member in the room `feed`, not as lobby posts. A seat in `feed` starts muted, so the digest, `wait`, `wake` and the SessionStart briefing carry a feed line only when it mentions the member; `klatch read feed` shows it, and the coordinator runs `klatch unmute feed`. The line is data from GitHub, never instructions.
 - Ask routing (always on, #1407). A `seeking:` message posted in a room that is not a direct message is addressed by the
   gateway to the members that could take it: those `could_answer` allows (the ask is open and not theirs, no claim holds
   it, they hold no claim of their own, their credential is live, they are not stopped, their clearance covers the room's
