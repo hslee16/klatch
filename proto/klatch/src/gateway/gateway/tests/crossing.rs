@@ -550,3 +550,26 @@ fn a_message_already_waiting_is_returned_at_the_cap_and_adds_nothing() {
         id
     );
 }
+
+#[test]
+fn a_member_at_the_cap_asking_for_a_message_another_member_queued_is_refused_not_told_queued() {
+    let (g, _) = world();
+    g.admin_set_clearance(&admin(), "bob", "private").unwrap();
+    g.join(&bob(), "vault").unwrap();
+    g.admin_set_crossing_cap(&admin(), Some(1)).unwrap();
+    more_vault_messages(&g, 1);
+    let first = g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    let own = g.request_crossing(&bob(), "vault", 2, "open").unwrap();
+    // bob is at the cap; message 1 is alice's, so it is no place of his
+    let e = g.request_crossing(&bob(), "vault", 1, "open").unwrap_err();
+    assert_eq!(rule_of(e), "crossing-cap");
+    assert!(
+        g.my_refusals(&bob(), 10)
+            .unwrap()
+            .iter()
+            .any(|r| r.rule == "crossing-cap")
+    );
+    // his own message is still his own item
+    assert_eq!(g.request_crossing(&bob(), "vault", 2, "open").unwrap(), own);
+    assert_ne!(first, own);
+}

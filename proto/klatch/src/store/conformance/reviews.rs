@@ -252,3 +252,63 @@ pub fn a_capped_enqueue_stops_at_the_requesters_cap_and_returns_a_waiting_duplic
             .is_some()
     );
 }
+
+pub fn a_capped_enqueue_never_hands_a_requester_another_requesters_item<S: Store>(make: fn() -> S) {
+    fn cross<'a>(seq: i64, who: &'a str, to: &'a str) -> NewReview<'a> {
+        NewReview::new("v", seq, "public", "crossing").crossing(to, who)
+    }
+    let s = make();
+    let bob = s
+        .enqueue_review_capped(&cross(1, "bob", "open"), 10, 1)
+        .unwrap()
+        .unwrap();
+    // alice is below the cap: she gets her own item, never bob's id
+    let alice = s
+        .enqueue_review_capped(&cross(1, "alice", "open"), 11, 1)
+        .unwrap()
+        .unwrap();
+    assert_ne!(alice, bob, "alice was handed bob's item");
+    // both are now at the cap: asking for the same message again returns the requester's own item
+    assert_eq!(
+        s.enqueue_review_capped(&cross(1, "bob", "open"), 12, 1)
+            .unwrap(),
+        Some(bob)
+    );
+    assert_eq!(
+        s.enqueue_review_capped(&cross(1, "alice", "open"), 12, 1)
+            .unwrap(),
+        Some(alice)
+    );
+    // at the cap, a message another member queued is a refusal, not a false "queued"
+    assert_eq!(
+        s.enqueue_review_capped(&cross(2, "alice", "open"), 13, 1)
+            .unwrap(),
+        None
+    );
+    let carol = s
+        .enqueue_review_capped(&cross(3, "carol", "open"), 13, 1)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        s.enqueue_review_capped(&cross(1, "carol", "open"), 14, 1)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        s.enqueue_review_capped(&cross(3, "carol", "open"), 14, 1)
+            .unwrap(),
+        Some(carol)
+    );
+    // the same member asking for the same message into another room is a different crossing: refused at the cap
+    assert_eq!(
+        s.enqueue_review_capped(&cross(1, "bob", "other"), 15, 1)
+            .unwrap(),
+        None
+    );
+    // below the cap it is queued as its own item
+    let other = s
+        .enqueue_review_capped(&cross(1, "bob", "other"), 16, 2)
+        .unwrap()
+        .unwrap();
+    assert_ne!(other, bob);
+}

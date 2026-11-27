@@ -582,3 +582,8 @@ fn reviews_pending_pages_by_cursor_and_waiting_crossings_are_counted_per_request
 fn reviews_a_capped_enqueue_stops_at_the_requesters_cap_and_returns_a_waiting_duplicate() {
     c::reviews::a_capped_enqueue_stops_at_the_requesters_cap_and_returns_a_waiting_duplicate(store);
 }
+
+#[test]
+fn reviews_a_capped_enqueue_never_hands_a_requester_another_requesters_item() {
+    c::reviews::a_capped_enqueue_never_hands_a_requester_another_requesters_item(store);
+}

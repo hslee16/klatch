@@ -292,8 +292,10 @@ frees a place and another member's queue is unaffected. The judge drain and the 
 waiting queue by age in pages of 100 (`DRAIN_LIMIT`), so items behind 100 deferred or unreadable ones are still judged
 and shown; nothing is starved. The verdict semantics, the one-row-per-item audit and the fail-closed release are
 unchanged, and no schema changed. The count and the insert happen in one store transaction (`enqueue_review_capped`), so two processes of
-one member cannot both take the last place. A repeat request for a message already waiting returns the waiting item and
-adds nothing, so it is not refused at the cap. A drain run is bounded by the cap times the number of members. The
+one member cannot both take the last place. A repeat request by the same member for the same message into the same room returns that member's waiting item and
+adds nothing, so it is not refused at the cap; a request for a message another member queued is that member's own
+request (queued as its own item below the cap, refused at the cap), so a member is never handed another member's
+item. A drain run is bounded by the cap times the number of members. The
 walk fails with an error, and leaves the queue as it is, if a store hands back a page that does not move forward.
 The cap is per member name, not per owner: one owner with many identities has many caps (#1745).
 

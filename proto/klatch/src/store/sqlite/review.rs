@@ -15,11 +15,22 @@ impl SqliteStore {
         cap: Option<usize>,
     ) -> Result<Option<i64>> {
         self.immediate(|| {
-            let waiting = self.optional(
-                "SELECT id FROM review_queue WHERE room=?1 AND seq=?2 AND to_label=?3 AND resolved IS NULL",
-                params![item.room, item.seq, item.to_label],
-                |r| r.get(0),
-            )?;
+            // With a cap, only the requester's own item for the same target counts as "already waiting": another
+            // member's item is not handed back, so a member at the cap cannot learn that someone else queued a message
+            // and cannot be told "queued" for a request that was never made (#1736). The uncapped path keeps its old key
+            // (#1743).
+            let waiting = match cap {
+                None => self.optional(
+                    "SELECT id FROM review_queue WHERE room=?1 AND seq=?2 AND to_label=?3 AND resolved IS NULL",
+                    params![item.room, item.seq, item.to_label],
+                    |r| r.get(0),
+                )?,
+                Some(_) => self.optional(
+                    "SELECT id FROM review_queue WHERE room=?1 AND seq=?2 AND to_label=?3 AND resolved IS NULL AND requester=?4 AND to_room=?5",
+                    params![item.room, item.seq, item.to_label, item.requester, item.to_room],
+                    |r| r.get(0),
+                )?,
+            };
             if let Some(id) = waiting {
                 return Ok(Some(id));
             }

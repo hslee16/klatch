@@ -209,6 +209,54 @@ mod tests {
         assert!(pages.next(&IgnoresCursor).is_err());
     }
 
+    /// Pages forward forever (a new id each call), as a queue that never ends.
+    struct Endless(std::cell::Cell<i64>);
+    impl crate::store::ReviewStore for Endless {
+        fn pending_reviews_after(&self, after: i64, _limit: usize) -> Result<Vec<QueuedReview>> {
+            self.0.set(self.0.get().max(after) + 1);
+            Ok(vec![QueuedReview {
+                id: self.0.get(),
+                ..QueuedReview::default()
+            }])
+        }
+    }
+
+    /// Returns ids out of order within one page.
+    struct Unordered;
+    impl crate::store::ReviewStore for Unordered {
+        fn pending_reviews_after(&self, _after: i64, _limit: usize) -> Result<Vec<QueuedReview>> {
+            Ok([5, 3]
+                .map(|id| QueuedReview {
+                    id,
+                    ..QueuedReview::default()
+                })
+                .to_vec())
+        }
+    }
+
+    #[test]
+    fn a_walk_that_never_ends_stops_at_the_page_cap_with_an_error() {
+        let mut pages = PendingPages::new();
+        let store = Endless(std::cell::Cell::new(0));
+        let mut n = 0;
+        let mut end = Ok(None);
+        // bounded, so a missing cap fails this test by assertion and does not hang it
+        for _ in 0..MAX_PAGES + 10 {
+            end = pages.next(&store);
+            match end {
+                Ok(Some(_)) => n += 1,
+                _ => break,
+            }
+        }
+        assert!(end.is_err(), "the walk ended without an error");
+        assert_eq!(n, MAX_PAGES);
+    }
+
+    #[test]
+    fn a_page_out_of_order_is_an_error() {
+        assert!(PendingPages::new().next(&Unordered).is_err());
+    }
+
     #[test]
     fn the_pages_of_a_queue_cover_every_item_once_in_order() {
         let s = SqliteStore::open_in_memory().unwrap();

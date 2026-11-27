@@ -54,3 +54,40 @@ fn a_version_33_queue_gains_told_and_old_outcomes_are_not_told_again() {
     assert_eq!(told[0].seq, 2);
     assert!(s.crossing_notices("v", "alice").unwrap().is_empty());
 }
+
+#[test]
+fn concurrent_connections_of_one_requester_cannot_exceed_the_cap() {
+    // #1736: the count and the insert are one transaction, so exactly `cap` of the racing connections are accepted
+    const CAP: usize = 5;
+    for round in 0..10 {
+        let path = temp_db(&format!("cap-race{round}"));
+        let key = crate::store::insecure_test_key;
+        drop(SqliteStore::open(&path, &key()).unwrap());
+        let gate = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let handles: Vec<_> = (0..8i64)
+            .map(|t| {
+                let (path, gate) = (path.to_path_buf(), gate.clone());
+                std::thread::spawn(move || {
+                    let s = SqliteStore::open(&path, &key()).unwrap();
+                    let it =
+                        NewReview::new("r", t + 1, "public", "crossing").crossing("open", "alice");
+                    gate.wait();
+                    s.enqueue_review_capped(&it, 1, CAP).unwrap().is_some()
+                })
+            })
+            .collect();
+        let accepted = handles
+            .into_iter()
+            .filter(|_| true)
+            .map(|h| h.join().unwrap())
+            .filter(|ok| *ok)
+            .count();
+        let s = SqliteStore::open(&path, &key()).unwrap();
+        assert_eq!(
+            (accepted, s.waiting_crossings_of("alice").unwrap()),
+            (CAP, CAP),
+            "round {round}"
+        );
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+}

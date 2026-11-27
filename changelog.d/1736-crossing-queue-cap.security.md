@@ -1,3 +1,4 @@
 - A member may have at most 20 crossings waiting for a verdict (policy key `crossing:cap`); a request over the cap is refused with the rule `crossing-cap` and no message text (#1736).
 - The judge drain and the reviewer's `review_next` now walk the whole waiting queue by age, so items behind 100 stuck ones are no longer skipped (#1736).
 - Counting and queuing a crossing is one store transaction, and a refusal at the cap writes one refusal row a minute per member (#1736).
+- A crossing request never returns another member's queue item; at the cap it is refused (#1736).
