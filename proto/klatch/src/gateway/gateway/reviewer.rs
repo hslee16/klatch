@@ -43,8 +43,8 @@ impl<S: Store> Gateway<S> {
             }
             if let Some(mut item) = load_item(&self.store, &q)? {
                 if !q.detail.is_empty() {
-                    // why the rules flagged it: plain data from the rules, not an instruction to the reviewer
-                    item.reason = format!("{}; rules flag (data): {}", item.reason, q.detail);
+                    // why a judge flagged it (the rules, or the hosted judge): plain data, not an instruction to the reviewer
+                    item.reason = format!("{}; judge flag (data): {}", item.reason, q.detail);
                 }
                 return Ok(Some(item));
             }

@@ -166,3 +166,23 @@ pub fn a_crossing_is_told_to_its_requester_once_while_waiting_and_once_for_its_o
     assert!(s.crossing_notices("v", "alice").unwrap().is_empty());
     assert_eq!(ids(&s.crossing_notices("v", "bob").unwrap()), vec![other]);
 }
+
+pub fn a_flag_is_kept_on_a_waiting_item_and_a_verdict_replaces_it<S: Store>(make: fn() -> S) {
+    let s = make();
+    let id = s.enqueue_review(&item("v", 1), 10).unwrap();
+    s.set_review_flag(id, "screen:injection").unwrap();
+    s.set_review_flag(id, "screen:injection").unwrap();
+    let waiting = &s.pending_reviews(10).unwrap()[0];
+    assert_eq!(waiting.detail, "screen:injection", "the flag is kept");
+    assert!(waiting.verdict.is_empty(), "a flag is not a verdict");
+    assert!(
+        s.resolve_review(&ReviewResolution::new(id, "deny", "by r: no"), 20)
+            .unwrap()
+    );
+    s.set_review_flag(id, "late").unwrap();
+    assert_eq!(
+        s.reviews(10).unwrap()[0].detail,
+        "by r: no",
+        "a flag on a resolved item changes nothing"
+    );
+}

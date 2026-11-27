@@ -25,6 +25,7 @@ enum Fault {
     CrossingLosesItsRequester,
     DenyIsDueToApply,
     NoticesRepeat,
+    FlagIsDropped,
     StatusIgnoresTheRoom,
     LastParentWins,
     HookRunsAreNotCounted,
@@ -307,6 +308,19 @@ impl ReviewStore for Faulty {
         Ok(true)
     }
 
+    fn set_review_flag(&self, id: i64, note: &str) -> Result<()> {
+        if self.fault != Fault::FlagIsDropped
+            && let Some(item) = self
+                .queue
+                .borrow_mut()
+                .iter_mut()
+                .find(|x| x.id == id && x.verdict.is_empty())
+        {
+            item.detail = note.into();
+        }
+        Ok(())
+    }
+
     fn set_review_text(&self, id: i64, text: &str) -> Result<()> {
         self.redacted.borrow_mut().insert(id, text.into());
         Ok(())
@@ -412,6 +426,7 @@ fn cases() -> Vec<(&'static str, Check, Fault)> {
         ("crossing keeps requester", c::reviews::a_crossing_item_keeps_its_target_requester_and_outcome::<Faulty>, CrossingLosesItsRequester),
         ("deny is never due", c::reviews::a_deny_or_a_plain_item_is_never_due_to_be_applied::<Faulty>, DenyIsDueToApply),
         ("notices told once", c::reviews::a_crossing_is_told_to_its_requester_once_while_waiting_and_once_for_its_outcome::<Faulty>, NoticesRepeat),
+        ("flag kept", c::reviews::a_flag_is_kept_on_a_waiting_item_and_a_verdict_replaces_it::<Faulty>, FlagIsDropped),
     ]
 }
 

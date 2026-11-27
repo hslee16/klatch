@@ -406,5 +406,7 @@ fn an_international_number_is_flagged_before_a_word_before_punctuation_and_at_th
         ("delta +123 in 45 minutes", "internal", "public"),
         ("offset +1 415 55 for the row", "internal", "public"),
         ("a+1 415 555 0142x", "internal", "public"),
+        ("epoch +1700000000 seconds", "internal", "public"),
+        ("uptime +1700000000 ms so far", "internal", "public"),
     ]);
 }
