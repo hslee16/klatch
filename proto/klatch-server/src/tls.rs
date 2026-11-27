@@ -85,7 +85,15 @@ const MAX_PEM_BYTES: u64 = 4 * 1024 * 1024;
 /// 4 MiB, and, for a `trusted` file (the CA file: a trust anchor), owned by this user or root and not writable by group
 /// or other (whoever can write it chooses who may connect). The error names the file and the kind of failure, never the
 /// content.
-fn read_pem(path: &Path, what: &str, trusted: bool) -> Result<Vec<u8>> {
+pub(crate) fn read_pem(path: &Path, what: &str, trusted: bool) -> Result<Vec<u8>> {
+    let rule = trusted.then_some("whoever can write it chooses who may connect");
+    read_pem_as(path, what, rule, euid())
+}
+
+/// [`read_pem`] for a server running as `euid`. `rule` is `Some(what a writer could do)` for a file that must be owned by
+/// `euid` or root and not writable by group or other (the words go into the refusal), `None` for a file that is not held
+/// to that rule.
+fn read_pem_as(path: &Path, what: &str, rule: Option<&str>, euid: u32) -> Result<Vec<u8>> {
     let shown = path.display();
     let file = std::fs::OpenOptions::new()
         .read(true)
@@ -103,14 +111,14 @@ fn read_pem(path: &Path, what: &str, trusted: bool) -> Result<Vec<u8>> {
     if !meta.is_file() {
         bail!("the {what} {shown} is not a regular file");
     }
-    if trusted {
-        if meta.uid() != euid() && meta.uid() != 0 {
+    if let Some(rule) = rule {
+        if meta.uid() != euid && meta.uid() != 0 {
             bail!("the {what} {shown} is not owned by the user running the server or by root");
         }
         let mode = meta.mode() & 0o777;
         if mode & 0o022 != 0 {
             bail!(
-                "the {what} {shown} is writable by group or other (mode {mode:04o}): whoever can write it chooses who may connect; use 0644 or stricter"
+                "the {what} {shown} is writable by group or other (mode {mode:04o}): {rule}; use 0644 or stricter"
             );
         }
     }
@@ -215,10 +223,28 @@ const MAX_INTERMEDIATES: usize = 16;
 /// opened without following a link or blocking, owned by this user or root, not writable by group or other, at most
 /// 4 MiB), must be valid PEM and hold at least one and at most 16 certificates, each with a readable subject, or the
 /// server does not start (and a reload keeps the old configuration). The error names the file, never its content.
-pub fn read_intermediate_subjects(path: &Path) -> Result<Vec<Vec<u8>>> {
+pub fn read_intermediate_subjects(path: &Path) -> Result<Vec<Intermediate>> {
+    read_intermediates_as(path, euid())
+}
+
+/// One certificate of the intermediates file: its subject name and its `subjectPublicKeyInfo` (DER content), the second
+/// for the signature sanity check of a CRL (`crl_sig.rs`, #1648) and for nothing else.
+pub struct Intermediate {
+    pub subject: Vec<u8>,
+    pub spki: Vec<u8>,
+}
+
+/// [`read_intermediate_subjects`] for a server running as `euid`, so the owner check can be tested without a file owned by
+/// another user (#1648).
+pub(crate) fn read_intermediates_as(path: &Path, euid: u32) -> Result<Vec<Intermediate>> {
     const WHAT: &str = "client intermediates file";
     let shown = path.display();
-    let bytes = read_pem(path, WHAT, true)?;
+    let bytes = read_pem_as(
+        path,
+        WHAT,
+        Some("whoever can write it changes which CRL issuers pass the start check"),
+        euid,
+    )?;
     let mut subjects = Vec::new();
     for cert in CertificateDer::pem_slice_iter(&bytes) {
         let cert = cert.map_err(|_| anyhow::anyhow!("the {WHAT} {shown} is not valid PEM"))?;
@@ -227,12 +253,15 @@ pub fn read_intermediate_subjects(path: &Path) -> Result<Vec<Vec<u8>>> {
                 "the {WHAT} {shown} holds more than {MAX_INTERMEDIATES} certificates: at most {MAX_INTERMEDIATES} are accepted"
             );
         }
-        let subject = crate::der::subject_of(cert.as_ref()).ok_or_else(|| {
+        let (subject, spki) = crate::der::subject_and_key_of(cert.as_ref()).ok_or_else(|| {
             anyhow::anyhow!(
-                "the {WHAT} {shown} holds a certificate whose subject cannot be read: it is not a valid X.509 certificate"
+                "the {WHAT} {shown} holds a certificate whose subject cannot be read: it is not a valid X.509 certificate, or its subject is empty (a CA certificate has a non-empty subject)"
             )
         })?;
-        subjects.push(subject.to_vec());
+        subjects.push(Intermediate {
+            subject: subject.to_vec(),
+            spki: spki.to_vec(),
+        });
     }
     if subjects.is_empty() {
         bail!("the {WHAT} {shown} holds no certificate");
@@ -266,7 +295,7 @@ pub fn build_config_at(
         };
         let inters: Option<Vec<&[u8]>> = inter_subjects
             .as_ref()
-            .map(|v| v.iter().map(|s| s.as_ref()).collect());
+            .map(|v| v.iter().map(|i| i.subject.as_ref()).collect());
         // expiry enforced, unknown status allowed: the reasons are in `tls_crl.rs`
         let (crls, earliest) = tls_crl::read_crls_at(
             path,
@@ -275,6 +304,10 @@ pub fn build_config_at(
             tls_crl::now_unix()?,
             stage,
         )?;
+        // a CRL of a listed intermediate must be signed by it, or it would refuse that issuer's clients later (#1648)
+        if let Some(listed) = &inter_subjects {
+            crate::crl_sig::check(&crls, &subjects, listed, path)?;
+        }
         due = earliest;
         builder = builder
             .with_crls(crls)

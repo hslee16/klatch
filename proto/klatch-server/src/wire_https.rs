@@ -30,6 +30,7 @@ use klatch::session::SessionConfig;
 use klatch::session::policy::TlsBind;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 /// What `klatch-server https` was asked for.
@@ -270,8 +271,9 @@ pub fn run(opts: &Options) -> Result<()> {
     // current when its handshake starts and keeps it
     let current = Current::new(config);
     crate::forwarded_report::while_reporting(&shared.forwarded, &shared.backend, || {
-        std::thread::scope(|scope| {
-            scope.spawn(|| {
+        watched_serve(
+            &crate::daemon::STOP,
+            || {
                 tls_reload::watch(
                     &crate::daemon::STOP,
                     &crate::daemon::RELOAD,
@@ -279,32 +281,34 @@ pub fn run(opts: &Options) -> Result<()> {
                     &current,
                     crl_due,
                 )
-            });
-            // the descriptors and threads of the process are bounded by the sessions plus the handshake pool; the session cap
-            // itself is `sessions` (a connection takes a place there only after its handshake), so a flood of handshakes
-            // cannot take the place of a session
-            loopback::serve_concurrent(
-                &listener,
-                &crate::daemon::STOP,
-                opts.max_connections
-                    .saturating_add(opts.limits.max_handshakes),
-                loopback::Callbacks {
-                    handler: &|sock: Stream| {
-                        let config = current.get();
-                        let at = Listener {
-                            config: &config,
-                            limits: &opts.limits,
-                            handshakes: &handshakes,
-                            sessions: &sessions,
-                        };
-                        tls::serve_tls(sock, &at, |app| wire_http::serve_connection(app, &shared))
+            },
+            || {
+                // the descriptors and threads of the process are bounded by the sessions plus the handshake pool; the session cap
+                // itself is `sessions` (a connection takes a place there only after its handshake), so a flood of handshakes
+                // cannot take the place of a session
+                loopback::serve_concurrent(
+                    &listener,
+                    &crate::daemon::STOP,
+                    opts.max_connections
+                        .saturating_add(opts.limits.max_handshakes),
+                    loopback::Callbacks {
+                        handler: &|sock: Stream| {
+                            let config = current.get();
+                            let at = Listener {
+                                config: &config,
+                                limits: &opts.limits,
+                                handshakes: &handshakes,
+                                sessions: &sessions,
+                            };
+                            tls::serve_tls(sock, &at, |app| {
+                                wire_http::serve_connection(app, &shared)
+                            })
+                        },
+                        excess: &drop,
                     },
-                    excess: &drop,
-                },
-            );
-            // however the accept loop ended (a signal, or it could not start), the watcher must end with it
-            crate::daemon::STOP.store(true, std::sync::atomic::Ordering::SeqCst);
-        });
+                );
+            },
+        );
     });
     drop(shared);
     drop(gateway);
@@ -312,9 +316,50 @@ pub fn run(opts: &Options) -> Result<()> {
     Ok(())
 }
 
+/// Run `watch` on a thread of its own and `serve` on this one, and set `stop` when `serve` returns, however it returned (a
+/// signal, or the accept loop could not start): the watcher ends with it, and this returns only when both have ended.
+fn watched_serve(stop: &AtomicBool, watch: impl FnOnce() + Send, serve: impl FnOnce()) {
+    std::thread::scope(|scope| {
+        scope.spawn(watch);
+        serve();
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+
+    /// #1637: when the accept loop returns on its own (`set_nonblocking` failed: it cannot be triggered here, so the
+    /// serve closure returns at once), the stop flag is set and the watcher, which runs until it, ends. A watcher that
+    /// was never told would spin to the safety limit and report it.
+    #[test]
+    fn the_watcher_ends_when_the_accept_loop_returns_by_itself() {
+        let stop = AtomicBool::new(false);
+        let told = AtomicBool::new(false);
+        let started = Instant::now();
+        watched_serve(
+            &stop,
+            || {
+                while started.elapsed() < Duration::from_secs(10) {
+                    if stop.load(Ordering::SeqCst) {
+                        told.store(true, Ordering::SeqCst);
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            },
+            || {},
+        );
+        assert!(
+            told.load(Ordering::SeqCst),
+            "the watcher was never told to stop"
+        );
+        assert!(stop.load(Ordering::SeqCst));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
 
     const ALL: [&str; 7] = [
         "--listen",

@@ -368,3 +368,39 @@ fn a_client_of_an_expired_intermediate_is_judged_as_before_with_or_without_the_f
         "listing the intermediate changes no verdict"
     );
 }
+
+#[test]
+fn with_the_flag_a_crl_of_a_listed_issuer_that_its_certificate_did_not_sign_is_refused_at_start() {
+    let s = setup();
+    // the issuer NAME matches the listed intermediate, the signature is another key's: at handshake time it would refuse
+    // every client of that issuer, so it is a refusal at start (a sanity check of the file, not a trust decision)
+    rewrite_file(&s.crl, &s.inter.forged_crl_pem(&[4242]), 0o644);
+    refused(
+        &s,
+        "holds a CRL (number 1) whose signature does not verify against the certificate listed for its issuer in the client intermediates file",
+    );
+    // a good CRL first and a forged one of the same name second: the second is the one named
+    let other = s
+        .client_ca
+        .intermediate("second-inter", vec![KeyCertSign, CrlSign]);
+    let mut both_certs = s.inter.pem.clone();
+    both_certs.push_str(&other.pem);
+    rewrite_file(&s.inters, &both_certs, 0o644);
+    let both = format!(
+        "{}{}",
+        s.inter.crl_pem(&[], false),
+        other.forged_crl_pem(&[])
+    );
+    rewrite_file(&s.crl, &both, 0o644);
+    refused(&s, "(number 2)");
+    // without the flag the same file still starts (the check belongs to the strict option)
+    let (_server, log) = started(&s, false);
+    assert!(!log.contains("signature"), "{log}");
+}
+
+#[test]
+fn with_the_flag_a_properly_signed_crl_of_a_listed_issuer_still_starts() {
+    let s = setup();
+    let (_server, log) = started(&s, true);
+    assert!(!log.contains("warning:"), "{log}");
+}
