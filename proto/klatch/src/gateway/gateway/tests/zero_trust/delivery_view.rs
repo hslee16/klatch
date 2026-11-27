@@ -14,6 +14,7 @@ pub(super) const GUARDED: &[(&str, Call)] = &[
     ("outside_view", |g, w| refused(g.outside_view(w, "r"))),
     ("admin_set_room_stale", |g, w| refused(g.admin_set_room_stale(w, "r", Some(120)))),
     ("admin_set_room_ask_lease", |g, w| refused(g.admin_set_room_ask_lease(w, "r", Some(120)))),
+    ("admin_set_room_ask_routing", |g, w| refused(g.admin_set_room_ask_routing(w, "r", Some(false)))),
     ("admin_set_rate_limit", |g, w| refused(g.admin_set_rate_limit(w, Some((5, 60))))),
     ("admin_rate_limits", |g, w| refused(g.admin_rate_limits(w))),
     ("admin_set_member_rate_limit", |g, w| refused(g.admin_set_member_rate_limit(w, "bob", Some((5, 60))))),

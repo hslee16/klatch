@@ -113,6 +113,11 @@ admin passphrase to approve `admin room-ask-lease r 100 [store <HOME>/rooms.db]`
 Error: wrong passphrase; nothing was done
 (ended: refused)
 
+### $ klatch admin room-ask-routing r off
+admin passphrase to approve `admin room-ask-routing r off [store <HOME>/rooms.db]`: 
+Error: wrong passphrase; nothing was done
+(ended: refused)
+
 ### $ klatch admin room-require r --off
 admin passphrase to approve `admin room-require r --off [store <HOME>/rooms.db]`: 
 Error: wrong passphrase; nothing was done

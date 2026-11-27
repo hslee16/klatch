@@ -27,6 +27,7 @@ fn acts(h: &Home) -> Vec<(Vec<String>, Vec<String>)> {
         t(&["lease-grace", "60"], &[]),
         t(&["room-stale", "r", "120"], &[]),
         t(&["room-ask-lease", "r", "100"], &[]),
+        t(&["room-ask-routing", "r", "off"], &[]),
         t(&["room-require", "r", "--off"], &[]),
         t(&["rate-limit", "30", "60"], &[]),
         t(&["rate-limit", "--off"], &[]),

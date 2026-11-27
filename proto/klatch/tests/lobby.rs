@@ -197,6 +197,7 @@ fn admin_commands_refuse_without_a_real_terminal_and_change_nothing() {
         vec!["admin", "resume"],
         vec!["admin", "room-stale", "lobby", "120"],
         vec!["admin", "room-ask-lease", "lobby", "120"],
+        vec!["admin", "room-ask-routing", "lobby", "off"],
         vec!["admin", "room-require", "lobby", "refuse:wake"],
         vec!["admin", "room-require", "lobby", "--off"],
     ] {

@@ -1,0 +1,1 @@
+- `klatch admin room-ask-routing ROOM on|off|default`: the human switches ask routing (#1407) in one room. Audited, admin only (an admin agent is refused), only those three words and a valid room name; off means a new ask is addressed to nobody, default restores routing. It is the only writer of the policy key `room:ROOM:ask-routing` (#1460).

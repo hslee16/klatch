@@ -90,6 +90,10 @@ Error: this needs the admin passphrase, typed at a real terminal; run it yoursel
 Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
 (ended: refused)
 
+### $ klatch admin room-ask-routing r off
+Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
+(ended: refused)
+
 ### $ klatch admin room-require r --off
 Error: this needs the admin passphrase, typed at a real terminal; run it yourself in a terminal
 (ended: refused)

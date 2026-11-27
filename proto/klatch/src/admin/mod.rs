@@ -8,7 +8,7 @@
 
 use super::*;
 use clap::{Subcommand, ValueEnum};
-use route::{Passphrase, Route};
+use route::{Passphrase, Route, RoutingState};
 use std::io::{BufRead, Write};
 
 mod acts;
@@ -183,6 +183,9 @@ pub enum AdminCmd {
         #[arg(long)]
         off: bool,
     },
+    /// Switch ask routing (#1407) in ROOM `on`, `off` or `default` (on), for example `room-ask-routing lobby off`. Off
+    /// stops the gateway addressing new asks of that room to members; it takes effect on the next ask
+    RoomAskRouting { room: String, state: RoutingState },
     /// Require harness capabilities of ROOM as MODE:CAPABILITY[,CAPABILITY...] with MODE refuse (a member whose harness
     /// lacks one cannot join) or flag (it joins and the gap is recorded), for example
     /// `room-require lobby refuse:pre-action-enforcement,wake`; `room-require lobby --off` lifts it. Only `native`
