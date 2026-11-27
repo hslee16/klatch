@@ -59,6 +59,9 @@ Generate the report, check the ledger, compare with a previous release:
     python3 experiments/coordbench/compare.py experiments/coordbench/results/release-0.3.0 \
         experiments/coordbench/results/release-0.2.0
 
+The primary metric of each scenario is the one its scenario file names (`metrics.primary`); `--primary METRIC` names one for
+every scenario instead (SPEC section 6).
+
 A real run (not made yet) adds `--driver claude --model MODEL_ID --claude-bin PATH --budget-approved-in FILE`, and
 optionally `--max-run-usd N --max-suite-usd N`. FILE is the budget approval (SPEC section 8; `approval.py`): a JSON file
 the coordinator makes at run time, outside the repository (never commit one), for example

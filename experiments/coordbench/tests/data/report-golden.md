@@ -56,7 +56,7 @@ All compared cells:
 | trivial | K2 | turns | 22 | 22 | 0 | 7/7 | 1.0000 |  |
 | trivial | K2 | wall_s | 96.50 | 96 | -0.50 | 7/7 | 1.0000 |  |
 
-Tests made: 40 (primary-metric tests 10, Holm-corrected across the whole report, primary metric `units_completed` plus the completion rate). Bootstrap: 400 resamples, seed 20261122.
+Tests made: 40 (primary-metric tests 10, Holm-corrected across the whole report, the primary metric each scenario's file names, plus the completion rate). Bootstrap: 400 resamples, seed 20261122.
 
 ## Scenario onefile
 

@@ -33,7 +33,8 @@ pub enum Error {
     Busy(String),
 }
 
-/// Members named on a deadlock's chain before the rest are counted (#1603).
+/// Members named after the first one on a deadlock's chain before the rest are counted (#1603): the first member and up
+/// to this many more show.
 const MAX_CYCLE_NAMES: usize = 5;
 
 /// What a refusal's reason puts before its hint: `<why>; next step: <what to do>`.

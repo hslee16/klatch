@@ -543,7 +543,7 @@
   ]
  },
  "invalid_runs": 1,
- "primary_metric": "units_completed",
+ "primary_metric": null,
  "primary_tests_made": 10,
  "records": 37,
  "scaling": null,
@@ -1017,6 +1017,7 @@
     }
    },
    "exploratory": true,
+   "primary_metric": "units_completed",
    "tests": [
     {
      "against": "B0",
@@ -2249,6 +2250,7 @@
     }
    },
    "exploratory": false,
+   "primary_metric": "units_completed",
    "tests": [
     {
      "against": "B0",

@@ -97,6 +97,7 @@ fn main() {
             std::process::exit(2);
         }
     };
+    panic_log::at_exit();
     if let Err(e) = result {
         eprintln!("klatch-server: {e:#}");
         std::process::exit(1);

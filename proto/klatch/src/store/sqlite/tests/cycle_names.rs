@@ -175,7 +175,10 @@ fn a_long_chain_shows_the_first_names_and_counts_the_rest() {
     assert_eq!(via, "a");
     let m = e.to_string();
     assert!(m.contains("m0 waits through m1, m2"), "{m}");
-    assert!(m.contains("and 2") && m.contains("more"), "{m}");
+    assert!(
+        m.contains("through m1, m2, m3, m4, m5 and 24 more for your path a"),
+        "{m}"
+    );
     assert!(!m.contains("m29") && m.len() < 700, "{} {m}", m.len());
 }
 

@@ -1,0 +1,1 @@
+- klatch-server says what a burst of panics left unsaid once more as it exits, and a finished stream session no longer removes a newer session that took its id (#1667).

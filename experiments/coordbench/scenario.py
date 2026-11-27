@@ -27,6 +27,34 @@ def load(scenario_id, scenarios_dir=None):
         raise ScenarioError("cannot load scenario %s: %s" % (scenario_id, e))
 
 
+def _fixture_scenario(name, fixtures_dir):
+    """The scenario file id a fixture names, or None."""
+    try:
+        with open(os.path.join(fixtures_dir, name, "fixture.json")) as f:
+            return json.load(f).get("scenario")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def primary_metric(name, scenarios_dir=None, fixtures_dir=None):
+    """The primary metric a scenario file names (metrics.primary) for the scenario `name` of a run record, or None.
+
+    A record's scenario is its fixture's name, with "-<variant>" after it for a variant and " [metric vN]" after it for an
+    older metric version (report.py); the fixture's own file says which scenario file it belongs to (#1670)."""
+    fixtures_dir = fixtures_dir or os.path.join(HERE, "fixtures")
+    parts = name.split(" [")[0].split("-")
+    for i in range(len(parts), 0, -1):  # the whole name first, then without the last "-part"
+        scn = _fixture_scenario("-".join(parts[:i]), fixtures_dir)
+        if scn:
+            try:
+                metrics = load(scn, scenarios_dir).get("metrics")
+            except ScenarioError:
+                return None
+            primary = metrics.get("primary") if isinstance(metrics, dict) else None
+            return primary if isinstance(primary, str) else None
+    return None
+
+
 def _git(repo, args, env):
     p = subprocess.run(["git", "-C", repo] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     return p.returncode, p.stdout.decode("utf-8", "replace")

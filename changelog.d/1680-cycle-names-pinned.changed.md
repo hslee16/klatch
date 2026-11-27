@@ -1,0 +1,1 @@
+- The deadlock refusal text names the first member plus up to five more and counts the rest, now pinned exactly by a test (#1680).
