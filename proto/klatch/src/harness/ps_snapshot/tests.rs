@@ -3,6 +3,7 @@ use crate::harness::ancestry::{Miss, find_session, unregistered_agent_below};
 use crate::harness::liveness::{Liveness, fake::FakeTable};
 use crate::harness::record::{Record, Registry};
 use std::os::unix::fs::PermissionsExt;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 const T: &str = "Fri Nov 6 03:04:05 2026";
@@ -415,7 +416,7 @@ fn a_program_that_leaves_a_child_holding_the_pipe_does_not_defeat_the_timeout() 
     // prints a good table and exits at once, but leaves a sleeper that holds the output pipe open
     let mut ps = fake_ps(
         &d,
-        &format!("sleep 8 &\ncat '{}'\nexit 0\n", d.join("t").display()),
+        &format!("sleep 3 &\ncat '{}'\nexit 0\n", d.join("t").display()),
     );
     ps.limits.timeout = Duration::from_millis(300);
     let started = Instant::now();
@@ -426,9 +427,48 @@ fn a_program_that_leaves_a_child_holding_the_pipe_does_not_defeat_the_timeout() 
         "output that never ended is not a table"
     );
     assert!(
-        started.elapsed() < Duration::from_secs(4),
+        started.elapsed() < Duration::from_secs(2),
         "the timeout took {:?}",
         started.elapsed()
+    );
+}
+
+#[test]
+fn runs_that_leave_a_child_holding_the_pipe_cannot_grow_the_reader_threads_without_bound() {
+    static LIVE: AtomicUsize = AtomicUsize::new(0);
+    let d = dir("leak");
+    fs_write(&d.join("t"), TABLE);
+    let ps = fake_ps(
+        &d,
+        &format!("sleep 3 &\ncat '{}'\nexit 0\n", d.join("t").display()),
+    );
+    let limits = Limits {
+        timeout: Duration::from_millis(20),
+        cap: 1 << 20,
+    };
+    let args = ["-A"];
+    let mut refused = 0;
+    for _ in 0..12 {
+        let program = ps.program.as_deref().unwrap();
+        let t = Instant::now();
+        let got = run_ps_gated(program, &ps.pre_args, &args, limits, &LIVE, 3);
+        assert_eq!(got, None, "output that never ended is not a table");
+        refused += usize::from(t.elapsed() < Duration::from_millis(15));
+        assert!(LIVE.load(Ordering::SeqCst) <= 3);
+    }
+    assert!(refused > 0, "no run was refused at the bound");
+}
+
+#[test]
+fn output_handed_over_just_after_the_deadline_is_still_taken() {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(20));
+        let _ = sender.send(b"table".to_vec());
+    });
+    assert_eq!(
+        recv_output(&receiver, Instant::now()),
+        Some(b"table".to_vec())
     );
 }
 

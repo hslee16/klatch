@@ -341,6 +341,75 @@ fn with_more_records_than_the_bound_the_newest_are_read_not_the_first_in_directo
     );
 }
 
+fn set_mtime(p: &Path, when: std::time::SystemTime) {
+    std::fs::File::options()
+        .write(true)
+        .open(p)
+        .unwrap()
+        .set_modified(when)
+        .unwrap();
+}
+
+#[test]
+fn junk_with_a_future_mtime_does_not_hide_a_valid_record() {
+    let d = dir("future-junk");
+    mode(&d, 0o700);
+    std::fs::write(d.join("5000.json"), record_text(5000)).unwrap();
+    let year = std::time::SystemTime::now() + Duration::from_secs(365 * 86_400);
+    for i in 0..MAX_ENTRIES {
+        let f = d.join(format!("{i}.json"));
+        std::fs::write(&f, "junk").unwrap();
+        set_mtime(&f, year);
+    }
+    let (records, malformed) = own(&d).records();
+    assert_eq!(records.iter().map(|r| r.pid).collect::<Vec<_>>(), [5000]);
+    assert_eq!(malformed, MAX_ENTRIES);
+}
+
+#[test]
+fn fresh_junk_does_not_hide_an_older_valid_record() {
+    let d = dir("fresh-junk");
+    mode(&d, 0o700);
+    let old = d.join("5000.json");
+    std::fs::write(&old, record_text(5000)).unwrap();
+    set_mtime(
+        &old,
+        std::time::SystemTime::now() - Duration::from_secs(30 * 86_400),
+    );
+    for i in 0..MAX_ENTRIES + 44 {
+        std::fs::write(d.join(format!("{i}.json")), "junk").unwrap();
+    }
+    assert_eq!(own(&d).records().0.len(), 1);
+}
+
+#[test]
+fn a_listing_looks_at_no_more_than_the_scan_bound_of_entries() {
+    let d = dir("scan-bound");
+    mode(&d, 0o700);
+    for pid in 100..110 {
+        std::fs::write(d.join(format!("{pid}.json")), record_text(pid)).unwrap();
+    }
+    let read = |n: &str| read_named(&d, n, me());
+    let (records, malformed) = scan_records_with(&d, 3, 256, 4096, read).unwrap();
+    assert_eq!(records.len() + malformed, 3);
+    let (records, _) = scan_records_with(&d, 10, 256, 4096, read).unwrap();
+    assert_eq!(records.len(), 10);
+}
+
+#[test]
+fn a_listing_opens_no_more_than_the_open_bound_of_files() {
+    let d = dir("open-bound");
+    mode(&d, 0o700);
+    for i in 0..20 {
+        std::fs::write(d.join(format!("{i}.json")), "junk").unwrap();
+    }
+    let read = |n: &str| read_named(&d, n, me());
+    assert_eq!(
+        scan_records_with(&d, 100, 256, 5, read).unwrap(),
+        (vec![], 5)
+    );
+}
+
 /// Swap the name between a plain file and a symlink to another plain file of ours, as fast as it can, until told to stop.
 fn swapper(
     dir: PathBuf,

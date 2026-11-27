@@ -2,8 +2,9 @@
 //! that is not a plain file is never read: the file is opened without following a symlink and without blocking (so a
 //! FIFO cannot stall the open), and its type, owner and mode are checked on the open descriptor, not on the path, so
 //! nothing can be swapped in between the check and the read. At most `MAX_RECORD_BYTES` are read, and at most
-//! `MAX_ENTRIES` files are opened in one pass. Only names that look like a record (or a temporary file) count toward
-//! that bound, so junk cannot starve a real file (#1574); when more records exist than the bound, the newest are read.
+//! `MAX_ENTRIES` valid records are read in one pass (and at most `MAX_OPENED` files opened). Only names that look like a
+//! record (or a temporary file) are considered, and only a file that parses counts toward the record bound, so junk
+//! cannot starve a real file (#1574, #1662); newest first, a future mtime counting as the oldest.
 
 use crate::harness::record::{Record, Registry, is_record_file, parse_record};
 use std::io::Read;
@@ -13,42 +14,90 @@ use std::path::{Path, PathBuf};
 /// The largest record read. A real one is a few hundred bytes.
 pub(crate) const MAX_RECORD_BYTES: u64 = 64 * 1024;
 
-/// The most files one pass opens. Files beyond that are left for a later pass (a write looks again).
+/// The most valid records one pass reads. Records beyond that are left for a later pass (a write looks again).
 pub(crate) const MAX_ENTRIES: usize = 256;
+
+/// The most files one pass opens in all, valid or not: records are bounded by `MAX_ENTRIES`, and what is not a record by
+/// this (#1662).
+pub(crate) const MAX_OPENED: usize = 4096;
 
 /// The most directory entries one pass reads the name of (nothing is opened for them), whatever they are called.
 pub(crate) const MAX_SCANNED: usize = 1 << 16;
 
-/// The names in `dir` that `wanted` accepts, at most `MAX_SCANNED` entries looked at. Only the names that are wanted are
+/// The names in `dir` that `wanted` accepts, at most `scanned` entries looked at. Only the names that are wanted are
 /// kept, so an entry of any other name costs a look at its name and nothing more. `None` when `dir` cannot be listed.
-fn wanted_names(dir: &Path, wanted: impl Fn(&str) -> bool) -> Option<Vec<String>> {
+fn wanted_names_capped(
+    dir: &Path,
+    scanned: usize,
+    wanted: impl Fn(&str) -> bool,
+) -> Option<Vec<String>> {
     let entries = std::fs::read_dir(dir).ok()?;
     Some(
         entries
             .flatten()
-            .take(MAX_SCANNED)
+            .take(scanned)
             .filter_map(|e| e.file_name().into_string().ok())
             .filter(|n| wanted(n))
             .collect(),
     )
 }
 
-/// The names of `dir` that look like records (`<pid>.json`), at most `MAX_ENTRIES` of them. With more than that, the
-/// newest by modification time are the ones kept: a live session keeps its record fresh, a leftover of a crashed one is
-/// old, so stale records or same-user junk cannot hide a live session (#1629). `None` when `dir` cannot be listed.
-pub(crate) fn record_names(dir: &Path) -> Option<Vec<String>> {
-    let mut names = wanted_names(dir, is_record_file)?;
-    if names.len() > MAX_ENTRIES {
+fn wanted_names(dir: &Path, wanted: impl Fn(&str) -> bool) -> Option<Vec<String>> {
+    wanted_names_capped(dir, MAX_SCANNED, wanted)
+}
+
+/// The names of `dir` that look like records (`<pid>.json`), most likely live first: the newest by modification time. A
+/// name that cannot be looked at, or whose mtime is in the future (a same-user file can claim any time, #1662), counts
+/// as the oldest; the name breaks a tie so the order is stable. `None` when `dir` cannot be listed.
+fn ordered_record_names(dir: &Path, scanned: usize, keep_all_below: usize) -> Option<Vec<String>> {
+    let mut names = wanted_names_capped(dir, scanned, is_record_file)?;
+    if names.len() > keep_all_below {
+        let now = std::time::SystemTime::now();
         let modified = |n: &String| {
             std::fs::symlink_metadata(dir.join(n))
                 .and_then(|m| m.modified())
                 .ok()
+                .filter(|t| *t <= now)
         };
-        // newest first (a name that cannot be looked at is the oldest); the name breaks a tie so the pick is stable
         names.sort_by_cached_key(|n| (std::cmp::Reverse(modified(n)), n.clone()));
-        names.truncate(MAX_ENTRIES);
     }
     Some(names)
+}
+
+/// Read the records of `dir` (`<pid>.json`) with `read` giving the text of one name. Candidates are taken newest first
+/// (see `ordered_record_names`), but the bound `max_records` counts only records that parse and sit under their own
+/// pid, so junk, however fresh, cannot push a valid record out; the junk is bounded separately, at most `max_opened`
+/// files opened in one pass. Returns the records ordered by pid and how many opened files were not valid records. `None`
+/// when `dir` cannot be listed.
+pub(crate) fn scan_records_with(
+    dir: &Path,
+    scanned: usize,
+    max_records: usize,
+    max_opened: usize,
+    read: impl Fn(&str) -> Option<String>,
+) -> Option<(Vec<Record>, usize)> {
+    let names = ordered_record_names(dir, scanned, max_records)?;
+    let (mut records, mut malformed) = (Vec::new(), 0);
+    for name in names.iter().take(max_opened) {
+        if records.len() >= max_records {
+            break;
+        }
+        let filed_under: u32 = name.trim_end_matches(".json").parse().unwrap_or(0);
+        match read(name).and_then(|t| parse_record(&t)) {
+            Some(rec) if rec.pid == filed_under => records.push(rec),
+            _ => malformed += 1,
+        }
+    }
+    records.sort_by_key(|r| r.pid);
+    Some((records, malformed))
+}
+
+/// `scan_records_with` under the module bounds.
+pub(crate) fn scan_records(
+    dir: &Path,
+    read: impl Fn(&str) -> Option<String>,
+) -> Option<(Vec<Record>, usize)> {
+    scan_records_with(dir, MAX_SCANNED, MAX_ENTRIES, MAX_OPENED, read)
 }
 
 /// Whether `meta` is of something this user owns that no one else can write.
@@ -127,19 +176,8 @@ impl Registry for OwnRegistry {
         if !dir_is_ours(&self.dir, self.uid) {
             return (Vec::new(), 0);
         }
-        let Some(names) = record_names(&self.dir) else {
-            return (Vec::new(), 0);
-        };
-        let (mut records, mut malformed) = (Vec::new(), 0);
-        for name in &names {
-            let filed_under: u32 = name.trim_end_matches(".json").parse().unwrap_or(0);
-            match read_named(&self.dir, name, self.uid).and_then(|t| parse_record(&t)) {
-                Some(rec) if rec.pid == filed_under => records.push(rec),
-                _ => malformed += 1,
-            }
-        }
-        records.sort_by_key(|r| r.pid);
-        (records, malformed)
+        scan_records(&self.dir, |name| read_named(&self.dir, name, self.uid))
+            .unwrap_or((Vec::new(), 0))
     }
 }
 

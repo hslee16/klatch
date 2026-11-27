@@ -46,7 +46,9 @@ pub use probe::{
     parse_turn, probe,
 };
 pub use process::{Lookup, ProcInfo, ProcessTable, PsTable};
-pub use ps_snapshot::{NO_PROCESS_TABLE, process_table_notice};
+pub use ps_snapshot::{
+    NO_PROCESS_TABLE, PS_CANDIDATES, process_table_notice, process_table_notice_in,
+};
 pub use pstime::parse_cpu_time;
 pub use record::{FsRegistry, Record, Registry, parse_record};
 pub use selftest::{LayerReport, SelfTest, self_test};

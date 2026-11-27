@@ -166,4 +166,18 @@ mod tests {
         assert!(missing[0].0 == Status::Warn);
         assert_eq!(missing[0].1, klatch::harness::NO_PROCESS_TABLE);
     }
+
+    #[test]
+    fn doctor_checks_the_process_table_through_the_candidate_list_it_is_given() {
+        let lines = |candidates: &[&str]| {
+            let mut r = Report { lines: Vec::new() };
+            session::check_process_table_in(&mut r, candidates);
+            r.lines
+        };
+        let missing = lines(&["/nonexistent/ps"]);
+        assert_eq!(missing.len(), 1);
+        assert!(missing[0].0 == Status::Warn);
+        assert_eq!(missing[0].1, klatch::harness::NO_PROCESS_TABLE);
+        assert!(lines(&klatch::harness::PS_CANDIDATES).is_empty());
+    }
 }
