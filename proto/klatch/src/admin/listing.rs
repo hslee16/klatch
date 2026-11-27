@@ -185,6 +185,27 @@ mod tests {
     }
 
     #[test]
+    fn a_waiting_row_lists_its_flag_in_brackets_and_a_resolved_row_its_verdict() {
+        use klatch::store::QueuedReview;
+        let row = |verdict: &str, detail: &str| QueuedReview {
+            verdict: verdict.into(),
+            detail: detail.into(),
+            ..QueuedReview::default()
+        };
+        assert_eq!(waiting_or_verdict(&row("", "")), "waiting");
+        assert_eq!(
+            waiting_or_verdict(&row("", "screen:injection")),
+            "waiting [screen:injection]"
+        );
+        assert_eq!(
+            waiting_or_verdict(&row("", "a\tb\nc")),
+            "waiting [a b c]",
+            "control characters are flattened"
+        );
+        assert_eq!(waiting_or_verdict(&row("deny", "by r: no")), "deny");
+    }
+
+    #[test]
     fn an_empty_field_falls_back() {
         assert_eq!(or_else("", "waiting"), "waiting");
         assert_eq!(or_else("ok", "waiting"), "ok");

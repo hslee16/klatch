@@ -192,3 +192,23 @@ pub fn pending_pages_by_cursor_and_waiting_crossings_are_counted_per_requester<S
     s.enqueue_review(&item("r", 9), 11).unwrap();
     assert_eq!(s.waiting_crossings_of("").unwrap(), 0);
 }
+
+pub fn a_flag_is_kept_on_a_waiting_item_and_a_verdict_replaces_it<S: Store>(make: fn() -> S) {
+    let s = make();
+    let id = s.enqueue_review(&item("v", 1), 10).unwrap();
+    s.set_review_flag(id, "screen:injection").unwrap();
+    s.set_review_flag(id, "screen:injection").unwrap();
+    let waiting = &s.pending_reviews(10).unwrap()[0];
+    assert_eq!(waiting.detail, "screen:injection", "the flag is kept");
+    assert!(waiting.verdict.is_empty(), "a flag is not a verdict");
+    assert!(
+        s.resolve_review(&ReviewResolution::new(id, "deny", "by r: no"), 20)
+            .unwrap()
+    );
+    s.set_review_flag(id, "late").unwrap();
+    assert_eq!(
+        s.reviews(10).unwrap()[0].detail,
+        "by r: no",
+        "a flag on a resolved item changes nothing"
+    );
+}

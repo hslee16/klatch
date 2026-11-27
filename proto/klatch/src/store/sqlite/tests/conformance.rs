@@ -563,6 +563,11 @@ fn reviews_a_crossing_is_told_to_its_requester_once_while_waiting_and_once_for_i
 }
 
 #[test]
+fn reviews_a_flag_is_kept_on_a_waiting_item_and_a_verdict_replaces_it() {
+    c::reviews::a_flag_is_kept_on_a_waiting_item_and_a_verdict_replaces_it(store);
+}
+
+#[test]
 fn sqlite_declares_every_feature_and_keeps_each_one() {
     assert!(store().features().missing().is_empty());
     c::features::every_declared_feature_works(store);

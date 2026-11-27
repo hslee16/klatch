@@ -77,6 +77,8 @@ fn drain_one<S: Store>(
             None,
         ),
     };
+    // A deferral with no note leaves an earlier note in place: it was true when written, the audit holds the
+    // sequence, and clearing it would only cost a write on every pass.
     if let (Verdict::Defer, Some(note)) = (&verdict, &note) {
         audit_deferral(store, q, note, now)?;
         store.set_review_flag(q.id, &flag_text(note))?;

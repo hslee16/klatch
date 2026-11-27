@@ -85,7 +85,7 @@ impl SqliteStore {
 
     pub(super) fn set_review_flag_row(&self, id: i64, note: &str) -> Result<()> {
         self.exec(
-            "UPDATE review_queue SET detail=?2 WHERE id=?1 AND resolved IS NULL",
+            "UPDATE review_queue SET detail=?2 WHERE id=?1 AND resolved IS NULL AND COALESCE(detail,'') <> ?2",
             params![id, note],
         )
         .map(|_| ())
