@@ -27,6 +27,7 @@ fn a_reviewer_reads_the_queue_and_records_a_verdict() {
         (item.room.as_str(), item.text.as_str()),
         ("r", "candidate text")
     );
+    assert_eq!(item.to_room, "", "a plain item has no target room");
     g.review_verdict(&rev(), item.id, &Verdict::Deny("leaks".into()))
         .unwrap();
     assert!(g.review_next(&rev()).unwrap().is_none());

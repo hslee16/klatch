@@ -10,6 +10,7 @@ fn item(text: &str, to: &str) -> ReviewItem {
         from_label: "internal".into(),
         reason: "crosses".into(),
         text: text.into(),
+        to_room: String::new(),
     }
 }
 

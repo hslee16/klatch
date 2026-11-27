@@ -699,7 +699,7 @@ class Client:
         self.request("kind", kind=kind)
 
     def review_next(self):
-        """The reviewer's queue: the next held item as {"id", "room", "seq", "to_label", "reason", "text"}, or None
+        """The reviewer's queue: the next held item as {"id", "room", "seq", "to_label", "to_room", "reason", "text"}, or None
         when there is none. Only the reviewer role may call it (`refused`, rule `reviewer`)."""
         return self.request("review_next").get("item")
 

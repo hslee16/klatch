@@ -62,6 +62,13 @@ pub(in crate::store) fn probe<S: Store>(feature: Feature, make: fn() -> S) {
             reviews::a_deny_or_a_plain_item_is_never_due_to_be_applied(make);
             reviews::a_crossing_is_told_to_its_requester_once_while_waiting_and_once_for_its_outcome(make);
             reviews::a_flag_is_kept_on_a_waiting_item_and_a_verdict_replaces_it(make);
+            reviews::a_capped_enqueue_stops_at_the_requesters_cap_and_returns_a_waiting_duplicate(
+                make,
+            );
+            reviews::a_capped_enqueue_never_hands_a_requester_another_requesters_item(make);
+            reviews::an_enqueue_matches_a_waiting_item_only_for_the_same_requester_and_target_room(
+                make,
+            );
         }
         Credentials => {
             credentials::an_issued_credential_is_stored_with_its_hash_clearance_parent_and_expiry(

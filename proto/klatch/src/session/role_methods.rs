@@ -149,9 +149,18 @@ fn run_or_anchor_act<S: Store>(
     })
 }
 
+/// The target room as a reviewer reads it: plain characters only, capped (a room name already is both; this keeps
+/// it so for any store that hands back something else).
+pub(super) fn plain_room(room: &str) -> String {
+    room.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        .take(40)
+        .collect()
+}
+
 fn item_json(i: &ReviewItem) -> Value {
     json!({"id": i.id, "room": i.room, "seq": i.seq, "to_label": i.to_label,
-           "reason": i.reason, "text": i.text})
+           "to_room": plain_room(&i.to_room), "reason": i.reason, "text": i.text})
 }
 
 fn review_next<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> Vec<ServerFrame> {

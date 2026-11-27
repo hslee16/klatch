@@ -229,3 +229,40 @@ fn the_reviewer_is_refused_a_role_act() {
     assert_eq!(answer(&f), Err("refused".into()));
     assert_eq!(rule_of(&f).as_deref(), Some("reviewer"));
 }
+
+#[test]
+fn a_crossing_item_names_its_target_room_over_the_wire_and_never_its_requester() {
+    let g = gateway();
+    // the plain item first: it has no target room
+    let f = call(&g, "rev", "review_next", json!({}));
+    let plain = answer(&f).unwrap()["item"].clone();
+    assert_eq!(plain["to_room"], "");
+    let id = plain["id"].as_i64().unwrap();
+    call(
+        &g,
+        "rev",
+        "review_verdict",
+        json!({"id":id,"verdict":"deny"}),
+    );
+    g.store_for_tests()
+        .enqueue_review(
+            &NewReview::new("r", 1, "public", "crossing").crossing("open", "alice"),
+            1_002,
+        )
+        .unwrap();
+    let f = call(&g, "rev", "review_next", json!({}));
+    let item = answer(&f).unwrap()["item"].clone();
+    assert_eq!(item["to_room"], "open");
+    assert!(
+        item.get("requester").is_none() && !item.to_string().contains("alice"),
+        "the reviewer is not told who asked: {item}"
+    );
+}
+
+#[test]
+fn the_target_room_a_reviewer_reads_is_plain_characters_and_capped() {
+    use super::role_methods::plain_room;
+    assert_eq!(plain_room("open-room_1.x"), "open-room_1.x");
+    assert_eq!(plain_room("a b\nc/\u{202e}d"), "abcd");
+    assert_eq!(plain_room(&"x".repeat(100)).len(), 40);
+}

@@ -768,7 +768,7 @@ export class Client {
     await this.request("kind", { kind });
   }
 
-  /** The reviewer's queue: the next held item (`id`, `room`, `seq`, `to_label`, `reason`, `text`) or null when there
+  /** The reviewer's queue: the next held item (`id`, `room`, `seq`, `to_label`, `to_room`, `reason`, `text`) or null when there
    * is none. Only the reviewer role may call it (`refused`, rule `reviewer`). */
   async reviewNext(): Promise<Record<string, any> | null> {
     return (await this.request("review_next")).item ?? null;

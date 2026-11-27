@@ -106,7 +106,7 @@ Three more methods exist for members that hold a role (DESIGN section 32 item 41
 | Method | Params | Result |
 |---|---|---|
 | `role_act` | `act` (`close`, `reopen`, `remove`, `allow`, `clear`, `label`, `audit`, `refusals`, `run-create`, `run-end` or `anchor-done`), and what the act needs: `room`, `member`, `label`; `limit` for the records; `run` for `run-create` and `run-end` (1 to 32 characters of letters, digits, dash and underscore); `anchor` for `anchor-done` (1 to 80 characters of letters, digits and `. _ : / -`) | `{}`, or `{ "records": [...] }` for `audit` and `refusals`, or `{ "rooms": n, "messages": n }` for `run-end` (the rooms of that run and their messages are deleted, never archived over the wire), or `{ "released": n }` for `anchor-done` (the claims anchored to that item); an act not in that list (`reap-anchors`, `prune`, any floor act) answers `unknown_act`. `invalid_params` for a missing or wrongly typed parameter, `invalid` for a bad id, `not_found` for `run-end` of a run that is not open |
-| `review_next` | none | `{ "item": null }` or `{ "item": { "id", "room", "seq", "to_label", "reason", "text" } }` |
+| `review_next` | none | `{ "item": null }` or `{ "item": { "id", "room", "seq", "to_label", "to_room", "reason", "text" } }` (`to_room` is the room a verdict releases the message into, empty for a plain item; plain characters, at most 40; the requester is never included) |
 | `review_verdict` | `id`, `verdict` (`allow`, `redact` with `text`, or `deny` with optional `reason`) | `{}` |
 
 The list results are named for what they hold: `messages`, `members` and `claims`.
