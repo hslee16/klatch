@@ -15,6 +15,10 @@ impl ReviewStore for SpyStore {
         self.inner.set_review_text(id, text)
     }
 
+    fn set_review_flag(&self, id: i64, note: &str) -> Result<()> {
+        self.inner.set_review_flag(id, note)
+    }
+
     fn reviews(&self, limit: usize) -> Result<Vec<crate::store::QueuedReview>> {
         self.inner.reviews(limit)
     }

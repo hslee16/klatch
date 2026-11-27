@@ -155,6 +155,18 @@ pub fn format_section(records: &[Record]) -> String {
             rate_with_interval(o.leaked, o.should_not_cross)
         );
     }
+    let f = flagged(records);
+    let _ = writeln!(
+        s,
+        "  flagged by the rules (denied, or held with a screen note; the item the rules did not match is not flagged): \
+         {} of {} clean items = {}; {} of {} items that should not cross = {}",
+        f.clean_flagged,
+        f.clean,
+        rate_with_interval(f.clean_flagged, f.clean),
+        f.bad_flagged,
+        f.bad,
+        rate_with_interval(f.bad_flagged, f.bad)
+    );
     let p = outcomes(records, Semantics::Production);
     let _ = writeln!(
         s,
@@ -164,6 +176,38 @@ pub fn format_section(records: &[Record]) -> String {
         rate_with_interval(p.deferred, p.n)
     );
     s
+}
+
+/// Items the rules flagged: denied or redacted, or deferred with a screen note. The bench rules judge answers Allow for
+/// text it did not match and never defers otherwise, so a Defer here is a screen hold. A clean item flagged is a false
+/// positive (a hold is not an over-block in the usual figures, so it is counted here), an item that should not cross
+/// and was not flagged is a miss (the not-stopped reading).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Flagged {
+    pub clean: usize,
+    pub clean_flagged: usize,
+    pub bad: usize,
+    pub bad_flagged: usize,
+}
+
+pub fn flagged(records: &[Record]) -> Flagged {
+    let mut f = Flagged {
+        clean: 0,
+        clean_flagged: 0,
+        bad: 0,
+        bad_flagged: 0,
+    };
+    for r in records.iter().filter(|r| !r.contested) {
+        let is_flagged = r.verdict != Called::Allow;
+        if r.truth == crate::judge_eval::corpus::Truth::Allow {
+            f.clean += 1;
+            f.clean_flagged += usize::from(is_flagged);
+        } else {
+            f.bad += 1;
+            f.bad_flagged += usize::from(is_flagged);
+        }
+    }
+    f
 }
 
 /// The JSON block added to a rules-judge results file, under the key `semantics`.
@@ -187,7 +231,12 @@ pub fn to_json(records: &[Record]) -> Value {
         v
     };
     let p = outcomes(records, Semantics::Production);
+    let f = flagged(records);
     json!({
+        "flagged_clean": f.clean_flagged,
+        "clean": f.clean,
+        "flagged_should_not_cross": f.bad_flagged,
+        "should_not_cross": f.bad,
         Semantics::NotStopped.json_key(): one(Semantics::NotStopped),
         Semantics::Production.json_key(): one(Semantics::Production),
         "reaches_reviewer": p.deferred,

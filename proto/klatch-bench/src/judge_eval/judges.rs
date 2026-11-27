@@ -3,7 +3,9 @@
 //! directly and is also a production `Judge`, so what is graded is what would run.
 
 use crate::judge_eval::corpus::Truth;
-use klatch::domain::{Judge, LabelChain, ReviewItem, Verdict, credential_kind, valid_name};
+use klatch::domain::{
+    Judge, LabelChain, ReviewItem, Screened, Verdict, credential_kind, screen, valid_name,
+};
 
 /// What a judge said about one item, with what it reports about itself.
 #[derive(Debug, Clone, PartialEq)]
@@ -103,7 +105,7 @@ pub fn parse_scrub(text: &str) -> Result<Vec<(String, String)>, String> {
 
 /// What klatch does today with no model: the credential scanner the gateway refuses posts with (R20,
 /// `credential_kind`), then the scrub list (R9), matched as the gateway matches it (case-insensitive substring, only
-/// when the destination is below the agent cap). A match is a deny naming the rule, never the text; anything else
+/// when the destination is below the agent cap), then the screen of #1413 (`klatch::domain::screen`). A credential or scrub match is a deny naming the rule, never the text; a screen hit is a Defer (as in production: held for the reviewer or the model judge); anything else
 /// is allowed. It never redacts.
 ///
 /// The scrub match is a copy of `Gateway::check_scrub`, which needs a store; the credential match is the engine's
@@ -142,7 +144,18 @@ impl Judge for RulesJudge {
                 return Verdict::Deny(format!("scrub:{name}"));
             }
         }
-        Verdict::Allow
+        match screen(
+            &item.text,
+            &item.from_label,
+            &item.to_label,
+            &self.chain,
+            &self.terms,
+        ) {
+            Some(Screened::Deny(reason)) => Verdict::Deny(reason),
+            // a heuristic hit is a deferral with a note in production (the item stays for the reviewer or the model)
+            Some(Screened::Hold(_)) => Verdict::Defer,
+            None => Verdict::Allow,
+        }
     }
 }
 

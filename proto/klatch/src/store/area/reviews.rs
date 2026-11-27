@@ -22,6 +22,12 @@ pub trait ReviewStore {
         Ok(false)
     }
 
+    /// Keep a plain note on a waiting item saying why a judge deferred it (the rules' flag, #1413), for the reviewer to
+    /// read. It holds no message text and is overwritten by the verdict's own detail; false/no-op when not waiting.
+    fn set_review_flag(&self, _id: i64, _note: &str) -> Result<()> {
+        Ok(())
+    }
+
     /// Keep the text a `redact` verdict supplied, on a waiting item (#497).
     fn set_review_text(&self, _id: i64, _text: &str) -> Result<()> {
         Ok(())
