@@ -91,11 +91,11 @@ impl LeaseSource for SysLeaseSource {
 /// A listing a bound cut (more records than the scan reads, a flood of fresher ones) is an incomplete view: the record
 /// found may be a forged one with the real one cut out, and what is absent may be only unread. The answer is then `None`
 /// whatever was found (a planted `Gone`, which shortens claims, and a single forged alive record are no longer acted on).
-/// Not closed: a cut is reported only when a running pid's record was left unread, so a dead member's real record
-/// (dead pid) left unread behind a flood of running-pid records, plus one forged alive record of the same session id,
-/// still reads as one alive record and extends the claims, as on main (#1706 1d through a flood; tracked in
-/// #1712). With no process table (it fails closed) any cut is reported, so more than `MAX_ENTRIES` record files give
-/// `None`.
+/// A cut is reported only when a running pid's record was left unread. The records of pids that do not run past the
+/// record bound are still opened for their session ids (#1712), so a dead member's real record behind a flood of
+/// running-pid records is a second (Gone) claim and a forged alive record of the same session id reads as `None`; if
+/// dead-pid names are left even past the open bound, an alive answer is `None` too and `Gone` stands. With no process
+/// table (it fails closed) any cut is reported, so more than `MAX_ENTRIES` record files give `None`.
 fn observe_in(
     registry: &FsRegistry,
     procs: &dyn ProcessTable,
@@ -107,15 +107,18 @@ fn observe_in(
     // one read of the process table for every record (a lookup on the real one runs `ps -A`, #1569)
     let pinned = procs.pin();
     let procs: &dyn ProcessTable = pinned.as_deref().unwrap_or(procs);
-    let (records, _, truncated) = registry.records_alive(alive.as_ref());
-    if truncated {
+    let scan = registry.scan_alive(alive.as_ref());
+    if scan.as_ref().is_some_and(|s| s.truncated) {
         return None;
     }
+    let (records, dead_sessions, dead_unread) = scan.map_or((Vec::new(), Vec::new(), false), |s| {
+        (s.records, s.dead_sessions, s.dead_unread)
+    });
     let claims: Vec<Record> = records
         .into_iter()
         .filter(|r| r.session_id == session_id)
         .collect();
-    let seen: Vec<Observed> = claims
+    let mut seen: Vec<Observed> = claims
         .iter()
         .map(|rec| {
             let p = probe(rec, procs, domain, host, None, &Thresholds::default());
@@ -125,8 +128,21 @@ fn observe_in(
             }
         })
         .collect();
+    // claims read past the record bound, of pids that do not run (#1712): each is a Gone claim
+    let gone = Observed {
+        verdict: Verdict::Gone,
+        quiet_for_ms: None,
+    };
+    seen.extend(
+        dead_sessions
+            .iter()
+            .filter(|s| *s == session_id)
+            .map(|_| gone),
+    );
     match seen.as_slice() {
         [] => None,
+        // a dead-pid name left unread may be a second claim: only Gone, true whichever claim is real, stands
+        [one] if dead_unread && one.verdict != Verdict::Gone => None,
         [one] => Some(*one),
         many if many.iter().all(|o| o.verdict == Verdict::Gone) => Some(many[0]),
         _ => None,
