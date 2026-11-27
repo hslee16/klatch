@@ -82,7 +82,9 @@ pub struct Observed {
 
 /// Where the gateway learns whether a holder is alive. The real one probes the harness; tests make one up.
 pub trait LeaseSource {
-    /// `None` when the member cannot be probed (its session is not in the registry, another machine).
+    /// `None` when the member cannot be probed (its session is not in the registry, another machine) or when the
+    /// registry cannot say which record is the member's (several claim the session id, #1706); either way the lease is
+    /// left alone.
     fn observe(&self, member: &str, session_id: &str, now_ms: u64) -> Option<Observed>;
 }
 
