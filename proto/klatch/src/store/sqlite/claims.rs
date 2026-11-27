@@ -131,7 +131,7 @@ impl SqliteStore {
     /// owner was a party to a deadlock inside the window before `at`, remember it so a take of the path by someone else
     /// is flagged. The caller removes the claim row; this only reads the deadlock mark.
     pub(super) fn note_yield_end(&self, room: &str, held: (&str, &str), at: i64) -> Result<()> {
-        let (owner, path) = held;
+        let owner = held.0;
         let marked = self
             .optional(
                 "SELECT 1 FROM claim_yields WHERE room=?1 AND member=?2 AND path='' AND ts>=?3 AND ts<=?4",
