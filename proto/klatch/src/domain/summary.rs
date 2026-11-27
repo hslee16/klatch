@@ -16,6 +16,7 @@ pub const SUMMARY_MAX_BYTES: usize = 8192;
 /// The line cap of the listed rooms.
 pub const SUMMARY_MAX_LINES: usize = 60;
 /// Rooms listed; the rest are counted.
+pub const SUMMARY_READS: usize = 12;
 pub const SUMMARY_ROOMS: usize = 4;
 const MEMBER_ROWS: usize = 6;
 const ASK_ROWS: usize = 4;
@@ -174,19 +175,34 @@ fn render_room(r: &SummaryRoom, now: i64) -> String {
     out
 }
 
+/// One intervention: its explanation on a line of its own, then the command alone on the next, so every command line is
+/// complete when copied (a trailing note would break it in every shell). Names go after a `--` (or `--room=`) so a
+/// name that starts with a dash cannot be read as an option.
+fn step(out: &mut String, why: &str, command: &str) {
+    out.push_str(&format!("  - {why}\n    {command}\n"));
+}
+
 /// The commands the human can run to step in, for the first things the summary shows. Text only.
 fn interventions(rooms: &[SummaryRoom], now: i64) -> String {
-    let mut lines: Vec<String> = Vec::new();
+    let mut out = String::from(
+        "to intervene (copy a command line and run it yourself; admin acts ask for the passphrase; this view runs nothing):\n",
+    );
+    let mut steps = 0;
     for r in rooms.iter().filter(|r| valid_name(&r.room)) {
         if let Some(c) = r
             .claims
             .iter()
             .find(|c| c.expires > now && valid_name(&c.owner))
         {
-            lines.push(format!(
-                "klatch admin remove {} --room {}   (releases its claims there; undo with admin allow)",
-                c.owner, r.room
-            ));
+            step(
+                &mut out,
+                &format!(
+                    "release the claims of {} in {} and refuse it there (undo with admin allow)",
+                    c.owner, r.room
+                ),
+                &format!("klatch admin remove --room={} -- {}", r.room, c.owner),
+            );
+            steps += 1;
         }
         if let Some(a) = r
             .board
@@ -195,65 +211,116 @@ fn interventions(rooms: &[SummaryRoom], now: i64) -> String {
             .filter(|a| valid_name(&a.sender))
             .min_by_key(|a| (a.ts, a.seq))
         {
-            lines.push(format!(
-                "klatch answer {} {} \"closed by the human\"   (answers, so the ask closes)",
-                r.room, a.seq
-            ));
+            step(
+                &mut out,
+                &format!(
+                    "close the oldest ask in {} by answering it (posts as you)",
+                    r.room
+                ),
+                &format!(
+                    "klatch answer -- {} {} \"closed by the human\"",
+                    r.room, a.seq
+                ),
+            );
+            steps += 1;
         }
-        if lines.len() >= 4 {
+        if steps >= 4 {
             break;
         }
     }
     if let Some(r) = rooms.iter().find(|r| valid_name(&r.room)) {
-        lines.push(format!(
-            "klatch mute {}   (quiets your own hook in that room)",
-            r.room
-        ));
+        step(
+            &mut out,
+            &format!("quiet your own hook in {}", r.room),
+            &format!("klatch mute -- {}", r.room),
+        );
     }
-    lines.push("klatch admin pause   (stops every room; klatch admin resume starts them)".into());
-    let mut out = String::from(
-        "to intervene (copy a line and run it yourself; admin acts ask for the passphrase; this view runs nothing):\n",
+    step(
+        &mut out,
+        "stop every room (klatch admin resume starts them again)",
+        "klatch admin pause",
     );
-    for l in lines {
-        out.push_str(&format!("  {l}\n"));
-    }
     out
 }
 
-/// The summary text. `not_shown` counts rooms the caller could not read or that are private working rooms; they are
-/// named nowhere. `now` is the reader's clock.
-pub fn render_summary(rooms: &[SummaryRoom], not_shown: usize, now: i64) -> String {
-    let listed = &rooms[..rooms.len().min(SUMMARY_ROOMS)];
-    let mut body = String::new();
-    for r in listed {
-        body.push_str(&render_room(r, now));
-    }
+/// The first lines of `body` within `max_lines` lines and `max_bytes` bytes, and how many lines were left out.
+fn cap_listing(body: &str, max_lines: usize, max_bytes: usize) -> (String, usize) {
     let lines: Vec<&str> = body.split_inclusive('\n').collect();
     let mut out = String::new();
-    let (mut kept, mut bytes) = (0, 0);
+    let mut kept = 0;
     for l in &lines {
-        if kept >= SUMMARY_MAX_LINES || bytes + l.len() > SUMMARY_MAX_BYTES {
+        if kept >= max_lines || out.len() + l.len() > max_bytes {
             break;
         }
         out.push_str(l);
         kept += 1;
-        bytes += l.len();
     }
-    if kept < lines.len() {
+    (out, lines.len() - kept)
+}
+
+/// The rooms to list and the counts of the rest, from the names the caller joined.
+pub struct Gathered {
+    pub rooms: Vec<SummaryRoom>,
+    /// Joined rooms that were not read because the list was already full.
+    pub more: usize,
+    /// Rooms left out: dms, ask rooms, and rooms whose reads were refused.
+    pub not_shown: usize,
+}
+
+/// Choose and read the rooms. `read` is the caller's guarded reads for one room.
+pub fn gather<E>(
+    names: Vec<String>,
+    mut read: impl FnMut(&str) -> Result<SummaryRoom, E>,
+) -> Gathered {
+    let mut g = Gathered {
+        rooms: Vec::new(),
+        more: 0,
+        not_shown: 0,
+    };
+    let mut reads = 0;
+    for name in names {
+        let working = name.starts_with(crate::domain::DM_PREFIX) || name.starts_with("ask-");
+        if working {
+            g.not_shown += 1;
+        } else if g.rooms.len() >= SUMMARY_ROOMS || reads >= SUMMARY_READS {
+            // the list is full or the read budget is spent: not read, only counted
+            g.more += 1;
+        } else {
+            reads += 1;
+            match read(&name) {
+                Ok(r) => g.rooms.push(r),
+                Err(_) => g.not_shown += 1,
+            }
+        }
+    }
+    g
+}
+
+/// The summary text. `not_shown` counts rooms the caller could not read or that are private working rooms; they are
+/// named nowhere. `now` is the reader's clock.
+pub fn render_summary(rooms: &[SummaryRoom], more: usize, not_shown: usize, now: i64) -> String {
+    let listed = &rooms[..rooms.len().min(SUMMARY_ROOMS)];
+    let more = more + (rooms.len() - listed.len());
+    let mut body = String::new();
+    for r in listed {
+        body.push_str(&render_room(r, now));
+    }
+    let (mut out, dropped) = cap_listing(&body, SUMMARY_MAX_LINES, SUMMARY_MAX_BYTES);
+    if dropped > 0 {
         out.push_str(&format!(
-            "  +{} more lines not shown (klatch summary ROOM shows one room)\n",
-            lines.len() - kept
+            "  +{dropped} more lines not shown (klatch summary ROOM shows one room)\n"
         ));
     }
-    if rooms.len() > listed.len() {
+    if more > 0 {
+        let s = if more == 1 { "" } else { "s" };
         out.push_str(&format!(
-            "+{} more rooms (klatch summary ROOM shows one)\n",
-            rooms.len() - listed.len()
+            "+{more} more room{s} (klatch summary ROOM shows one)\n"
         ));
     }
     if not_shown > 0 {
+        let s = if not_shown == 1 { "" } else { "s" };
         out.push_str(&format!(
-            "{not_shown} other rooms not shown (private, unreadable to you, dms, ask rooms or past the first few)\n"
+            "{not_shown} other room{s} not shown (private, unreadable to you, dms or ask rooms)\n"
         ));
     }
     out.push_str(&interventions(listed, now));

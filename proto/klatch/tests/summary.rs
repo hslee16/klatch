@@ -22,8 +22,8 @@ fn it_shows_who_is_doing_what_the_asks_the_claims_and_the_commands_to_step_in() 
             "bob unclaimed",
             "src/lib.rs",
             "to intervene",
-            "klatch admin remove alice --room lobby",
-            "klatch answer lobby ",
+            "klatch admin remove --room=lobby -- alice",
+            "klatch answer -- lobby ",
             "klatch admin pause",
         ],
     );
@@ -41,7 +41,7 @@ fn dm_and_ask_rooms_are_counted_never_named() {
     h.ok("alice", &["dm", "bob", "hello SECRET-DM"]);
     let out = h.ok("alice", &["summary"]);
     assert_lacks(&out, &["dm.", "SECRET-DM", "bob"]);
-    assert!(out.contains("1 other rooms not shown"), "{out}");
+    assert!(out.contains("1 other room not shown"), "{out}");
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn a_room_above_the_viewers_clearance_leaves_no_trace() {
     let out = h.ok("alice", &["summary"]);
     assert_lacks(&out, &["vault", "SECRET-VAULT"]);
     assert!(
-        out.contains("[lobby]") && out.contains("1 other rooms not shown"),
+        out.contains("[lobby]") && out.contains("1 other room not shown"),
         "{out}"
     );
 }
@@ -109,4 +109,94 @@ fn a_large_room_gives_bounded_output_in_bounded_time() {
     assert!(out.len() < 12 * 1024, "{} bytes", out.len());
     assert!(out.lines().count() < 90, "{} lines", out.lines().count());
     assert!(out.contains("more"), "{out}");
+}
+
+/// Every command line the summary prints is run through a real shell and the real command parser: a line that does
+/// not parse (a trailing note, a name read as an option) prints a usage text or exits 2. Names that start with a dash
+/// are the hostile case. The admin lines stop at the terminal check, after parsing; nothing here needs a server.
+#[test]
+fn every_printed_command_parses_even_for_hostile_names() {
+    use klatch::domain::{Board, Claim, OpenAsk, SummaryRoom, render_summary};
+    let now = 1_000_000;
+    let mk = |room: &str, owner: &str, sender: &str| SummaryRoom {
+        room: room.into(),
+        board: Board {
+            room: room.into(),
+            asks: vec![OpenAsk {
+                seq: 3,
+                sender: sender.into(),
+                ts: now - 10,
+                ..Default::default()
+            }],
+            ..Default::default()
+        },
+        claims: vec![Claim {
+            path: "p".into(),
+            owner: owner.into(),
+            reason: String::new(),
+            expires: now + 100,
+            scope: String::new(),
+        }],
+        stuck: vec![],
+    };
+    let h = Home::new();
+    let bin = std::path::Path::new(env!("CARGO_BIN_EXE_klatch"));
+    let bindir = h.0.join("bin");
+    std::fs::create_dir_all(&bindir).unwrap();
+    std::os::unix::fs::symlink(bin, bindir.join("klatch")).unwrap();
+    let path = format!(
+        "{}:{}",
+        bindir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let cases = [
+        mk("lobby", "holder-1", "bob"),
+        mk("-h", "-rf", "--all-rooms"),
+        mk("--all-rooms", "-h", "-rf"),
+        mk("-", "--", "-"),
+    ];
+    let mut ran = 0;
+    for room in cases {
+        let out = render_summary(&[room], 0, 0, now);
+        for line in out.lines().filter(|l| l.starts_with("    klatch ")) {
+            let o = std::process::Command::new("sh")
+                .args(["-c", line.trim()])
+                .env("PATH", &path)
+                .env("KLATCH_HOME", &h.0)
+                .env("KLATCH_KEY_DIR", h.0.join("keys"))
+                .env("KLATCH_NAME", "viewer")
+                .env_remove("KLATCH_IDENTITY_FILE")
+                .output()
+                .unwrap();
+            let all = format!(
+                "{}{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            );
+            assert!(
+                o.status.code() != Some(2)
+                    && !all.contains("Usage:")
+                    && !all.contains("unexpected argument"),
+                "does not parse: {line}\n{all}"
+            );
+            // a syntax check by every shell there is (nothing runs)
+            for shell in ["sh", "bash", "zsh", "dash"] {
+                let Ok(mut child) = std::process::Command::new(shell)
+                    .arg("-n")
+                    .stdin(std::process::Stdio::piped())
+                    .spawn()
+                else {
+                    continue;
+                };
+                std::io::Write::write_all(&mut child.stdin.take().unwrap(), line.trim().as_bytes())
+                    .unwrap();
+                assert!(
+                    child.wait().unwrap().success(),
+                    "{shell} -n refused: {line}"
+                );
+            }
+            ran += 1;
+        }
+    }
+    assert!(ran >= 12, "only {ran} lines ran");
 }

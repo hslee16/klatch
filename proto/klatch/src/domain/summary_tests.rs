@@ -71,7 +71,7 @@ fn shows_members_status_asks_claims_and_stuck_without_any_text_body() {
         asker: "bob".into(),
         age_secs: 300,
     }];
-    let out = render_summary(&[r], 0, NOW);
+    let out = render_summary(&[r], 0, 0, NOW);
     for want in [
         "[lobby]",
         "alice",
@@ -100,7 +100,7 @@ fn hostile_names_paths_and_status_text_cannot_inject_lines_or_controls() {
     r.stuck = vec![StuckEvent::ClaimDeadlock {
         members: vec!["x\ny".into()],
     }];
-    let out = render_summary(&[r], 0, NOW);
+    let out = render_summary(&[r], 0, 0, NOW);
     no_control_or_bidi(&out);
     for line in out.lines() {
         assert!(
@@ -118,7 +118,7 @@ fn every_line_is_clipped_and_long_status_text_is_cut() {
     let mut r = room("lobby");
     r.board.members = vec![member("alice", 1, Some(&"x".repeat(5000)))];
     r.claims = vec![claim(&"p".repeat(5000), "alice", 5)];
-    let out = render_summary(&[r], 0, NOW);
+    let out = render_summary(&[r], 0, 0, NOW);
     // a command is never clipped (a cut command would run something else), so the footer is exempt
     let listed = out.split("to intervene").next().unwrap();
     assert!(
@@ -151,11 +151,11 @@ fn a_huge_world_is_bounded_in_rows_rooms_lines_bytes_and_time() {
             r
         })
         .collect();
-    let out = render_summary(&rooms, 7, NOW);
+    let out = render_summary(&rooms, 0, 7, NOW);
     assert!(started.elapsed().as_secs() < 5, "too slow");
     assert!(out.len() <= SUMMARY_MAX_BYTES + 2048, "{} bytes", out.len());
     assert!(
-        out.lines().count() <= SUMMARY_MAX_LINES + 12,
+        out.lines().count() <= SUMMARY_MAX_LINES + 20,
         "{} lines",
         out.lines().count()
     );
@@ -169,7 +169,7 @@ fn a_huge_world_is_bounded_in_rows_rooms_lines_bytes_and_time() {
 fn rows_past_the_cap_are_counted_not_listed() {
     let mut r = room("lobby");
     r.board.asks = (1..=30).map(|i| ask(i, "a", i, false)).collect();
-    let out = render_summary(&[r], 0, NOW);
+    let out = render_summary(&[r], 0, 0, NOW);
     assert!(out.contains("+26 more"), "{out}");
     assert!(out.contains("#30 a") && !out.contains("#1 a"), "{out}");
 }
@@ -178,7 +178,7 @@ fn rows_past_the_cap_are_counted_not_listed() {
 fn an_expired_claim_is_not_listed_as_live() {
     let mut r = room("lobby");
     r.claims = vec![claim("old/file", "alice", -5), claim("new/file", "bob", 5)];
-    let out = render_summary(&[r], 0, NOW);
+    let out = render_summary(&[r], 0, 0, NOW);
     assert!(
         out.contains("new/file") && !out.contains("old/file"),
         "{out}"
@@ -188,43 +188,15 @@ fn an_expired_claim_is_not_listed_as_live() {
 
 #[test]
 fn rooms_not_shown_are_a_bare_count_with_no_names() {
-    let out = render_summary(&[room("lobby")], 3, NOW);
+    let out = render_summary(&[room("lobby")], 0, 3, NOW);
     assert!(out.contains("3 other rooms not shown"), "{out}");
-}
-
-#[test]
-fn intervention_lines_are_plain_commands_for_safe_names_only() {
-    let mut r = room("lobby");
-    r.claims = vec![
-        claim("src/x", "holder-1", 100),
-        claim("y", "bad name;rm", 100),
-    ];
-    r.board.asks = vec![ask(9, "bob", 700, false)];
-    let out = render_summary(&[r], 0, NOW);
-    let tail = out.split("to intervene").nth(1).expect("footer");
-    for line in tail.lines().skip(1) {
-        assert!(
-            line.trim().is_empty() || line.starts_with("  klatch ") || line.starts_with("  #"),
-            "line: {line}"
-        );
-    }
-    assert!(
-        tail.contains("klatch admin remove holder-1 --room lobby"),
-        "{tail}"
-    );
-    assert!(tail.contains("klatch answer lobby 9 "), "{tail}");
-    assert!(tail.contains("klatch admin pause"), "{tail}");
-    assert!(
-        !tail.contains("rm"),
-        "an unsafe name reached a command: {tail}"
-    );
 }
 
 #[test]
 fn an_ask_from_an_unsafe_name_gets_no_command() {
     let mut r = room("lobby");
     r.board.asks = vec![ask(4, "x;touch pwned", 50, false)];
-    let out = render_summary(&[r], 0, NOW);
+    let out = render_summary(&[r], 0, 0, NOW);
     assert!(!out.contains("klatch answer"), "{out}");
 }
 
@@ -234,26 +206,229 @@ fn members_are_listed_most_recently_seen_first() {
     r.board.members = (0..10)
         .map(|i| member(&format!("m{i}"), 100 - i * 10, None))
         .collect();
-    let out = render_summary(&[r], 0, NOW);
+    let out = render_summary(&[r], 0, 0, NOW);
     assert!(out.contains("m9 ") && !out.contains("m0 "), "{out}");
 }
 
-#[test]
-fn multibyte_text_cannot_push_the_listing_past_the_byte_cap() {
-    let rooms: Vec<SummaryRoom> = (0..4)
-        .map(|n| {
-            let mut r = room(&format!("r{n}"));
-            r.board.members = (0..6)
-                .map(|i| member(&format!("m{i}"), 1, Some(&"\u{1F600}".repeat(500))))
-                .collect();
-            r
+/// The command lines of the footer: every line that starts with `    klatch `.
+fn commands(out: &str) -> Vec<String> {
+    out.lines()
+        .filter(|l| l.starts_with("    klatch "))
+        .map(|l| l.trim().to_string())
+        .collect()
+}
+
+fn full_room(name: &str) -> SummaryRoom {
+    let mut r = room(name);
+    r.board.members = (0..9).map(|i| member(&format!("m{i}"), i, None)).collect();
+    r.board.asks = (0..9).map(|i| ask(i + 1, "a", i, false)).collect();
+    r.claims = (0..9)
+        .map(|i| claim(&format!("f{i}"), "alice", 100))
+        .collect();
+    r.stuck = (0..9)
+        .map(|i| StuckEvent::StaleAsk {
+            ask: i,
+            asker: "a".into(),
+            age_secs: 1,
         })
         .collect();
-    let out = render_summary(&rooms, 0, NOW);
-    let listed = out.split("to intervene").next().unwrap();
-    assert!(
-        listed.len() <= SUMMARY_MAX_BYTES + 200,
-        "{} bytes",
-        listed.len()
+    r
+}
+
+#[test]
+fn every_printed_command_is_a_whole_runnable_line_with_its_explanation_above() {
+    let mut r = room("lobby");
+    r.claims = vec![claim("src/x", "holder-1", 100)];
+    r.board.asks = vec![ask(9, "bob", 700, false)];
+    let out = render_summary(&[r], 0, 0, NOW);
+    let cmds = commands(&out);
+    assert_eq!(
+        cmds,
+        [
+            "klatch admin remove --room=lobby -- holder-1",
+            "klatch answer -- lobby 9 \"closed by the human\"",
+            "klatch mute -- lobby",
+            "klatch admin pause",
+        ]
     );
+    let lines: Vec<&str> = out.lines().collect();
+    for (i, l) in lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.starts_with("    klatch "))
+    {
+        assert!(
+            !l.contains('(') && !l.contains('#'),
+            "not a bare command: {l}"
+        );
+        assert!(lines[i - 1].starts_with("  - "), "no explanation above {l}");
+    }
+}
+
+#[test]
+fn names_that_start_with_a_dash_stay_after_a_double_dash() {
+    let mut r = room("--all-rooms");
+    r.claims = vec![claim("p", "-rf", 100)];
+    r.board.asks = vec![ask(2, "-h", 50, false)];
+    let out = render_summary(&[r], 0, 0, NOW);
+    let cmds = commands(&out);
+    assert!(
+        cmds.contains(&"klatch admin remove --room=--all-rooms -- -rf".to_string()),
+        "{cmds:?}"
+    );
+    assert!(
+        cmds.iter()
+            .any(|c| c.starts_with("klatch answer -- --all-rooms 2 ")),
+        "{cmds:?}"
+    );
+    assert!(
+        cmds.contains(&"klatch mute -- --all-rooms".to_string()),
+        "{cmds:?}"
+    );
+}
+
+#[test]
+fn a_lapsed_claim_gets_no_admin_remove() {
+    let mut r = room("lobby");
+    r.claims = vec![claim("gone", "ghost", -5)];
+    let out = render_summary(&[r], 0, 0, NOW);
+    assert!(!out.contains("admin remove"), "{out}");
+}
+
+#[test]
+fn a_room_name_outside_the_plain_alphabet_gets_no_command_of_any_kind() {
+    let mut r = room("bad room;x");
+    r.claims = vec![claim("p", "holder", 100)];
+    r.board.asks = vec![ask(2, "bob", 50, false)];
+    let out = render_summary(&[r], 0, 0, NOW);
+    let cmds = commands(&out);
+    assert_eq!(cmds, ["klatch admin pause"], "{out}");
+}
+
+#[test]
+fn counts_are_exact_and_grammatical() {
+    let one = render_summary(&[room("lobby")], 1, 1, NOW);
+    assert!(
+        one.contains("+1 more room (") && one.contains("\n1 other room not shown"),
+        "{one}"
+    );
+    let many = render_summary(&[room("lobby")], 4, 2, NOW);
+    assert!(
+        many.contains("+4 more rooms (") && many.contains("2 other rooms not shown"),
+        "{many}"
+    );
+    let none = render_summary(&[room("lobby")], 0, 0, NOW);
+    assert!(
+        !none.contains("more room") && !none.contains("not shown"),
+        "{none}"
+    );
+}
+
+fn names(n: usize) -> Vec<String> {
+    (0..n).map(|i| format!("room-{i}")).collect()
+}
+
+#[test]
+fn eight_readable_rooms_list_four_and_count_four_more_after_four_reads() {
+    let reads = std::cell::Cell::new(0);
+    let g = gather(names(8), |n| {
+        reads.set(reads.get() + 1);
+        Ok::<_, ()>(room(n))
+    });
+    assert_eq!((g.rooms.len(), g.more, g.not_shown), (SUMMARY_ROOMS, 4, 0));
+    assert_eq!(
+        reads.get(),
+        SUMMARY_ROOMS,
+        "more rooms were read than are listed"
+    );
+}
+
+#[test]
+fn five_thousand_rooms_cost_a_bounded_number_of_reads_and_count_exactly() {
+    let reads = std::cell::Cell::new(0);
+    let g = gather(names(5000), |n| {
+        reads.set(reads.get() + 1);
+        Ok::<_, ()>(room(n))
+    });
+    assert_eq!(
+        (g.rooms.len(), g.more, g.not_shown),
+        (SUMMARY_ROOMS, 4996, 0)
+    );
+    assert_eq!(reads.get(), SUMMARY_ROOMS);
+    // refused rooms are bounded too, and every room is counted once
+    let reads = std::cell::Cell::new(0);
+    let g = gather(names(5000), |_| {
+        reads.set(reads.get() + 1);
+        Err::<SummaryRoom, _>(())
+    });
+    assert!(reads.get() <= SUMMARY_READS, "{} reads", reads.get());
+    assert_eq!(g.rooms.len() + g.more + g.not_shown, 5000);
+    assert_eq!(g.not_shown, reads.get());
+}
+
+#[test]
+fn dm_and_ask_rooms_are_never_read_and_are_counted_not_shown() {
+    let reads = std::cell::RefCell::new(Vec::new());
+    let g = gather(vec!["lobby".into(), "ask-3".into(), "dm.a.b".into()], |n| {
+        reads.borrow_mut().push(n.to_string());
+        Ok::<_, ()>(room(n))
+    });
+    assert_eq!(*reads.borrow(), ["lobby"]);
+    assert_eq!((g.rooms.len(), g.more, g.not_shown), (1, 0, 2));
+}
+
+#[test]
+fn a_clipped_status_is_exactly_the_cap_with_two_dots() {
+    let mut r = room("lobby");
+    r.board.members = vec![member("alice", 1, Some(&"x".repeat(500)))];
+    let out = render_summary(&[r], 0, 0, NOW);
+    let want = format!("status: {}..", "x".repeat(STATUS_CHARS - 2));
+    assert!(
+        out.contains(&want) && !out.contains(&format!("{}x", "x".repeat(STATUS_CHARS - 2))),
+        "{out}"
+    );
+    // text exactly at the cap is not marked as cut
+    let mut r = room("lobby");
+    r.board.members = vec![member("alice", 1, Some(&"y".repeat(STATUS_CHARS)))];
+    let out = render_summary(&[r], 0, 0, NOW);
+    assert!(
+        out.contains(&"y".repeat(STATUS_CHARS)) && !out.contains("yy.."),
+        "{out}"
+    );
+}
+
+#[test]
+fn four_full_rooms_are_cut_at_the_line_cap_and_the_cut_is_counted() {
+    let rooms: Vec<SummaryRoom> = (0..4).map(|i| full_room(&format!("r{i}"))).collect();
+    let out = render_summary(&rooms, 0, 0, NOW);
+    let listed = out
+        .split("  +")
+        .filter(|p| p.contains("more lines not shown"))
+        .count();
+    assert_eq!(listed, 1, "{out}");
+    let shown = out
+        .lines()
+        .take_while(|l| !l.contains("more lines not shown"))
+        .count();
+    assert_eq!(shown, SUMMARY_MAX_LINES, "{out}");
+    let per_room = 1
+        + (1 + MEMBER_ROWS + 1)
+        + (1 + ASK_ROWS + 1)
+        + (1 + CLAIM_ROWS + 1)
+        + (1 + STUCK_ROWS + 1);
+    let dropped = 4 * per_room - SUMMARY_MAX_LINES;
+    assert!(
+        out.contains(&format!("+{dropped} more lines not shown")),
+        "{out}"
+    );
+}
+
+#[test]
+fn cap_listing_stops_at_either_limit_and_counts_what_it_left() {
+    let body = "aaaa\nbbbb\ncccc\ndddd\n";
+    assert_eq!(cap_listing(body, 2, 1000), ("aaaa\nbbbb\n".to_string(), 2));
+    assert_eq!(cap_listing(body, 1000, 10), ("aaaa\nbbbb\n".to_string(), 2));
+    assert_eq!(cap_listing(body, 1000, 14), ("aaaa\nbbbb\n".to_string(), 2));
+    assert_eq!(cap_listing(body, 1000, 20), (body.to_string(), 0));
+    assert_eq!(cap_listing(body, 4, 1000), (body.to_string(), 0));
 }

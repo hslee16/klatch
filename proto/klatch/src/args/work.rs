@@ -87,8 +87,8 @@ pub(crate) enum WorkCmd {
         room: Option<String>,
     },
     /// One screen for the human (#1414): members with status and last seen, open asks and their age, live claims, stuck
-    /// cases, and the commands to step in, printed as text to copy (nothing is run). Read only, through the same
-    /// guarded reads as `board`, `claims` and `stuck`: a room you cannot read, a dm and an ask room are counted, never
+    /// cases, and the commands to step in, printed as text to copy (nothing is run). It posts and changes nothing itself;
+    /// its reads are the guarded `board`, `claims` and `stuck` reads (up to 12 rooms), with their usual housekeeping: a room you cannot read, a dm and an ask room are counted, never
     /// named. No message text and no claim reason
     #[command(display_order = 43)]
     Summary {

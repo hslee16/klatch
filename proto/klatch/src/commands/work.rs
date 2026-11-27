@@ -242,27 +242,16 @@ fn summary(ctx: &Ctx, room: Option<String>) -> Result<()> {
     if let Some(room) = room {
         print!(
             "{}",
-            klatch::domain::render_summary(&[read(&room)?], 0, ctx.now)
+            klatch::domain::render_summary(&[read(&room)?], 0, 0, ctx.now)
         );
         return Ok(());
     }
     let mut names = t.rooms()?;
     names.sort_by_key(|r| (r != DEFAULT_ROOM, r.clone()));
-    let (mut rooms, mut not_shown) = (Vec::new(), 0);
-    for name in names {
-        let working = name.starts_with(klatch::domain::DM_PREFIX) || name.starts_with("ask-");
-        // reads stop once the room after the last listed one is in hand, so the work is bounded by the cap
-        if working || rooms.len() > klatch::domain::SUMMARY_ROOMS {
-            not_shown += 1;
-        } else if let Ok(r) = read(&name) {
-            rooms.push(r);
-        } else {
-            not_shown += 1;
-        }
-    }
+    let g = klatch::domain::gather(names, read);
     print!(
         "{}",
-        klatch::domain::render_summary(&rooms, not_shown, ctx.now)
+        klatch::domain::render_summary(&g.rooms, g.more, g.not_shown, ctx.now)
     );
     Ok(())
 }
