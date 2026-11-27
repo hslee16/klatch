@@ -191,3 +191,53 @@ fn the_admin_path_reads_a_dm_and_a_member_does_not_have_it() {
         "admin-scope"
     );
 }
+
+#[test]
+fn first_post_unread_counts_only_what_the_caller_may_read_and_a_refused_caller_learns_nothing() {
+    let g = open();
+    g.admin_set_room_label(&admin(), "vault", "private")
+        .unwrap();
+    g.admin_set_clearance(&admin(), "alice", "private").unwrap();
+    g.post(&alice(), "vault", "the private fact").unwrap();
+    // bob has no clearance: the guard refuses him before any count, and the refusal never repeats the text
+    let err = g.first_post_unread(&bob(), "vault").unwrap_err();
+    assert_eq!(rule_of(err), "clearance");
+    let (room, _) = g.dm(&alice(), "bob", "hello bob", None).unwrap();
+    // bob's first post in the thread: one message waits, counted, and nothing of it is returned
+    g.post(&bob(), &room, "hi").unwrap();
+    assert_eq!(g.first_post_unread(&bob(), &room).unwrap(), 1);
+    // a second post is never a first
+    g.post(&bob(), &room, "again").unwrap();
+    assert_eq!(g.first_post_unread(&bob(), &room).unwrap(), 0);
+}
+
+#[test]
+fn first_post_unread_loads_no_unread_list_for_a_member_that_already_posted_twice() {
+    let g = open();
+    g.post(&alice(), "r", "waiting").unwrap();
+    g.post(&bob(), "r", "one").unwrap();
+    g.post(&bob(), "r", "two").unwrap();
+    let before = g.store.reads.get();
+    assert_eq!(g.first_post_unread(&bob(), "r").unwrap(), 0);
+    assert_eq!(
+        g.store.reads.get(),
+        before,
+        "the cheap checks end it before the scan"
+    );
+    // a first post does load it, once
+    g.post(&alice(), "q", "waiting").unwrap();
+    g.post(&bob(), "q", "one").unwrap();
+    let before = g.store.reads.get();
+    assert_eq!(g.first_post_unread(&bob(), "q").unwrap(), 1);
+    assert_eq!(g.store.reads.get(), before + 1);
+}
+
+#[test]
+fn first_post_unread_is_zero_when_a_hook_digest_showed_the_room_though_messages_wait() {
+    let g = open();
+    g.post(&alice(), "r", "waiting").unwrap();
+    g.post(&bob(), "r", "one").unwrap();
+    g.digest(&bob()).unwrap();
+    assert!(!g.read(&bob(), "r", false).unwrap().is_empty());
+    assert_eq!(g.first_post_unread(&bob(), "r").unwrap(), 0);
+}

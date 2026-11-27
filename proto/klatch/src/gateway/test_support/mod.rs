@@ -17,6 +17,8 @@ mod messages;
 pub struct SpyStore {
     inner: SqliteStore,
     pub calls: Cell<usize>,
+    /// How many times the full unread list was loaded (`read`), so a test can see a path that must not load it (#1415).
+    pub reads: Cell<usize>,
     pub fail: Cell<bool>,
     /// Fail only the message id to room lookup (#1328), so a test can see a post fail closed on it alone.
     pub fail_message_room: Cell<bool>,
@@ -39,6 +41,7 @@ impl SpyStore {
         Self {
             inner,
             calls: Cell::new(0),
+            reads: Cell::new(0),
             fail: Cell::new(false),
             fail_message_room: Cell::new(false),
             before_policy_set: RefCell::new(None),

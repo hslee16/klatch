@@ -115,6 +115,8 @@ project (<PROJECT>/.claude/settings.local.json):
   passive-claims: off
   machine-status: off
   stop-warn: off
+  pre-edit-warn: off
+  pre-edit-claims: off
 What each one changes (only klatch's own hook entries in the files above; other hooks and settings are never touched):
   board: SessionStart prints that room's board before the session joins anything (off: nothing is read)
   join: SessionStart joins the session to the default lobby (off: --no-join is added to that command)
@@ -125,6 +127,8 @@ What each one changes (only klatch's own hook entries in the files above; other 
   passive-claims: a flag on PostToolUse, SessionEnd and Stop claims the repo-relative path of each file you edit for 5 minutes (renewed by each edit, released when the turn ends); it warns when another member holds the path and never blocks
   machine-status: a flag on PostToolUse, SessionEnd and Stop sets the member's status from activity (working, idle, parked, marked auto), posting no message and never replacing a status the member set
   stop-warn: a flag on PostToolUse, SessionEnd and Stop prints one warning line to you when a turn ends with background tasks or crons still running (counts and kinds only, never a command or description), and never stops anything (it adds klatch's Stop hook, which records background counts and liveness as usual)
+  pre-edit-warn: a PreToolUse hook of its own for Edit, Write, MultiEdit and NotebookEdit prints one line when another member holds the path about to be edited (names and counts only, never a reason or message text), and never blocks (enforce is the blocking hook)
+  pre-edit-claims: the same hook also takes the passive claim before the first edit of a path (needs passive-claims, which releases it when the turn ends)
 A change takes effect at the next session; one already running keeps the hooks it started with.
 (ended: ok)
 
@@ -148,6 +152,8 @@ What each one changes (only klatch's own hook entries in the files above; other 
   passive-claims: a flag on PostToolUse, SessionEnd and Stop claims the repo-relative path of each file you edit for 5 minutes (renewed by each edit, released when the turn ends); it warns when another member holds the path and never blocks
   machine-status: a flag on PostToolUse, SessionEnd and Stop sets the member's status from activity (working, idle, parked, marked auto), posting no message and never replacing a status the member set
   stop-warn: a flag on PostToolUse, SessionEnd and Stop prints one warning line to you when a turn ends with background tasks or crons still running (counts and kinds only, never a command or description), and never stops anything (it adds klatch's Stop hook, which records background counts and liveness as usual)
+  pre-edit-warn: a PreToolUse hook of its own for Edit, Write, MultiEdit and NotebookEdit prints one line when another member holds the path about to be edited (names and counts only, never a reason or message text), and never blocks (enforce is the blocking hook)
+  pre-edit-claims: the same hook also takes the passive claim before the first edit of a path (needs passive-claims, which releases it when the turn ends)
 A change takes effect at the next session; one already running keeps the hooks it started with.
 (ended: ok)
 
@@ -340,6 +346,8 @@ project (<PROJECT>/.claude/settings.local.json):
   passive-claims: off
   machine-status: off
   stop-warn: off
+  pre-edit-warn: off
+  pre-edit-claims: off
 What each one changes (only klatch's own hook entries in the files above; other hooks and settings are never touched):
   board: SessionStart prints that room's board before the session joins anything (off: nothing is read)
   join: SessionStart joins the session to the default lobby (off: --no-join is added to that command)
@@ -350,6 +358,8 @@ What each one changes (only klatch's own hook entries in the files above; other 
   passive-claims: a flag on PostToolUse, SessionEnd and Stop claims the repo-relative path of each file you edit for 5 minutes (renewed by each edit, released when the turn ends); it warns when another member holds the path and never blocks
   machine-status: a flag on PostToolUse, SessionEnd and Stop sets the member's status from activity (working, idle, parked, marked auto), posting no message and never replacing a status the member set
   stop-warn: a flag on PostToolUse, SessionEnd and Stop prints one warning line to you when a turn ends with background tasks or crons still running (counts and kinds only, never a command or description), and never stops anything (it adds klatch's Stop hook, which records background counts and liveness as usual)
+  pre-edit-warn: a PreToolUse hook of its own for Edit, Write, MultiEdit and NotebookEdit prints one line when another member holds the path about to be edited (names and counts only, never a reason or message text), and never blocks (enforce is the blocking hook)
+  pre-edit-claims: the same hook also takes the passive claim before the first edit of a path (needs passive-claims, which releases it when the turn ends)
 A change takes effect at the next session; one already running keeps the hooks it started with.
 (ended: ok)
 

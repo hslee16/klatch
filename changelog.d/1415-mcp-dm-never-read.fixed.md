@@ -1,0 +1,1 @@
+- `klatch dm` and the MCP `klatch_post` tool now give the one-time never-read notice (count of unread messages from others, marked as data, and the command or tool that shows them) on the first post in a room the member never read, as `post` and `ask` already did (#1415).

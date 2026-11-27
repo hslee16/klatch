@@ -31,6 +31,14 @@ fn refuse_claude_only(options: &Options) -> anyhow::Result<()> {
             "--machine-status",
         ),
         (options.stop_warn != init::Switch::Keep, "--stop-warn"),
+        (
+            options.pre_edit_warn != init::Switch::Keep,
+            "--pre-edit-warn",
+        ),
+        (
+            options.pre_edit_claims != init::Switch::Keep,
+            "--pre-edit-claims",
+        ),
     ];
     if let Some((_, flag)) = claude_only.iter().find(|(set, _)| *set) {
         bail!(

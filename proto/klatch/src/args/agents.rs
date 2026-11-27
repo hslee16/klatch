@@ -95,5 +95,15 @@ pub(crate) enum AgentsCmd {
         /// command that carries this flag claims anything (`klatch init --passive-claims`).
         #[arg(long)]
         passive_claims: bool,
+        /// Warn before an edit (#1402): on PreToolUse print one bounded line in the context when another member holds
+        /// a live claim on the path an Edit, Write, MultiEdit or NotebookEdit is about to change (names and counts
+        /// only, never a reason or message text, never a block). Consent lives here: only a PreToolUse command that
+        /// carries this flag does anything (`klatch init --pre-edit-warn`); without it the event is the blocking hook.
+        #[arg(long)]
+        pre_edit_warn: bool,
+        /// Also take the passive claim before the first edit of a path (#1458), the claim PostToolUse takes after it
+        /// (`klatch init --pre-edit-claims`, which needs `--passive-claims` so the claim is released at the end of the turn)
+        #[arg(long, requires = "pre_edit_warn")]
+        pre_edit_claims: bool,
     },
 }
