@@ -61,6 +61,8 @@ pub struct SqliteStore {
     /// Refusal audit rows lost: (#1677) dropped from the full queue, oldest first, each also counted in
     /// `audit_flush_errors` as a failed row; and (#1701) refusals the throttle left unwritten, counted only here.
     audit_rows_dropped: std::cell::Cell<u64>,
+    /// Refusals the throttle left unwritten that are not yet in their minute's summary row (#1709): minute, count.
+    throttled: std::cell::RefCell<std::collections::BTreeMap<i64, u64>>,
     /// ROLLBACKs that failed (#1678): the transaction they should have closed may still be open.
     rollback_errors: std::cell::Cell<u64>,
     /// Whether this store opened the transaction now open on the connection (#1678): `immediate` joins only that.

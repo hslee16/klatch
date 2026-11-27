@@ -1,5 +1,6 @@
 //! `klatch doctor` (#66): a read-only health check. It says what works, what does not and why, and how to fix it. It
-//! creates nothing (no store, no key), and it never prints a key or a recovery code.
+//! creates no store and no key (SQLite may make `-wal` and `-shm` beside a WAL store it reads, #1701), and it never
+//! prints a key or a recovery code.
 mod common;
 
 use common::*;

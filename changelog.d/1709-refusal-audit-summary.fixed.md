@@ -1,0 +1,2 @@
+- A flood of junk admin-passphrase keys can no longer hide a refused write to the real keys (the verifier, the failure counter, the unlock window): each real key keeps its own one-row-a-minute audit budget outside the per-family cap of eight.
+- A minute in which refused writes to the admin passphrase keys were throttled now leaves one `policy-refusals-throttled` audit row with the count ("N refusals throttled"), shown by `klatch admin audit`; it names no key.

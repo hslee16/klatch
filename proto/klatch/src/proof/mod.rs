@@ -15,7 +15,7 @@
 
 pub mod alarm;
 mod filelimit;
-mod limit;
+pub(crate) mod limit;
 mod terminal;
 mod tty;
 mod verifier;

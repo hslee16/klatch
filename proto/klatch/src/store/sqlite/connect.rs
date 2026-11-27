@@ -61,12 +61,18 @@ impl SqliteStore {
         }
     }
 
+    /// The connection every read-only probe uses (#1709): opened with `SQLITE_OPEN_READ_ONLY` and nothing else, so it
+    /// cannot write and cannot create the file.
+    pub(super) fn open_probe(path: &Path) -> Result<Connection> {
+        Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(be)
+    }
+
     /// Row counts of the tables that only grow: live messages (tombstones left by archiving are not counted), the
     /// audit log, refusals and claim notes. Read-only (#487), opened without write access: no migration, no journal
-    /// switch, no store file created, though SQLite makes `-wal` and `-shm` beside a WAL store it reads (#1701); a table the store does not have yet counts as 0.
+    /// switch, no store file created, though SQLite may make `-wal` and `-shm` beside a WAL store it reads (#1701);
+    /// a table the store does not have yet counts as 0.
     pub fn read_growth(path: &Path, key: &Key) -> Result<Vec<(&'static str, i64)>> {
-        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .map_err(be)?;
+        let conn = Self::open_probe(path)?;
         Self::unlock(&conn, key)?;
         let mut out = Vec::new();
         for (label, table, filter) in [
@@ -102,8 +108,7 @@ impl SqliteStore {
         if q.targets.is_empty() {
             return Ok((0, 0));
         }
-        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .map_err(be)?;
+        let conn = Self::open_probe(path)?;
         Self::unlock(&conn, key)?;
         let has: i64 = conn
             .query_row(
@@ -126,8 +131,7 @@ impl SqliteStore {
     /// Whether the policy table holds `key` (#1262), for `klatch doctor`: a read-only connection, one indexed lookup,
     /// and the value is never brought back.
     pub fn read_policy_has(path: &Path, key: &Key, policy_key: &str) -> Result<bool> {
-        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .map_err(be)?;
+        let conn = Self::open_probe(path)?;
         // a writer holding the store for a moment is waited for, not reported as a failure (#1701)
         conn.busy_timeout(Duration::from_millis(1000)).map_err(be)?;
         Self::unlock(&conn, key)?;
@@ -154,8 +158,7 @@ impl SqliteStore {
     /// migration, no journal switch (#1701: `-wal` and `-shm` may appear beside a WAL store). A store from before the
     /// table existed has no modes yet.
     pub fn read_member_modes(path: &Path, key: &Key) -> Result<Vec<(String, String, i64)>> {
-        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .map_err(be)?;
+        let conn = Self::open_probe(path)?;
         Self::unlock(&conn, key)?;
         let has_table: i64 = conn
             .query_row(
@@ -274,6 +277,7 @@ impl SqliteStore {
             audit_flush_errors: std::cell::Cell::default(),
             deferred_audit: std::cell::RefCell::default(),
             audit_rows_dropped: std::cell::Cell::default(),
+            throttled: std::cell::RefCell::default(),
             rollback_errors: std::cell::Cell::default(),
             owns_txn: std::cell::Cell::default(),
             read_only_txn: std::cell::Cell::default(),

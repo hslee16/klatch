@@ -128,3 +128,121 @@ fn a_future_stamped_row_queued_in_one_transaction_does_not_silence_the_next_eith
     .unwrap();
     assert_eq!(refusals(&s, "admin-passphrase"), 2);
 }
+
+const REAL_KEYS: [&str; 3] = [
+    "admin-passphrase",
+    "admin-passphrase-fails",
+    "admin-unlock-secs",
+];
+
+fn junk_flood(s: &impl PolicyStore, family: &str, n: usize, ts: i64) {
+    for i in 0..n {
+        assert!(
+            s.policy_set(&format!("{family}junk{i}"), Some("x"), ts)
+                .is_err()
+        );
+    }
+}
+
+fn summaries(s: &impl PolicyStore) -> Vec<(i64, String, String)> {
+    s.audit_log(100_000)
+        .unwrap()
+        .into_iter()
+        .filter(|a| a.action == "policy-refusals-throttled")
+        .map(|a| (a.ts, a.target, a.detail))
+        .collect()
+}
+
+#[test]
+fn a_junk_key_flood_cannot_hide_a_refusal_of_a_real_key() {
+    let s = store();
+    junk_flood(&s, "admin-passphrase-", 8, 4000);
+    junk_flood(&s, "admin-unlock-", 8, 4000);
+    for k in REAL_KEYS {
+        assert!(s.policy_set(k, Some("x"), 4001).is_err());
+        assert_eq!(refusals(&s, k), 1, "{k} keeps its own budget");
+    }
+    // and a real key's row does not spend the junk budget either
+    let t = store();
+    for k in REAL_KEYS {
+        assert!(t.policy_set(k, Some("x"), 4000).is_err());
+    }
+    junk_flood(&t, "admin-passphrase-", 8, 4001);
+    assert_eq!(all_refusals(&t), 3 + 8);
+}
+
+#[test]
+fn a_real_key_is_still_one_row_a_minute() {
+    let s = store();
+    for i in 0..50 {
+        assert!(
+            s.policy_set("admin-unlock-secs", Some("x"), 5000 + i)
+                .is_err()
+        );
+    }
+    assert_eq!(refusals(&s, "admin-unlock-secs"), 1);
+    assert!(s.policy_set("admin-unlock-secs", Some("x"), 5100).is_err());
+    assert_eq!(refusals(&s, "admin-unlock-secs"), 2);
+}
+
+#[test]
+fn a_throttled_minute_leaves_one_summary_row_with_the_count() {
+    let s = store();
+    junk_flood(&s, "admin-unlock-", 300, 6000);
+    let rows = summaries(&s);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].2, "292 refusals throttled");
+    assert_eq!(rows[0].1, "", "no key name, nothing the caller chose");
+    // a later minute is its own row; a minute with no throttling has none
+    junk_flood(&s, "admin-unlock-", 10, 6100);
+    let rows = summaries(&s);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].2, "2 refusals throttled");
+    assert_eq!(all_refusals(&s), 16);
+}
+
+#[test]
+fn an_unthrottled_minute_has_no_summary() {
+    let s = store();
+    junk_flood(&s, "admin-unlock-", 8, 6500);
+    assert!(summaries(&s).is_empty());
+}
+
+#[test]
+fn the_summary_survives_a_flood_inside_one_transaction() {
+    let s = store();
+    s.atomically(&mut || {
+        junk_flood(&s, "admin-passphrase-", 100, 7000);
+        Ok(())
+    })
+    .unwrap();
+    let rows = summaries(&s);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].2, "92 refusals throttled");
+}
+
+#[test]
+fn real_admin_acts_are_never_throttled() {
+    let s = store();
+    junk_flood(&s, "admin-unlock-", 300, 8000);
+    for action in ["administer", "admin_note", "judge", "renew-credential"] {
+        for i in 0..40 {
+            s.record_audit(
+                &crate::store::NewAudit {
+                    action,
+                    target: "t",
+                    detail: "",
+                },
+                8000 + i % 3,
+            )
+            .unwrap();
+        }
+    }
+    for i in 0..40 {
+        s.policy_set("admin:note", Some("x"), 8000 + i % 3).unwrap();
+    }
+    let log = s.audit_log(100_000).unwrap();
+    for action in ["administer", "admin_note", "judge", "renew-credential"] {
+        assert_eq!(log.iter().filter(|a| a.action == action).count(), 40);
+    }
+}

@@ -127,8 +127,16 @@ fn doctor_does_not_call_an_unreadable_store_a_wrong_key() {
     assert!(h.run("a", &["join", "lobby"]).status.success());
     let db = h.0.join("rooms.db");
     std::fs::set_permissions(&db, std::fs::Permissions::from_mode(0o000)).unwrap();
-    let t = text(&doctor(&h));
+    // root reads a mode-000 file, so there is nothing to see as root (#1709)
+    if std::fs::File::open(&db).is_ok() {
+        std::fs::set_permissions(&db, std::fs::Permissions::from_mode(0o600)).unwrap();
+        eprintln!("skipped: this user can read a mode-000 file");
+        return;
+    }
+    let o = doctor(&h);
+    let t = text(&o);
     std::fs::set_permissions(&db, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(o.status.code(), Some(1), "{t}");
     assert!(
         t.lines()
             .any(|l| l.contains("store:") && l.starts_with("FAIL")),

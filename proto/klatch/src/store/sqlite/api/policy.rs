@@ -92,10 +92,11 @@ impl PolicyStore for SqliteStore {
     fn policy_set(&self, key: &str, value: Option<&str>, now: i64) -> Result<()> {
         if is_proof_key(key) {
             // key name only, never the value; the audit row is kept even though the write is refused
-            // at most one row a minute per key and a few per key family, counting rows still queued in an open
-            // transaction, so a loop of refused writes cannot fill the audit or the queue (#1588, #1701)
+            // at most one row a minute per key and a few per family of other keys, counting rows still queued in an
+            // open transaction, so a loop of refused writes cannot fill the audit or the queue (#1588, #1701); what
+            // was left out is one summary row for the minute (#1709)
             if self.refusal_throttled(key, now) {
-                self.count_audit_row_dropped();
+                self.note_throttled(now);
             } else {
                 self.audit_refusal("policy-reserved-refused", key, now);
             }
@@ -246,8 +247,20 @@ pub(in crate::store::sqlite) fn census_from_row(
     Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64))
 }
 
-/// Rows of refused writes to one family of admin passphrase keys that one minute may hold (#1701).
+/// Rows of refused writes to one family of admin passphrase keys that one minute may hold (#1701). The keys the
+/// proof reads (`is_real_key`) are not counted in it and keep their own budget.
 const FAMILY_CAP: u64 = 8;
+
+/// The keys the proof module really reads. Each has its own one-row-a-minute budget outside the family cap, so a
+/// flood of junk keys cannot hide a refusal of one of them (#1709).
+fn is_real_key(key: &str) -> bool {
+    [
+        crate::proof::VERIFIER_KEY,
+        crate::proof::limit::KEY,
+        crate::proof::WINDOW_KEY,
+    ]
+    .contains(&key)
+}
 
 /// The family of a reserved key: `admin-unlock-*` is one, everything else under `admin-passphrase` the other.
 fn family(key: &str) -> &'static str {
@@ -259,17 +272,27 @@ fn family(key: &str) -> &'static str {
 }
 
 impl SqliteStore {
-    /// Whether a refusal of `key` at `now` is left unaudited: the key already has a row in the last minute, or its
-    /// family already has `FAMILY_CAP`. Written rows and rows queued in an open transaction both count; a row stamped
-    /// after `now` (the clock stepped back) counts for neither, or it would silence the audit (#1701).
+    /// Whether a refusal of `key` at `now` is left unaudited: the key already has a row in the last minute, or it is
+    /// not a real key and its family already has `FAMILY_CAP` rows of other keys. Written rows and rows queued in an
+    /// open transaction both count; a row stamped after `now` (the clock stepped back) counts for neither, or it
+    /// would silence the audit (#1701).
     fn refusal_throttled(&self, key: &str, now: i64) -> bool {
         const ACTION: &str = "policy-reserved-refused";
         let fam = family(key);
         let (mut same, mut in_family) = self
             .optional(
-                "SELECT COALESCE(SUM(target=?3),0), COUNT(*) FROM admin_audit WHERE action=?1 \
-                 AND ts BETWEEN ?2 AND ?4 AND substr(target,1,length(?5))=?5",
-                params![ACTION, now - 60, key, now, fam],
+                "SELECT COALESCE(SUM(target=?3),0), COALESCE(SUM(target NOT IN (?6,?7,?8)),0) FROM admin_audit \
+                 WHERE action=?1 AND ts BETWEEN ?2 AND ?4 AND substr(target,1,length(?5))=?5",
+                params![
+                    ACTION,
+                    now - 60,
+                    key,
+                    now,
+                    fam,
+                    crate::proof::VERIFIER_KEY,
+                    crate::proof::limit::KEY,
+                    crate::proof::WINDOW_KEY
+                ],
                 |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
             )
             .ok()
@@ -277,10 +300,10 @@ impl SqliteStore {
             .unwrap_or((0, 0));
         for (action, target, ts, _) in self.deferred_audit.borrow().iter() {
             if *action == ACTION && (now - 60..=now).contains(ts) && target.starts_with(fam) {
-                in_family += 1;
+                in_family += i64::from(!is_real_key(target));
                 same += i64::from(target == key);
             }
         }
-        same > 0 || in_family as u64 >= FAMILY_CAP
+        same > 0 || (!is_real_key(key) && in_family as u64 >= FAMILY_CAP)
     }
 }
