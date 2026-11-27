@@ -62,8 +62,32 @@ mod tests {
         (cur.sa_sigaction, cur.sa_flags)
     }
 
+    /// Puts the signal actions back that the test found, so the test binary keeps its own Ctrl-C (#1689).
+    struct Restore([(libc::c_int, libc::sigaction); 3]);
+
+    impl Restore {
+        fn take() -> Self {
+            let one = |signal| {
+                let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
+                unsafe { libc::sigaction(signal, std::ptr::null(), &mut old) };
+                (signal, old)
+            };
+            Restore([one(libc::SIGINT), one(libc::SIGTERM), one(libc::SIGHUP)])
+        }
+    }
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            for (signal, old) in &self.0 {
+                unsafe { libc::sigaction(*signal, old, std::ptr::null_mut()) };
+            }
+        }
+    }
+
     #[test]
     fn the_hangup_handler_restarts_calls_and_the_stop_handlers_do_not() {
+        let before = flags_of(libc::SIGINT).0;
+        let restore = Restore::take();
         install_signal_handlers_with_hangup();
         let (handler, flags) = flags_of(libc::SIGHUP);
         assert_eq!(handler, on_hangup as extern "C" fn(libc::c_int) as usize);
@@ -77,5 +101,8 @@ mod tests {
                 "stop must interrupt the wait for a connection"
             );
         }
+        // the guard puts back what it found (#1689): the test binary keeps its own Ctrl-C
+        drop(restore);
+        assert_eq!(flags_of(libc::SIGINT).0, before);
     }
 }

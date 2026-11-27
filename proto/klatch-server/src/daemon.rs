@@ -236,6 +236,7 @@ pub(crate) use signals::{
     RELOAD, STOP, install_signal_handlers, install_signal_handlers_with_hangup,
 };
 
+/// Wait up to `ms` for the listener to have a connection waiting.
 fn wait_readable(fd: i32, ms: i32) {
     let mut p = libc::pollfd {
         fd,
