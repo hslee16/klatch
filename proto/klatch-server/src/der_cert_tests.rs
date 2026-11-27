@@ -47,7 +47,10 @@ fn the_subject_is_read_not_the_issuer_with_or_without_a_version() {
     // the same bytes in both fields: still the second Name, and a long name (two length bytes) works
     let long = vec![7u8; 300];
     assert_eq!(subject_of(&cert(b"x", &long, true)), Some(&long[..]));
-    assert_eq!(subject_of(&cert(b"", b"", true)), Some(&b""[..]));
+    // RFC 5280: a CA subject is a non-empty name; an empty one would let a CRL with an empty issuer pass
+    assert_eq!(subject_of(&cert(b"", b"", true)), None);
+    assert_eq!(subject_of(&cert(b"", b"", false)), None);
+    assert_eq!(subject_of(&cert(b"x", b"", true)), None);
 }
 
 #[test]

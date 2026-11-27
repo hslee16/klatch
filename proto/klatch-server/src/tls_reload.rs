@@ -22,7 +22,7 @@
 //! second, each a few file reads). The build runs on its own thread and the watcher waits for it at most [`DEADLINE`]: a
 //! file that blocks (the files are opened without blocking, so a FIFO is refused at once; a file on a stalled mount can
 //! still block) costs one abandoned thread and a failure line, never the accept loop, never a swap that arrives late, and
-//! while it is stuck no other reload starts (a restart clears it). Stopping the server does not wait for it.
+//! while it is stuck no other reload starts until it has been stuck for [`ABANDON_AFTER`] (#1637): then the next reload gives it up, says so in the log (a restart clears the thread), and runs; the abandoned build has no receiver and its own busy flag, so its late answer is never swapped in and never clears the flag of the build that replaced it. At most [`MAX_ABANDONED`] builds are given up in a run, after which a stuck build keeps the flag. Stopping the server does not wait for it.
 //!
 //! **A stale CRL file.** A reload refuses a CRL file whose `nextUpdate` has passed while the CRLs in force are in date (the
 //! old configuration stays, the expiry is an ALERT line): see `tls_crl::Stage`.
@@ -162,7 +162,8 @@ fn build(opts: &Options, in_force_due: Option<i64>) -> Result<Built> {
     tls::build_config_at(&opts.files, roots, Stage::Reload { in_force_due })
 }
 
-/// Clears `busy` when the build thread ends, however it ends.
+/// Clears the flag it holds when the build thread ends, however it ends. The flag is the one of ITS build: a build that was
+/// abandoned clears only its own, never the flag of the build that replaced it.
 struct Done(Arc<AtomicBool>);
 
 impl Drop for Done {
@@ -170,6 +171,63 @@ impl Drop for Done {
         self.0.store(false, Ordering::SeqCst);
     }
 }
+
+/// The bounds of one reload.
+struct Limits {
+    /// How long the watcher waits for a build's answer.
+    deadline: Duration,
+    /// How long a build may stay unfinished before the next reload gives it up (a stalled mount; a restart is the cure).
+    abandon_after: Duration,
+    /// The most builds that may be given up: past it a stuck build keeps the flag (a few threads, never one per reload).
+    max_abandoned: usize,
+}
+
+/// How long a build may be stuck before it is abandoned (#1637): far past [`DEADLINE`], so only a hung read reaches it.
+pub const ABANDON_AFTER: Duration = Duration::from_secs(120);
+/// The most builds that are ever abandoned in one run.
+const MAX_ABANDONED: usize = 3;
+
+/// The state of the build in flight: its own busy flag, when it started, and how many were given up before it.
+struct Slot {
+    busy: Arc<AtomicBool>,
+    started: Instant,
+    abandoned: usize,
+}
+
+impl Slot {
+    fn new() -> Self {
+        Slot {
+            busy: Arc::new(AtomicBool::new(false)),
+            started: Instant::now(),
+            abandoned: 0,
+        }
+    }
+
+    /// Take the right to build: `Err` while an earlier build is unfinished and not yet abandonable. Past the bound, and
+    /// under the cap, the unfinished build is abandoned: the slot gets a NEW flag (the old build clears only the old one)
+    /// and its answer, if it ever comes, has no receiver, so it can never be swapped in. `Ok(true)` says one was abandoned.
+    fn claim(
+        &mut self,
+        abandon_after: Duration,
+        max_abandoned: usize,
+    ) -> Result<(bool, Arc<AtomicBool>), ()> {
+        let mut gave_up = false;
+        if self.busy.load(Ordering::SeqCst) {
+            if self.started.elapsed() < abandon_after || self.abandoned >= max_abandoned {
+                return Err(());
+            }
+            self.busy = Arc::new(AtomicBool::new(false));
+            self.abandoned += 1;
+            gave_up = true;
+        }
+        self.busy.store(true, Ordering::SeqCst);
+        self.started = Instant::now();
+        Ok((gave_up, self.busy.clone()))
+    }
+}
+
+/// The line logged when a stuck build was given up.
+const ABANDONED_LINE: &str = "klatch-server: https: reload: an earlier reload build is stuck (a file did not answer, perhaps a stalled mount) and was abandoned; its result will never be applied; restart the server to clear it";
 
 /// How a wait for a build ended.
 #[derive(Debug, PartialEq, Eq)]
@@ -205,39 +263,69 @@ fn wait_for<T>(rx: &Receiver<T>, stop: &AtomicBool, deadline: Duration) -> Wait<
 fn reload_once(
     opts: &Options,
     current: &Current<tls::Config>,
-    busy: &Arc<AtomicBool>,
+    slot: &mut Slot,
     stop: &AtomicBool,
     in_force_due: &mut Option<i64>,
 ) -> Option<String> {
-    if busy.swap(true, Ordering::SeqCst) {
-        return Some(failure_line(Kind::Busy));
-    }
-    let (tx, rx) = channel();
     let owned = opts.clone();
     let due = *in_force_due;
+    let limits = Limits {
+        deadline: DEADLINE,
+        abandon_after: ABANDON_AFTER,
+        max_abandoned: MAX_ABANDONED,
+    };
+    reload_with(
+        move || build(&owned, due).map_err(|e| classify(&e, &owned.files)),
+        &success_line(&opts.files),
+        current,
+        slot,
+        stop,
+        in_force_due,
+        &limits,
+    )
+}
+
+/// [`reload_once`] with the build, the success line and the bounds given (so the bounds can be tested).
+fn reload_with<T: Send + Sync + 'static>(
+    run: impl FnOnce() -> Result<(Arc<T>, Option<i64>), Kind> + Send + 'static,
+    ok_line: &str,
+    current: &Current<T>,
+    slot: &mut Slot,
+    stop: &AtomicBool,
+    in_force_due: &mut Option<i64>,
+    limits: &Limits,
+) -> Option<String> {
+    let Ok((gave_up, busy)) = slot.claim(limits.abandon_after, limits.max_abandoned) else {
+        return Some(failure_line(Kind::Busy));
+    };
+    let (tx, rx) = channel();
     let guard = Done(busy.clone());
     let spawned = std::thread::Builder::new()
         .name("tls-reload".into())
         .spawn(move || {
             let _done = guard;
-            let result = build(&owned, due).map_err(|e| classify(&e, &owned.files));
-            let _ = tx.send(result);
+            let _ = tx.send(run());
         });
     if spawned.is_err() {
         busy.store(false, Ordering::SeqCst);
         return Some(failure_line(Kind::Other));
     }
-    match wait_for(&rx, stop, DEADLINE) {
+    let line = match wait_for(&rx, stop, limits.deadline) {
         Wait::Got(Ok((config, next_due))) => {
             current.swap(config);
             *in_force_due = next_due;
-            Some(success_line(&opts.files))
+            ok_line.to_string()
         }
-        Wait::Got(Err(kind)) => Some(failure_line(kind)),
-        Wait::TimedOut => Some(failure_line(Kind::TimedOut)),
-        Wait::Gone => Some(failure_line(Kind::Other)),
-        Wait::Stopped => None,
-    }
+        Wait::Got(Err(kind)) => failure_line(kind),
+        Wait::TimedOut => failure_line(Kind::TimedOut),
+        Wait::Gone => failure_line(Kind::Other),
+        Wait::Stopped => return None,
+    };
+    Some(if gave_up {
+        format!("{ABANDONED_LINE}\n{line}")
+    } else {
+        line
+    })
 }
 
 /// Watch `flag` (set by SIGHUP) until `stop`: each time it is set, and at least [`SPACING`] after the last start, reload
@@ -250,7 +338,7 @@ pub fn watch(
     current: &Current<tls::Config>,
     mut in_force_due: Option<i64>,
 ) {
-    let busy = Arc::new(AtomicBool::new(false));
+    let mut slot = Slot::new();
     let mut last: Option<Instant> = None;
     while !stop.load(Ordering::SeqCst) {
         std::thread::sleep(TICK);
@@ -258,7 +346,7 @@ pub fn watch(
         // taking the flag clears it: signals that arrive during the reload set it again, and are one pending reload
         if due && flag.swap(false, Ordering::SeqCst) {
             last = Some(Instant::now());
-            if let Some(line) = reload_once(opts, current, &busy, stop, &mut in_force_due) {
+            if let Some(line) = reload_once(opts, current, &mut slot, stop, &mut in_force_due) {
                 eprintln!("{line}");
             }
         }
@@ -351,5 +439,145 @@ mod tests {
         drop(tx);
         stop.store(false, Ordering::SeqCst);
         assert_eq!(wait_for(&rx, &stop, Duration::from_secs(5)), Wait::Gone);
+    }
+
+    /// A `Slot` for the tests: a build that blocks until the test lets it go, and one that answers at once.
+    fn blocked_build<T: Send + 'static>(
+        release: Receiver<()>,
+        value: T,
+    ) -> impl FnOnce() -> Result<(Arc<T>, Option<i64>), Kind> + Send + 'static {
+        move || {
+            let _ = release.recv();
+            Ok((Arc::new(value), None))
+        }
+    }
+
+    /// #1637: a build blocked past [`DEADLINE`] on a stalled mount disables reload only until the abandon bound, after
+    /// which the next reload starts; the abandoned build, when it finally ends, can never swap its configuration over
+    /// the newer one (its answer has no receiver) nor clear the flag of the build that replaced it.
+    #[test]
+    fn a_build_stuck_past_the_bound_is_abandoned_and_its_late_answer_never_applies() {
+        let stop = AtomicBool::new(false);
+        let current = Current::new(Arc::new(0u8));
+        let mut slot = Slot::new();
+        let mut due = None;
+        let limits = Limits {
+            deadline: Duration::from_millis(100),
+            abandon_after: Duration::from_millis(400),
+            max_abandoned: 2,
+        };
+        let (free_first, hold_first) = channel();
+        let first = reload_with(
+            blocked_build(hold_first, 1u8),
+            "ok",
+            &current,
+            &mut slot,
+            &stop,
+            &mut due,
+            &limits,
+        );
+        assert_eq!(first, Some(failure_line(Kind::TimedOut)));
+        // before the bound the flag stays: an earlier reload has not finished
+        let early = reload_with(
+            || Ok((Arc::new(9u8), None)),
+            "ok",
+            &current,
+            &mut slot,
+            &stop,
+            &mut due,
+            &limits,
+        );
+        assert_eq!(early, Some(failure_line(Kind::Busy)));
+        assert_eq!(*current.get(), 0);
+        // past the bound the stuck build is given up, said in the log, and a new reload runs and swaps
+        std::thread::sleep(Duration::from_millis(450));
+        let later = reload_with(
+            || Ok((Arc::new(2u8), None)),
+            "ok",
+            &current,
+            &mut slot,
+            &stop,
+            &mut due,
+            &limits,
+        )
+        .unwrap();
+        assert!(
+            later.contains("abandoned") && later.contains("restart"),
+            "{later}"
+        );
+        assert!(later.ends_with("ok"), "{later}");
+        assert_eq!(*current.get(), 2);
+        // the abandoned build ends now: nothing changes, and the flag of a running build is not cleared by it
+        let (free_third, hold_third) = channel();
+        let third = reload_with(
+            blocked_build(hold_third, 3u8),
+            "ok",
+            &current,
+            &mut slot,
+            &stop,
+            &mut due,
+            &limits,
+        );
+        assert_eq!(third, Some(failure_line(Kind::TimedOut)));
+        free_first.send(()).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(*current.get(), 2, "a late answer was applied");
+        let busy = reload_with(
+            || Ok((Arc::new(8u8), None)),
+            "ok",
+            &current,
+            &mut slot,
+            &stop,
+            &mut due,
+            &limits,
+        );
+        assert_eq!(
+            busy,
+            Some(failure_line(Kind::Busy)),
+            "the abandoned build cleared the flag of the build that replaced it"
+        );
+        free_third.send(()).unwrap();
+    }
+
+    /// The number of abandoned builds is bounded: a mount that stays stalled costs a few threads, not one per reload.
+    #[test]
+    fn abandoning_stops_at_the_cap_and_then_the_flag_stays() {
+        let stop = AtomicBool::new(false);
+        let current = Current::new(Arc::new(0u8));
+        let mut slot = Slot::new();
+        let mut due = None;
+        let limits = Limits {
+            deadline: Duration::from_millis(50),
+            abandon_after: Duration::from_millis(100),
+            max_abandoned: 1,
+        };
+        let mut releases = Vec::new();
+        let mut lines = Vec::new();
+        for _ in 0..3 {
+            let (free, hold) = channel();
+            releases.push(free);
+            lines.push(reload_with(
+                blocked_build(hold, 1u8),
+                "ok",
+                &current,
+                &mut slot,
+                &stop,
+                &mut due,
+                &limits,
+            ));
+            std::thread::sleep(Duration::from_millis(150));
+        }
+        // the first build is stuck (timed out); the second replaced it (abandoned note on the timed out line is not
+        // required) and is stuck; the third finds the cap reached and stays busy
+        assert_eq!(lines[0], Some(failure_line(Kind::TimedOut)));
+        assert!(
+            lines[1].as_deref().unwrap().contains("abandoned"),
+            "{:?}",
+            lines[1]
+        );
+        assert_eq!(lines[2], Some(failure_line(Kind::Busy)));
+        for free in releases {
+            let _ = free.send(());
+        }
     }
 }
