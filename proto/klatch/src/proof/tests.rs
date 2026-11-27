@@ -226,7 +226,7 @@ fn each_further_failure_waits_longer_and_the_wait_has_a_cap() {
 fn a_damaged_failure_count_reads_as_locked_not_as_free() {
     let s = store();
     with_pass(&s);
-    s.reserved_policy_set(limit::KEY, Some("garbage"), 1)
+    s.reserved_policy_set(&ProofCap::new(), limit::KEY, Some("garbage"), 1)
         .unwrap();
     let e = prove(
         &s,
@@ -242,8 +242,13 @@ fn a_damaged_failure_count_reads_as_locked_not_as_free() {
 #[test]
 fn a_damaged_verifier_lets_nobody_in() {
     let s = store();
-    s.reserved_policy_set(VERIFIER_KEY, Some("argon2id$m=1,t=1,p=1$00$00"), 1)
-        .unwrap();
+    s.reserved_policy_set(
+        &ProofCap::new(),
+        VERIFIER_KEY,
+        Some("argon2id$m=1,t=1,p=1$00$00"),
+        1,
+    )
+    .unwrap();
     let mut p = Typed::new(&[PASS]);
     assert_eq!(
         prove(&s, &mut p, at(1), &Unlock::new(), "a test").unwrap_err(),
@@ -353,7 +358,8 @@ fn a_length_of_the_window_comes_from_policy_and_is_bounded() {
     assert_eq!(window_len(&s), Duration::from_secs(120));
     assert!(set_window(&s, &proof, Some(5), 3).is_err());
     assert!(set_window(&s, &proof, Some(100_000), 3).is_err());
-    s.reserved_policy_set(WINDOW_KEY, Some("junk"), 4).unwrap();
+    s.reserved_policy_set(&ProofCap::new(), WINDOW_KEY, Some("junk"), 4)
+        .unwrap();
     assert_eq!(window_len(&s), Duration::from_secs(60));
     set_window(&s, &proof, None, 5).unwrap();
     assert_eq!(s.policy_get(WINDOW_KEY).unwrap(), None);
@@ -398,7 +404,8 @@ fn non_canonical_stale_row(s: &SqliteStore) -> String {
         .unwrap();
     assert_eq!(cost, "m=64,t=1,p=1");
     let row = format!("argon2id$p=1,t=01,m=64${rest}");
-    s.reserved_policy_set(VERIFIER_KEY, Some(&row), 1).unwrap();
+    s.reserved_policy_set(&ProofCap::new(), VERIFIER_KEY, Some(&row), 1)
+        .unwrap();
     row
 }
 
@@ -432,6 +439,7 @@ fn a_row_with_upper_case_hex_is_corrupt_and_never_proves() {
     let row = s.policy_get(VERIFIER_KEY).unwrap().unwrap();
     let (head, tail) = row.rsplit_once('$').unwrap();
     s.reserved_policy_set(
+        &ProofCap::new(),
         VERIFIER_KEY,
         Some(&format!("{head}${}", tail.to_uppercase())),
         2,
@@ -898,7 +906,8 @@ fn old_terminals_are_pruned_and_the_table_stays_small() {
 #[test]
 fn a_row_from_before_per_terminal_counting_is_still_honoured() {
     let s = store();
-    s.reserved_policy_set(limit::KEY, Some("5,100"), 1).unwrap();
+    s.reserved_policy_set(&ProofCap::new(), limit::KEY, Some("5,100"), 1)
+        .unwrap();
     assert!(limit::wait_secs(&s, "ttys001/s1", 101).unwrap() > 0);
     limit::clear(&s, "ttys001/s1", 101).unwrap();
     assert_eq!(s.policy_get(limit::KEY).unwrap(), None);
@@ -961,7 +970,8 @@ fn the_proof_commands_still_write_their_own_rows() {
     let s = store();
     with_pass(&s);
     assert!(s.policy_get(VERIFIER_KEY).unwrap().is_some());
-    s.reserved_policy_set(WINDOW_KEY, Some("60"), 7).unwrap();
+    s.reserved_policy_set(&ProofCap::new(), WINDOW_KEY, Some("60"), 7)
+        .unwrap();
     assert_eq!(s.policy_get(WINDOW_KEY).unwrap().as_deref(), Some("60"));
 }
 
@@ -971,7 +981,10 @@ fn an_ordinary_key_is_not_caught_by_the_reserved_check() {
     s.policy_set("admin:note", Some("x"), 1).unwrap();
     s.policy_set("label:admin-passphrase-room", Some("x"), 1)
         .unwrap();
-    assert!(s.reserved_policy_set("label:r", Some("x"), 1).is_err());
+    assert!(
+        s.reserved_policy_set(&ProofCap::new(), "label:r", Some("x"), 1)
+            .is_err()
+    );
 }
 
 #[test]

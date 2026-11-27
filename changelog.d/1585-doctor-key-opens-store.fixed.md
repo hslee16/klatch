@@ -1,0 +1,2 @@
+- `klatch doctor` now fails (exit 1) when the store key exists but does not open the store, instead of reporting it as ok and silently dropping the growth and passphrase lines (#1585).
+- Refused writes to the admin passphrase rows are audited at most once a minute per key, every `admin-unlock-*` policy key is reserved to the proof, and `reserved_policy_set` needs a token only the proof module can build (#1588).
