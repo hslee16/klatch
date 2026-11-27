@@ -95,6 +95,9 @@ fn observe_in(
     session_id: &str,
     alive: &Option<std::collections::HashSet<u32>>,
 ) -> Option<Observed> {
+    // one read of the process table for every record (a lookup on the real one runs `ps -A`, #1569)
+    let pinned = procs.pin();
+    let procs: &dyn ProcessTable = pinned.as_deref().unwrap_or(procs);
     let (records, _) = registry.records_alive(alive.as_ref());
     let claims: Vec<Record> = records
         .into_iter()

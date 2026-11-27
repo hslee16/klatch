@@ -90,8 +90,8 @@ fn ordered_record_names(
 }
 
 /// Read the records of `dir` (`<pid>.json`) with `read` giving the text of one name. Candidates are taken running pids
-/// first, then newest (see `ordered_record_names`), but the bound `max_records` counts only records that parse and sit under their own
-/// pid, so junk, however fresh, cannot push a valid record out; the junk is bounded separately, at most `max_opened`
+/// first, then newest (see `ordered_record_names`), but the bound `max_records` counts only records that parse and sit
+/// under their own pid, so junk, however fresh, cannot push a valid record out; the junk is bounded separately, at most `max_opened`
 /// files opened in one pass. Returns the records ordered by pid and how many opened files were not valid records. `None`
 /// when `dir` cannot be listed.
 pub(crate) fn scan_records_with(

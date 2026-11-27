@@ -170,3 +170,62 @@ fn records_of_other_sessions_are_not_a_conflict() {
         Verdict::WaitingOnHuman
     );
 }
+
+/// Counts what is asked of the real table: `ps -A` runs for each lookup on it, but only once for a pinned snapshot.
+struct Counting {
+    table: Table,
+    direct: std::cell::Cell<usize>,
+    pins: std::cell::Cell<usize>,
+}
+
+struct Snapshot(HashMap<u32, ProcInfo>);
+
+impl ProcessTable for Snapshot {
+    fn lookup(&self, pid: u32) -> Lookup {
+        self.0
+            .get(&pid)
+            .cloned()
+            .map_or(Lookup::Missing, Lookup::Found)
+    }
+}
+
+impl ProcessTable for Counting {
+    fn lookup(&self, pid: u32) -> Lookup {
+        self.direct.set(self.direct.get() + 1);
+        self.table.lookup(pid)
+    }
+    fn pin(&self) -> Option<Box<dyn ProcessTable>> {
+        self.pins.set(self.pins.get() + 1);
+        Some(Box::new(Snapshot(self.table.0.clone())))
+    }
+}
+
+#[test]
+fn many_records_of_one_session_cost_one_read_of_the_process_table() {
+    // #1706 review: each lookup on the real table is a `ps -A`, so a flood of forged records must be judged against
+    // one snapshot
+    let (_d, reg) = dir("cost");
+    let mut table = Table::default().with(5000, START, "claude");
+    write(&reg, 5000, "victim", START);
+    for pid in 1..=60u32 {
+        write(&reg, pid, "victim", START);
+        table = table.with(pid, "other", "launchd");
+    }
+    let counting = Counting {
+        table,
+        direct: Default::default(),
+        pins: Default::default(),
+    };
+    let host = Fake(counting.table.0.keys().copied().collect());
+    let alive = Some(counting.table.0.keys().copied().collect());
+    assert_eq!(
+        observe_in(&reg, &counting, &host, "darwin", "victim", &alive),
+        None
+    );
+    assert_eq!(
+        counting.direct.get(),
+        0,
+        "a record was judged on the live table"
+    );
+    assert_eq!(counting.pins.get(), 1);
+}
