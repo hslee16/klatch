@@ -17,6 +17,7 @@ use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 /// Where `ps` may be, in order: macOS has it in `/bin`, Linux in `/bin` or `/usr/bin`.
+#[doc(hidden)]
 pub const PS_CANDIDATES: [&str; 2] = ["/bin/ps", "/usr/bin/ps"];
 
 /// What one `ps` run may cost.
@@ -244,6 +245,7 @@ pub fn process_table_notice() -> Option<&'static str> {
 
 /// `NO_PROCESS_TABLE` when none of `candidates` is a usable `ps` (a seam for a caller that is tested without a machine
 /// that lacks `ps`).
+#[doc(hidden)]
 pub fn process_table_notice_in(candidates: &[&str]) -> Option<&'static str> {
     no_process_table_notice(candidates)
 }
