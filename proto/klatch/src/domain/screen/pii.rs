@@ -204,6 +204,8 @@ fn international(b: &[u8], i: usize) -> bool {
         && b[i + 1].is_ascii_digit()
         && n >= 9
         && !b.get(e).is_some_and(u8::is_ascii_alphanumeric)
+        // a long number read as a measure (`+1700000000 seconds`), not as a phone number
+        && !RANGE_AFTER.contains(&word_after(b, e).as_str())
 }
 
 const STREET_SUFFIX: &[&str] = &[

@@ -1,0 +1,1 @@
+- The reviewer's flag line reads `judge flag (data):` (it can come from the hosted judge), the resident judge no longer rewrites an unchanged flag, and a long number followed by a unit word (`+1700000000 seconds`) is no longer read as an international phone number. SECURITY.md notes that reviewers see scrub rule names.
