@@ -110,10 +110,10 @@ pub(crate) fn scan_records_with(
 /// Whether `unread` (names left unread by a bound) may hold a record that matters: any of them when there is no process
 /// table, else one whose pid runs (the order puts those first, so what is left is of pids that do not run).
 ///
-/// Known gap (#1706, tracked in #1712): an unread dead-pid record is not nothing. A dead member's real record
-/// under a dead pid, left unread behind a flood of records of running pids, is the second (Gone) claim that would turn
-/// a forged alive record of the same session id from an extension into `None`. With it unread, that forgery still
-/// extends the claims, as on main. The listing is therefore reported complete here only as far as running pids go.
+/// An unread dead-pid record is not nothing (#1712): a dead member's real record is the second (Gone) claim that turns a
+/// forged alive record of the same session id from an extension into `None`. The scan therefore keeps opening
+/// dead-pid names past the record bound for their session ids (`Scan::dead_sessions`), and says when it could not
+/// (`Scan::dead_unread`). A cut is reported here only as far as running pids go.
 fn cut_running(unread: &[String], alive: Option<&HashSet<u32>>) -> bool {
     match alive {
         None => !unread.is_empty(),
@@ -134,6 +134,12 @@ pub(crate) struct Scan {
     /// A bound stopped the pass with names left unread that may matter (see `cut_running`): the records are a part of
     /// the directory, not all of it. Names of pids that do not run, left unread, do not count.
     pub(crate) truncated: bool,
+    /// The session ids of valid records of pids that do not run, read past the record bound (#1712): only the claim
+    /// is kept. A dead member's real record is a second (Gone) claim whatever the flood of running pids ahead of it.
+    pub(crate) dead_sessions: Vec<String>,
+    /// Names of pids that do not run were still unread when the open bound was reached: one of them may hold such a
+    /// claim, so a caller must not act on an alive answer (#1712).
+    pub(crate) dead_unread: bool,
 }
 
 /// `scan_records_with` that also says whether a bound cut the pass.
@@ -159,10 +165,31 @@ pub(crate) fn scan_records_bounded(
         }
     }
     records.sort_by_key(|r| r.pid);
+    let truncated = truncated || cut_running(&names[visited..], alive);
+    // what is left is of pids that do not run (else `truncated` is set): their claims still count, so keep opening
+    // them for the session id alone, up to the open bound (#1712)
+    let mut dead_sessions = Vec::new();
+    if !truncated && alive.is_some() {
+        for name in names[visited..]
+            .iter()
+            .take(max_opened.saturating_sub(visited))
+        {
+            let filed_under: u32 = name.trim_end_matches(".json").parse().unwrap_or(0);
+            if let Some(rec) = read(name)
+                .and_then(|t| parse_record(&t))
+                .filter(|r| r.pid == filed_under)
+            {
+                dead_sessions.push(rec.session_id);
+            }
+            visited += 1;
+        }
+    }
     Some(Scan {
         records,
         malformed,
-        truncated: truncated || cut_running(&names[visited..], alive),
+        truncated,
+        dead_sessions,
+        dead_unread: !truncated && alive.is_some() && visited < names.len(),
     })
 }
 
