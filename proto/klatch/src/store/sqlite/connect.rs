@@ -286,6 +286,8 @@ impl SqliteStore {
             fail_rollbacks: std::cell::Cell::default(),
             #[cfg(test)]
             fail_summaries: std::cell::Cell::default(),
+            #[cfg(test)]
+            selects: std::cell::Cell::default(),
         })
     }
 }

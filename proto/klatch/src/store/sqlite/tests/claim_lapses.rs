@@ -404,3 +404,88 @@ fn rows_dropped_by_the_per_room_cap_are_counted_too() {
     take(&s, ("r", "alice", "x"), 50_000, 150);
     assert_eq!(s.claim_lapses_dropped(), 7);
 }
+
+fn yield_rows(s: &SqliteStore) -> Vec<(String, String)> {
+    s.rows(
+        "SELECT member,path FROM claim_yields WHERE path<>'' ORDER BY member,path",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_sweep_reads_the_deadlock_marks_once_not_once_per_lapse() {
+    // #1620: the sweep paid one indexed select per lapse in note_yield_end; the reads of a sweep must not grow with
+    // the number of lapses
+    let reads = |lapses: usize| {
+        let s = store();
+        for i in 0..lapses {
+            take(&s, ("r", "bob", &format!("job{i}")), 100, 0);
+        }
+        let before = s.selects.get();
+        take(&s, ("r", "alice", "x"), 50_000, 150);
+        s.selects.get() - before
+    };
+    let (few, many) = (reads(2), reads(40));
+    assert_eq!(few, many, "reads with 2 lapses {few}, with 40 {many}");
+}
+
+#[test]
+fn a_lapse_of_a_deadlocked_member_is_marked_and_another_member_is_not() {
+    // the behaviour the batched read must keep: only a holder that was in a deadlock inside the window before the
+    // lease ended gets its path marked for a later take
+    let s = store();
+    take(&s, ("r", "bob", "a"), 100, 0);
+    take(&s, ("r", "bob", "b"), 100, 0);
+    take(&s, ("r", "dave", "c"), 100, 0);
+    s.conn
+        .execute(
+            "INSERT INTO claim_yields(room,member,path,ts,taker) VALUES('r','bob','',50,'')",
+            [],
+        )
+        .unwrap();
+    take(&s, ("r", "alice", "x"), 50_000, 150);
+    assert_eq!(
+        yield_rows(&s),
+        [("bob".into(), "a".into()), ("bob".into(), "b".into())]
+    );
+}
+
+#[test]
+fn a_deadlock_mark_older_than_the_window_before_the_lease_end_does_not_mark() {
+    let s = store();
+    take(&s, ("r", "bob", "a"), 100, 0);
+    s.conn
+        .execute(
+            &format!(
+                "INSERT INTO claim_yields(room,member,path,ts,taker) VALUES('r','bob','',{},'')",
+                100 - crate::domain::YIELD_WINDOW_SECS - 1
+            ),
+            [],
+        )
+        .unwrap();
+    take(&s, ("r", "alice", "x"), 50_000, 150);
+    assert!(yield_rows(&s).is_empty());
+}
+
+#[test]
+fn housekeeping_prunes_lapse_rows_past_the_window_on_a_store_with_no_claim_attempts() {
+    // #1620: the prune ran only inside a claim sweep; an idle store kept its rows
+    let s = store();
+    take(&s, ("r", "bob", "job"), 100, 0);
+    take(&s, ("r", "alice", "x"), 50_000, 150);
+    assert_eq!(rows(&s), 1);
+    s.prune_members(1_000_000, 100 + LAPSED_WINDOW_SECS + 5)
+        .unwrap();
+    assert_eq!(rows(&s), 0);
+}
+
+#[test]
+fn housekeeping_keeps_a_lapse_row_inside_the_window() {
+    let s = store();
+    take(&s, ("r", "bob", "job"), 100, 0);
+    take(&s, ("r", "alice", "x"), 50_000, 150);
+    s.prune_members(1_000_000, 200).unwrap();
+    assert_eq!(rows(&s), 1);
+}

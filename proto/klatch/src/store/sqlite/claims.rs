@@ -140,11 +140,43 @@ impl SqliteStore {
             )?
             .is_some();
         if marked {
-            self.exec(
-                "INSERT INTO claim_yields(room,member,path,ts,taker) VALUES(?1,?2,?3,?4,'')
-                 ON CONFLICT(room,member,path) DO UPDATE SET ts=?4, taker=''",
-                params![room, owner, path, at],
-            )?;
+            self.mark_yield_end(room, held, at)?;
+        }
+        Ok(())
+    }
+
+    /// Remember that `owner` ended its claim on `path` at `at` while it had a deadlock mark.
+    fn mark_yield_end(&self, room: &str, held: (&str, &str), at: i64) -> Result<()> {
+        let (owner, path) = held;
+        self.exec(
+            "INSERT INTO claim_yields(room,member,path,ts,taker) VALUES(?1,?2,?3,?4,'')
+             ON CONFLICT(room,member,path) DO UPDATE SET ts=?4, taker=''",
+            params![room, owner, path, at],
+        )?;
+        Ok(())
+    }
+
+    /// `note_yield_end` for every lapse of a sweep with one read of the deadlock marks, not one select per lapse
+    /// (#1620): a mark is a `claim_yields` row with an empty path, and a lapse is marked when its holder has one in the
+    /// window before the lease ended.
+    fn note_lapsed_yield_ends(&self, lapsed: &[Lapsed]) -> Result<()> {
+        if lapsed.is_empty() {
+            return Ok(());
+        }
+        let marks: Vec<(String, String, i64)> = self.rows(
+            "SELECT room,member,ts FROM claim_yields WHERE path=''",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        for l in lapsed.iter().filter(|l| {
+            marks.iter().any(|(room, member, ts)| {
+                *room == l.room
+                    && *member == l.owner
+                    && *ts >= l.expires - YIELD_WINDOW_SECS
+                    && *ts <= l.expires
+            })
+        }) {
+            self.mark_yield_end(&l.room, (&l.owner, &l.path), l.expires)?;
         }
         Ok(())
     }
@@ -329,9 +361,7 @@ impl SqliteStore {
         )?;
         self.exec("DELETE FROM claims WHERE expires<=?1", params![now])?;
         self.record_lapses(&lapsed, now)?;
-        for l in &lapsed {
-            self.note_yield_end(&l.room, (&l.owner, &l.path), l.expires)?;
-        }
+        self.note_lapsed_yield_ends(&lapsed)?;
         let events: Vec<ClaimEvent> = lapsed
             .iter()
             .map(|l| ClaimEvent {
