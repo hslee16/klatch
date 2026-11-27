@@ -229,3 +229,68 @@ fn many_records_of_one_session_cost_one_read_of_the_process_table() {
     );
     assert_eq!(counting.pins.get(), 1);
 }
+
+/// A table of `n` live pids from 100 up (named like nothing the harness runs) plus the given rows.
+fn flooded(n: u32, extra: Table) -> Table {
+    (100..100 + n).fold(extra, |t, pid| t.with(pid, "other", "sleep"))
+}
+
+fn forge_fresh(reg: &FsRegistry, n: u32, session: &str) {
+    for pid in 100..100 + n {
+        write(reg, pid, session, "other");
+    }
+}
+
+fn age(reg: &FsRegistry, pid: u32) {
+    std::fs::File::options()
+        .write(true)
+        .open(reg.dir.join(format!("{pid}.json")))
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+        .unwrap();
+}
+
+#[test]
+fn a_flood_of_fresher_live_pid_records_hiding_the_real_one_leaves_the_lease_alone() {
+    // #1706 (1c) flood residual: the forged pid-1 record is inside the bound, the real older one is not; one
+    // candidate would read as Gone and shorten the victim's claims
+    let (_d, reg) = dir("flood");
+    write(&reg, 5000, "victim", START);
+    age(&reg, 5000);
+    forge_fresh(&reg, 256, "decoy");
+    // written last, so the freshest: inside the bound whatever the clock resolution
+    write(&reg, 1, "victim", START);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    write(&reg, 1, "victim", START);
+    let table = flooded(
+        256,
+        Table::default()
+            .with(5000, START, "claude")
+            .with(1, "Mon Jan  1 00:00:00 2026", "launchd"),
+    );
+    assert_eq!(seen(&reg, &table, "victim"), None);
+}
+
+#[test]
+fn a_flood_that_pushes_the_session_out_of_the_listing_is_not_a_verdict_of_absence() {
+    let (_d, reg) = dir("flood-absent");
+    write(&reg, 5000, "victim", START);
+    age(&reg, 5000);
+    forge_fresh(&reg, 256, "decoy");
+    let table = flooded(256, Table::default().with(5000, START, "claude"));
+    assert_eq!(seen(&reg, &table, "victim"), None);
+}
+
+#[test]
+fn a_real_record_below_the_bound_is_still_found() {
+    // 255 forged plus the real one is 256: nothing is cut
+    let (_d, reg) = dir("below");
+    write(&reg, 5000, "victim", START);
+    age(&reg, 5000);
+    forge_fresh(&reg, 255, "decoy");
+    let table = flooded(255, Table::default().with(5000, START, "claude"));
+    assert_eq!(
+        seen(&reg, &table, "victim").unwrap().verdict,
+        Verdict::WaitingOnHuman
+    );
+}

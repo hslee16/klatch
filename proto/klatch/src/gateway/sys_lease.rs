@@ -87,6 +87,15 @@ impl LeaseSource for SysLeaseSource {
 /// is the real one; otherwise the records disagree about who the session is and nothing here can tell the real one from
 /// the forged, so the answer is `None` and the lease is left alone (neither extended nor shortened; its TTL decides).
 /// A harness restarted under a new pid with the stale file of the old one left behind lands here too, and lapses by TTL.
+///
+/// A listing a bound cut (more records than the scan reads, a flood of fresher ones) is an incomplete view: the record
+/// found may be a forged one with the real one cut out, and what is absent may be only unread. The answer is then `None`
+/// whatever was found (a planted `Gone`, which shortens claims, and a single forged alive record are no longer acted on).
+/// Not closed: a cut is reported only when a running pid's record was left unread, so a dead member's real record
+/// (dead pid) left unread behind a flood of running-pid records, plus one forged alive record of the same session id,
+/// still reads as one alive record and extends the claims, as on main (#1706 1d through a flood; tracked in
+/// #1712). With no process table (it fails closed) any cut is reported, so more than `MAX_ENTRIES` record files give
+/// `None`.
 fn observe_in(
     registry: &FsRegistry,
     procs: &dyn ProcessTable,
@@ -98,7 +107,10 @@ fn observe_in(
     // one read of the process table for every record (a lookup on the real one runs `ps -A`, #1569)
     let pinned = procs.pin();
     let procs: &dyn ProcessTable = pinned.as_deref().unwrap_or(procs);
-    let (records, _) = registry.records_alive(alive.as_ref());
+    let (records, _, truncated) = registry.records_alive(alive.as_ref());
+    if truncated {
+        return None;
+    }
     let claims: Vec<Record> = records
         .into_iter()
         .filter(|r| r.session_id == session_id)
