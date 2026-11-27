@@ -7,8 +7,7 @@
 use super::roles::RoleChange;
 use super::*;
 use crate::domain::{ReviewItem, Verdict};
-use crate::gateway::DRAIN_LIMIT;
-use crate::gateway::judge::{load_item, record};
+use crate::gateway::judge::{PendingPages, load_item, record};
 
 const REVIEWER: &str = "reviewer";
 
@@ -37,16 +36,19 @@ impl<S: Store> Gateway<S> {
     /// the reviewer's clearance is skipped, not shown: the human grants clearance to the reviewer like any member.
     pub fn review_next(&self, who: &Principal) -> Result<Option<ReviewItem>> {
         self.admit_review(who, &Operation::ReviewNext)?;
-        for q in self.store.pending_reviews(DRAIN_LIMIT)? {
-            if self.check_clearance(who, &q.room).is_err() {
-                continue;
-            }
-            if let Some(mut item) = load_item(&self.store, &q)? {
-                if !q.detail.is_empty() {
-                    // why a judge flagged it (the rules, or the hosted judge): plain data, not an instruction to the reviewer
-                    item.reason = format!("{}; judge flag (data): {}", item.reason, q.detail);
+        let mut pages = PendingPages::new();
+        while let Some(page) = pages.next(&self.store)? {
+            for q in page {
+                if self.check_clearance(who, &q.room).is_err() {
+                    continue;
                 }
-                return Ok(Some(item));
+                if let Some(mut item) = load_item(&self.store, &q)? {
+                    if !q.detail.is_empty() {
+                        // why a judge flagged it (the rules, or the hosted judge): plain data, not an instruction to the reviewer
+                        item.reason = format!("{}; judge flag (data): {}", item.reason, q.detail);
+                    }
+                    return Ok(Some(item));
+                }
             }
         }
         Ok(None)

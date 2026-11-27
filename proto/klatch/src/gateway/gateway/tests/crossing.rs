@@ -2,6 +2,7 @@
 //! The request is queued as a pointer; a verdict (judge or reviewer) releases, redacts or blocks it; the floors are
 //! checked again at release.
 
+use super::super::crossing::DEFAULT_CROSSING_CAP;
 use super::*;
 use crate::domain::Verdict;
 
@@ -415,4 +416,160 @@ fn a_principal_without_the_role_cannot_release() {
         rule_of(m.release_crossings(&alice()).unwrap_err()),
         "admin-scope"
     );
+}
+
+/// Post `n` more messages in the vault, so crossings have distinct sources.
+fn more_vault_messages(g: &Gateway<SpyStore>, n: usize) {
+    for i in 0..n {
+        g.post(&alice(), "vault", &format!("another fact {i}"))
+            .unwrap();
+    }
+}
+
+#[test]
+fn a_requester_cannot_have_more_than_the_cap_of_crossings_waiting() {
+    let (g, _) = world();
+    let cap = DEFAULT_CROSSING_CAP;
+    more_vault_messages(&g, cap);
+    for seq in 1..=cap as i64 {
+        g.request_crossing(&alice(), "vault", seq, "open").unwrap();
+    }
+    let e = g
+        .request_crossing(&alice(), "vault", cap as i64 + 1, "open")
+        .unwrap_err();
+    let shown = format!("{e}");
+    assert_eq!(rule_of(e), "crossing-cap");
+    assert!(shown.contains(&cap.to_string()), "{shown}");
+    assert!(
+        !shown.contains("another fact") && !shown.contains("the plan"),
+        "the refusal echoed message text: {shown}"
+    );
+    assert_eq!(g.store.pending_reviews(1000).unwrap().len(), cap);
+}
+
+#[test]
+fn the_cap_is_per_requester_and_frees_up_when_an_item_is_decided() {
+    let (g, _) = world();
+    g.admin_set_clearance(&admin(), "bob", "private").unwrap();
+    g.join(&bob(), "vault").unwrap();
+    g.admin_set_crossing_cap(&admin(), Some(2)).unwrap();
+    more_vault_messages(&g, 3);
+    g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    let second = g.request_crossing(&alice(), "vault", 2, "open").unwrap();
+    assert!(g.request_crossing(&alice(), "vault", 3, "open").is_err());
+    // another requester is not held up by alice's queue
+    g.request_crossing(&bob(), "vault", 3, "open").unwrap();
+    // a decided item no longer waits
+    g.store
+        .resolve_review(&crate::store::ReviewResolution::new(second, "deny", ""), 5)
+        .unwrap();
+    g.request_crossing(&alice(), "vault", 3, "open").unwrap();
+}
+
+#[test]
+fn the_human_sets_the_cap_and_off_restores_the_default() {
+    let (g, _) = world();
+    assert_eq!(g.crossing_cap().unwrap(), DEFAULT_CROSSING_CAP);
+    g.admin_set_crossing_cap(&admin(), Some(7)).unwrap();
+    assert_eq!(g.crossing_cap().unwrap(), 7);
+    assert_eq!(
+        g.store.policy_get("crossing:cap").unwrap().as_deref(),
+        Some("7")
+    );
+    assert!(g.admin_set_crossing_cap(&admin(), Some(0)).is_err());
+    g.admin_set_crossing_cap(&admin(), None).unwrap();
+    assert_eq!(g.crossing_cap().unwrap(), DEFAULT_CROSSING_CAP);
+    // an unreadable stored value falls back to the default, so the cap stays in force
+    g.store.policy_set("crossing:cap", Some("junk"), 1).unwrap();
+    assert_eq!(g.crossing_cap().unwrap(), DEFAULT_CROSSING_CAP);
+    // zero would refuse every crossing and a huge value would lift the bound: both are ignored
+    for bad in ["0", "99999999"] {
+        g.store.policy_set("crossing:cap", Some(bad), 1).unwrap();
+        assert_eq!(g.crossing_cap().unwrap(), DEFAULT_CROSSING_CAP, "{bad}");
+    }
+}
+
+#[test]
+fn a_refusal_at_the_cap_is_recorded_with_its_rule_and_no_message_text() {
+    let (g, _) = world();
+    g.admin_set_crossing_cap(&admin(), Some(1)).unwrap();
+    more_vault_messages(&g, 1);
+    g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    assert!(g.request_crossing(&alice(), "vault", 2, "open").is_err());
+    let rows: Vec<_> = g
+        .my_refusals(&alice(), 50)
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.rule == "crossing-cap")
+        .collect();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(
+        (rows[0].member.as_str(), rows[0].operation.as_str()),
+        ("alice", "crossing")
+    );
+    let shown = format!("{rows:?}");
+    assert!(
+        !shown.contains("the plan") && !shown.contains("another fact"),
+        "{shown}"
+    );
+}
+
+#[test]
+fn a_flood_of_refusals_at_the_cap_keeps_a_bounded_number_of_rows_and_refuses_every_time() {
+    let (g, t) = world();
+    g.admin_set_crossing_cap(&admin(), Some(1)).unwrap();
+    more_vault_messages(&g, 1);
+    g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    let rows = |g: &Gateway<SpyStore>| {
+        g.my_refusals(&alice(), 1000)
+            .unwrap()
+            .iter()
+            .filter(|r| r.rule == "crossing-cap")
+            .count()
+    };
+    for _ in 0..500 {
+        let e = g
+            .request_crossing(&alice(), "vault", 2, "open")
+            .unwrap_err();
+        assert_eq!(rule_of(e), "crossing-cap");
+    }
+    assert_eq!(rows(&g), 1, "500 refusals in one minute are one row");
+    t.set(t.get() + 61);
+    assert!(g.request_crossing(&alice(), "vault", 2, "open").is_err());
+    assert_eq!(rows(&g), 2, "a later minute is told again");
+}
+
+#[test]
+fn a_message_already_waiting_is_returned_at_the_cap_and_adds_nothing() {
+    let (g, _) = world();
+    g.admin_set_crossing_cap(&admin(), Some(1)).unwrap();
+    let id = g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    // the queue dedupes the same message, so asking again is no new place
+    assert_eq!(
+        g.request_crossing(&alice(), "vault", 1, "open").unwrap(),
+        id
+    );
+}
+
+#[test]
+fn a_member_at_the_cap_asking_for_a_message_another_member_queued_is_refused_not_told_queued() {
+    let (g, _) = world();
+    g.admin_set_clearance(&admin(), "bob", "private").unwrap();
+    g.join(&bob(), "vault").unwrap();
+    g.admin_set_crossing_cap(&admin(), Some(1)).unwrap();
+    more_vault_messages(&g, 1);
+    let first = g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    let own = g.request_crossing(&bob(), "vault", 2, "open").unwrap();
+    // bob is at the cap; message 1 is alice's, so it is no place of his
+    let e = g.request_crossing(&bob(), "vault", 1, "open").unwrap_err();
+    assert_eq!(rule_of(e), "crossing-cap");
+    assert!(
+        g.my_refusals(&bob(), 10)
+            .unwrap()
+            .iter()
+            .any(|r| r.rule == "crossing-cap")
+    );
+    // his own message is still his own item
+    assert_eq!(g.request_crossing(&bob(), "vault", 2, "open").unwrap(), own);
+    assert_ne!(first, own);
 }

@@ -6,15 +6,45 @@ use crate::store::{NewReview, QueuedReview, ReviewResolution};
 use rusqlite::params;
 
 impl SqliteStore {
-    pub(super) fn enqueue_review_row(&self, item: &NewReview, now: i64) -> Result<i64> {
+    /// Queue `item`, or return the id already waiting for it. With a `cap`, the requester's waiting crossings are
+    /// counted in the same immediate transaction as the insert, and `None` means the cap stopped it (#1736).
+    pub(super) fn enqueue_review_row(
+        &self,
+        item: &NewReview,
+        now: i64,
+        cap: Option<usize>,
+    ) -> Result<Option<i64>> {
         self.immediate(|| {
-            let waiting = self.optional(
-                "SELECT id FROM review_queue WHERE room=?1 AND seq=?2 AND to_label=?3 AND resolved IS NULL",
-                params![item.room, item.seq, item.to_label],
-                |r| r.get(0),
-            )?;
+            // With a cap, only the requester's own item for the same target counts as "already waiting": another
+            // member's item is not handed back, so a member at the cap cannot learn that someone else queued a message
+            // and cannot be told "queued" for a request that was never made (#1736). The uncapped path keeps its old key
+            // (#1743).
+            let waiting = match cap {
+                None => self.optional(
+                    "SELECT id FROM review_queue WHERE room=?1 AND seq=?2 AND to_label=?3 AND resolved IS NULL",
+                    params![item.room, item.seq, item.to_label],
+                    |r| r.get(0),
+                )?,
+                Some(_) => self.optional(
+                    "SELECT id FROM review_queue WHERE room=?1 AND seq=?2 AND to_label=?3 AND resolved IS NULL AND requester=?4 AND to_room=?5",
+                    params![item.room, item.seq, item.to_label, item.requester, item.to_room],
+                    |r| r.get(0),
+                )?,
+            };
             if let Some(id) = waiting {
-                return Ok(id);
+                return Ok(Some(id));
+            }
+            if let Some(cap) = cap {
+                let n: i64 = self
+                    .optional(
+                        "SELECT COUNT(*) FROM review_queue WHERE resolved IS NULL AND to_room<>'' AND requester=?1",
+                        params![item.requester],
+                        |r| r.get(0),
+                    )?
+                    .unwrap_or(0);
+                if usize::try_from(n).unwrap_or(usize::MAX) >= cap {
+                    return Ok(None);
+                }
             }
             self.exec(
                 "INSERT INTO review_queue(room,seq,to_label,reason,ts,to_room,requester) VALUES(?1,?2,?3,?4,?5,?6,?7)",
@@ -28,12 +58,35 @@ impl SqliteStore {
                     item.requester
                 ],
             )?;
-            Ok(self.conn.last_insert_rowid())
+            Ok(Some(self.conn.last_insert_rowid()))
         })
     }
 
     pub(super) fn pending_review_rows(&self, limit: usize) -> Result<Vec<QueuedReview>> {
         self.review_rows("resolved IS NULL ORDER BY id", limit)
+    }
+
+    pub(super) fn pending_review_rows_after(
+        &self,
+        after: i64,
+        limit: usize,
+    ) -> Result<Vec<QueuedReview>> {
+        // `after` is an integer, so formatting it in cannot carry input into the statement
+        self.review_rows(
+            &format!("resolved IS NULL AND id>{} ORDER BY id", after),
+            limit,
+        )
+    }
+
+    pub(super) fn waiting_crossing_count(&self, requester: &str) -> Result<usize> {
+        let n: i64 = self
+            .optional(
+                "SELECT COUNT(*) FROM review_queue WHERE resolved IS NULL AND to_room<>'' AND requester=?1",
+                params![requester],
+                |r| r.get(0),
+            )?
+            .unwrap_or(0);
+        Ok(usize::try_from(n).unwrap_or(0))
     }
 
     /// Rows matching a fixed `WHERE ... ORDER BY` tail (never built from input).

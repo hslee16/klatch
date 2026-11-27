@@ -206,3 +206,34 @@ fn a_reviewer_sees_why_the_rules_flagged_an_item_as_plain_capped_data() {
     let rows = g.review_queue(&admin(), 10).unwrap();
     assert!(rows[0].detail.starts_with("aaaa"), "{}", rows[0].detail);
 }
+
+#[test]
+fn review_next_reaches_an_item_behind_a_full_page_of_unreadable_ones() {
+    // #1736: review_next used to look at the oldest DRAIN_LIMIT items only. Those above the reviewer's clearance are
+    // skipped, so a page of them hid a readable item behind it.
+    let (g, _) = timed();
+    g.store
+        .policy_set("label:vault", Some("private"), 100)
+        .unwrap();
+    g.admin_set_clearance(&admin(), "alice", "private").unwrap();
+    g.join(&alice(), "vault").unwrap();
+    g.join(&alice(), "r").unwrap();
+    g.post(&alice(), "r", "readable candidate").unwrap();
+    for i in 0..crate::gateway::DRAIN_LIMIT {
+        g.post(&alice(), "vault", &format!("secret {i}")).unwrap();
+    }
+    for seq in 1..=crate::gateway::DRAIN_LIMIT as i64 {
+        g.store
+            .enqueue_review(&NewReview::new("vault", seq, "public", "x"), 1_001)
+            .unwrap();
+    }
+    g.store
+        .enqueue_review(&NewReview::new("r", 1, "public", "x"), 1_002)
+        .unwrap();
+    g.admin_set_reviewer(&admin(), "rev", true).unwrap();
+    let item = g
+        .review_next(&rev())
+        .unwrap()
+        .expect("a readable item waits");
+    assert_eq!(item.text, "readable candidate");
+}

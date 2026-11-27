@@ -13,8 +13,40 @@ pub trait ReviewStore {
         ))
     }
 
+    /// Queue a crossing unless its requester already has `cap` waiting; `None` when the cap stopped it (#1736). A
+    /// message already waiting for the label returns its id whatever the cap, since it adds nothing. A store with a real
+    /// queue counts and inserts in one transaction, so two processes of one member cannot both take the last place; this
+    /// default counts and then queues and is not atomic.
+    fn enqueue_review_capped(&self, item: &NewReview, now: i64, cap: usize) -> Result<Option<i64>> {
+        if self.waiting_crossings_of(item.requester)? >= cap {
+            return Ok(None);
+        }
+        self.enqueue_review(item, now).map(Some)
+    }
+
     fn pending_reviews(&self, _limit: usize) -> Result<Vec<QueuedReview>> {
         Ok(Vec::new())
+    }
+
+    /// Waiting items after id `after`, oldest first, at most `limit`: one page of the queue, so a caller can walk all of
+    /// it by age and not only its first page (#1736). The default reads the whole queue and cuts it; a store with a
+    /// real queue answers from an index.
+    fn pending_reviews_after(&self, after: i64, limit: usize) -> Result<Vec<QueuedReview>> {
+        Ok(self
+            .pending_reviews(usize::MAX >> 1)?
+            .into_iter()
+            .filter(|q| q.id > after)
+            .take(limit)
+            .collect())
+    }
+
+    /// How many crossings `requester` has waiting for a verdict (#1736). The default counts the whole queue.
+    fn waiting_crossings_of(&self, requester: &str) -> Result<usize> {
+        Ok(self
+            .pending_reviews(usize::MAX >> 1)?
+            .iter()
+            .filter(|q| !q.to_room.is_empty() && q.requester == requester)
+            .count())
     }
 
     /// Record the verdict word and a short detail for a pending item; false when it was not pending.

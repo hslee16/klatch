@@ -3,10 +3,43 @@
 //! stays inline in the gateway and fails closed, so an absent or unreachable judge only leaves the queue longer.
 
 use crate::domain::{Judge, LabelChain, Result, ReviewItem, RulesJudge, Verdict};
-use crate::store::{NewAudit, QueuedReview, ReviewResolution, Store};
+use crate::store::{NewAudit, QueuedReview, ReviewResolution, ReviewStore, Store};
 
-/// How many items one drain looks at, so a run is bounded.
+/// How many items one page of the queue holds. A drain walks every page by age (#1736), so items behind a full page
+/// of deferred ones are still judged; the run is bounded by the per-requester cap on waiting crossings.
 pub const DRAIN_LIMIT: usize = 100;
+
+/// The most pages one walk of the queue takes: far more than the cap allows, so reaching it means a broken cursor.
+const MAX_PAGES: usize = 100_000;
+
+/// A walk over the waiting queue by age, a page of `DRAIN_LIMIT` at a time (#1736). A store that returns an item at or
+/// before the cursor, or a walk that never ends, is an error and not a hang: failing closed leaves the queue as it is.
+pub(crate) struct PendingPages {
+    after: i64,
+    taken: usize,
+}
+
+impl PendingPages {
+    pub(crate) fn new() -> Self {
+        Self { after: 0, taken: 0 }
+    }
+
+    /// The next page, or `None` at the end of the queue.
+    pub(crate) fn next<S: ReviewStore>(&mut self, store: &S) -> Result<Option<Vec<QueuedReview>>> {
+        let page = store.pending_reviews_after(self.after, DRAIN_LIMIT)?;
+        let (Some(first), Some(last)) = (page.first(), page.last()) else {
+            return Ok(None);
+        };
+        self.taken += 1;
+        if first.id <= self.after || last.id < first.id || self.taken > MAX_PAGES {
+            return Err(crate::domain::Error::Backend(
+                "the review queue did not page forward".into(),
+            ));
+        }
+        self.after = last.id;
+        Ok(Some(page))
+    }
+}
 
 /// What one drain did.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -46,35 +79,49 @@ pub(crate) fn load_item<S: Store>(store: &S, q: &QueuedReview) -> Result<Option<
 /// Run every pending item past `judge` once. A vanished message is denied: there is nothing left to let across.
 pub fn drain<S: Store>(store: &S, judge: &dyn Judge, now: i64) -> Result<Drained> {
     let mut out = Drained::default();
-    for q in store.pending_reviews(DRAIN_LIMIT)? {
-        let (verdict, detail, note) = match load_item(store, &q)? {
-            Some(item) => {
-                let (verdict, note) = judge.judge_noted(&item);
-                (verdict, String::new(), note)
-            }
-            None => (
-                Verdict::Deny("message missing".into()),
-                "message missing".to_string(),
-                None,
-            ),
-        };
-        // A deferral with no note leaves an earlier note in place: it was true when written, the audit holds the
-        // sequence, and clearing it would only cost a write on every pass.
-        if let (Verdict::Defer, Some(note)) = (&verdict, &note) {
-            audit_deferral(store, &q, note, now)?;
-            store.set_review_flag(q.id, &flag_text(note))?;
-        }
-        match &verdict {
-            Verdict::Defer => out.deferred += 1,
-            Verdict::Allow => out.allowed += 1,
-            Verdict::Redact(_) => out.redacted += 1,
-            Verdict::Deny(_) => out.denied += 1,
-        }
-        if verdict != Verdict::Defer {
-            record(store, &q, (&verdict, &detail), ("judge", now))?;
+    let mut pages = PendingPages::new();
+    while let Some(page) = pages.next(store)? {
+        for q in page {
+            drain_one(store, judge, &q, now, &mut out)?;
         }
     }
     Ok(out)
+}
+
+fn drain_one<S: Store>(
+    store: &S,
+    judge: &dyn Judge,
+    q: &QueuedReview,
+    now: i64,
+    out: &mut Drained,
+) -> Result<()> {
+    let (verdict, detail, note) = match load_item(store, q)? {
+        Some(item) => {
+            let (verdict, note) = judge.judge_noted(&item);
+            (verdict, String::new(), note)
+        }
+        None => (
+            Verdict::Deny("message missing".into()),
+            "message missing".to_string(),
+            None,
+        ),
+    };
+    // A deferral with no note leaves an earlier note in place: it was true when written, the audit holds the
+    // sequence, and clearing it would only cost a write on every pass.
+    if let (Verdict::Defer, Some(note)) = (&verdict, &note) {
+        audit_deferral(store, q, note, now)?;
+        store.set_review_flag(q.id, &flag_text(note))?;
+    }
+    match &verdict {
+        Verdict::Defer => out.deferred += 1,
+        Verdict::Allow => out.allowed += 1,
+        Verdict::Redact(_) => out.redacted += 1,
+        Verdict::Deny(_) => out.denied += 1,
+    }
+    if verdict != Verdict::Defer {
+        record(store, q, (&verdict, &detail), ("judge", now))?;
+    }
+    Ok(())
 }
 
 /// The most a reviewer is shown of a judge's deferral note.
@@ -144,6 +191,89 @@ mod tests {
     use crate::store::areas::*;
     use crate::store::{NewReview, SqliteStore};
 
+    /// A store whose queue ignores the cursor, as a broken `pending_reviews_after` would.
+    struct IgnoresCursor;
+    impl crate::store::ReviewStore for IgnoresCursor {
+        fn pending_reviews_after(&self, _after: i64, _limit: usize) -> Result<Vec<QueuedReview>> {
+            Ok(vec![QueuedReview {
+                id: 1,
+                ..QueuedReview::default()
+            }])
+        }
+    }
+
+    #[test]
+    fn a_cursor_that_does_not_advance_is_an_error_not_a_hang() {
+        let mut pages = PendingPages::new();
+        assert!(pages.next(&IgnoresCursor).unwrap().is_some());
+        assert!(pages.next(&IgnoresCursor).is_err());
+    }
+
+    /// Pages forward forever (a new id each call), as a queue that never ends.
+    struct Endless(std::cell::Cell<i64>);
+    impl crate::store::ReviewStore for Endless {
+        fn pending_reviews_after(&self, after: i64, _limit: usize) -> Result<Vec<QueuedReview>> {
+            self.0.set(self.0.get().max(after) + 1);
+            Ok(vec![QueuedReview {
+                id: self.0.get(),
+                ..QueuedReview::default()
+            }])
+        }
+    }
+
+    /// Returns ids out of order within one page.
+    struct Unordered;
+    impl crate::store::ReviewStore for Unordered {
+        fn pending_reviews_after(&self, _after: i64, _limit: usize) -> Result<Vec<QueuedReview>> {
+            Ok([5, 3]
+                .map(|id| QueuedReview {
+                    id,
+                    ..QueuedReview::default()
+                })
+                .to_vec())
+        }
+    }
+
+    #[test]
+    fn a_walk_that_never_ends_stops_at_the_page_cap_with_an_error() {
+        let mut pages = PendingPages::new();
+        let store = Endless(std::cell::Cell::new(0));
+        let mut n = 0;
+        let mut end = Ok(None);
+        // bounded, so a missing cap fails this test by assertion and does not hang it
+        for _ in 0..MAX_PAGES + 10 {
+            end = pages.next(&store);
+            match end {
+                Ok(Some(_)) => n += 1,
+                _ => break,
+            }
+        }
+        assert!(end.is_err(), "the walk ended without an error");
+        assert_eq!(n, MAX_PAGES);
+    }
+
+    #[test]
+    fn a_page_out_of_order_is_an_error() {
+        assert!(PendingPages::new().next(&Unordered).is_err());
+    }
+
+    #[test]
+    fn the_pages_of_a_queue_cover_every_item_once_in_order() {
+        let s = SqliteStore::open_in_memory().unwrap();
+        for seq in 1..=(2 * DRAIN_LIMIT as i64 + 1) {
+            s.enqueue_review(&NewReview::new("r", seq, "public", "x"), 3)
+                .unwrap();
+        }
+        let mut pages = PendingPages::new();
+        let (mut seen, mut calls) = (Vec::new(), 0);
+        while let Some(page) = pages.next(&s).unwrap() {
+            calls += 1;
+            seen.extend(page.iter().map(|q| q.id));
+        }
+        assert_eq!((calls, seen.len()), (3, 2 * DRAIN_LIMIT + 1));
+        assert!(seen.windows(2).all(|w| w[0] < w[1]));
+    }
+
     struct Says(Verdict);
     impl Judge for Says {
         fn judge(&self, _: &ReviewItem) -> Verdict {
@@ -167,6 +297,35 @@ mod tests {
         s.enqueue_review(&NewReview::new("r", 1, "public", "crosses"), 3)
             .unwrap();
         s
+    }
+
+    /// Defers the first `n` seqs (as a screen that flags them does) and allows the rest.
+    struct DefersFirst(i64);
+    impl Judge for DefersFirst {
+        fn judge(&self, item: &ReviewItem) -> Verdict {
+            if item.seq <= self.0 {
+                Verdict::Defer
+            } else {
+                Verdict::Allow
+            }
+        }
+    }
+
+    #[test]
+    fn items_behind_a_full_page_of_deferred_ones_are_still_judged() {
+        // #1736: the drain used to look at the oldest DRAIN_LIMIT items only, so 100 stuck ones starved the rest
+        let s = SqliteStore::open_in_memory().unwrap();
+        s.join("r", "alice", 1).unwrap();
+        let total = DRAIN_LIMIT as i64 + 5;
+        for seq in 1..=total {
+            s.post(crate::store::Seat::new("r", "alice"), "hello", 2)
+                .unwrap();
+            s.enqueue_review(&NewReview::new("r", seq, "public", "crosses"), 3)
+                .unwrap();
+        }
+        let out = drain(&s, &DefersFirst(DRAIN_LIMIT as i64), 10).unwrap();
+        assert_eq!((out.allowed, out.deferred), (5, DRAIN_LIMIT));
+        assert_eq!(s.pending_reviews(1000).unwrap().len(), DRAIN_LIMIT);
     }
 
     #[test]
