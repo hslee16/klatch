@@ -9,6 +9,7 @@ mod ancestry;
 mod capability;
 mod codex_record;
 pub mod conformance;
+pub mod hooks_pointer;
 mod host;
 #[cfg(test)]
 #[cfg(target_os = "linux")]

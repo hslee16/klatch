@@ -249,7 +249,13 @@ impl<'a, B: Backend + ?Sized> McpServer<'a, B> {
     fn with_never_read(&self, mut result: Value, room: &str) -> Value {
         let n = self.session.first_post_unread(room);
         if n > 0 {
-            result["notice"] = json!(never_read_notice(n));
+            let mut notice = never_read_notice(n);
+            // the same first-post state carries the hooks pointer, so a member sees it once (#1416)
+            if let Some(pointer) = crate::harness::hooks_pointer::pointer_here() {
+                notice.push_str("; ");
+                notice.push_str(pointer);
+            }
+            result["notice"] = json!(notice);
         }
         result
     }
