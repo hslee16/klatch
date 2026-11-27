@@ -5,6 +5,10 @@
 /// The version marker at the start of the text; change it when a word the text teaches changes.
 pub const CONVENTION_MARKER: &str = "[klatch convention v2]";
 
+/// The room gh-watch posts GitHub events into (#1404): a seat in it starts muted for every member, so the events reach
+/// a member only by an explicit read, a mention or an unmute. The lobby carries asks, answers, claims and decisions.
+pub const FEED_ROOM: &str = "feed";
+
 /// The convention for a member whose klatch binary is at `bin` (used in the one command it needs, `wait`).
 pub fn convention(bin: &str) -> String {
     convention_in(bin, "lobby")
