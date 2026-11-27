@@ -1,0 +1,1 @@
+- `klatch summary [ROOM]` (#1414): a read-only one-screen view for the human, with members and their status, open asks and age, live claims, stuck cases, and the commands to step in as text to copy (it runs none). It uses the same guarded reads as `board`, `claims` and `stuck`, counts rooms it cannot show without naming them, and prints no message text or claim reason.

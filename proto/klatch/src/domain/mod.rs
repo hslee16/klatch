@@ -55,6 +55,7 @@ mod router;
 mod scope;
 mod stuck;
 mod subagent_name;
+mod summary;
 mod tasks;
 mod text;
 mod toolguard;
@@ -162,6 +163,10 @@ pub use stuck::{
     YIELD_WINDOW_SECS, claim_label, stuck_events,
 };
 pub use subagent_name::invokes_klatch_unnamed;
+pub use summary::{
+    SUMMARY_LINE, SUMMARY_MAX_BYTES, SUMMARY_MAX_LINES, SUMMARY_ROOMS, SummaryRoom, gather,
+    render_summary,
+};
 #[cfg(kani)]
 pub(crate) use text::safe_name_bytes;
 pub use text::{
