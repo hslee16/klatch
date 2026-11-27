@@ -368,3 +368,39 @@ fn a_sweep_of_many_lapses_records_each_as_an_expiry() {
         .unwrap();
     assert_eq!(expired, 30);
 }
+
+#[test]
+fn a_flood_over_many_rooms_does_not_push_out_the_lapse_of_a_quiet_room() {
+    // #1702: eleven rooms at the per-room cap, one more room with one older lapse; by age alone the quiet room's lapse
+    // is the first to go, silently
+    let s = store();
+    take(&s, ("quiet", "bob", "gh-watch:receiver"), 50, 0);
+    for room in 0..11 {
+        for i in 0..LAPSE_RECORD_CAP {
+            take(
+                &s,
+                (&format!("noisy{room}"), "eve", &format!("j{i}")),
+                100,
+                0,
+            );
+        }
+    }
+    take(&s, ("sweeper", "alice", "x"), 50_000, 150);
+    assert_eq!(rows(&s) as usize, LAPSE_TOTAL_CAP);
+    assert_eq!(
+        lapses(&s, "quiet", 151).len(),
+        1,
+        "the quiet room kept its lapse"
+    );
+    assert_eq!(s.claim_lapses_dropped(), 101, "and the drop is counted");
+}
+
+#[test]
+fn rows_dropped_by_the_per_room_cap_are_counted_too() {
+    let s = store();
+    for i in 0..(LAPSE_RECORD_CAP + 7) {
+        take(&s, ("r", "eve", &format!("j{i}")), 100, 0);
+    }
+    take(&s, ("r", "alice", "x"), 50_000, 150);
+    assert_eq!(s.claim_lapses_dropped(), 7);
+}

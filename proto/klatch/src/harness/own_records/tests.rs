@@ -563,10 +563,11 @@ fn a_listing_under_the_module_bounds_opens_at_most_the_open_bound() {
         std::fs::write(d.join(format!("{}.json", 100_000 + i)), "junk").unwrap();
     }
     let opened = std::cell::Cell::new(0usize);
-    let (_, malformed) = scan_records(&d, None, |n| {
+    let malformed = scan_records(&d, None, |n| {
         opened.set(opened.get() + 1);
         read_named(&d, n, me())
     })
-    .unwrap();
+    .unwrap()
+    .malformed;
     assert_eq!((opened.get(), malformed), (MAX_OPENED, MAX_OPENED));
 }

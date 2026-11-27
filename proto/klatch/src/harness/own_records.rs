@@ -26,26 +26,26 @@ pub(crate) const MAX_OPENED: usize = 4096;
 /// The most directory entries one pass reads the name of (nothing is opened for them), whatever they are called.
 pub(crate) const MAX_SCANNED: usize = 1 << 16;
 
-/// The names in `dir` that `wanted` accepts, at most `scanned` entries looked at. Only the names that are wanted are
-/// kept, so an entry of any other name costs a look at its name and nothing more. `None` when `dir` cannot be listed.
+/// The names in `dir` that `wanted` accepts, at most `scanned` entries looked at, and whether more entries were left
+/// unlooked at. Only the names that are wanted are kept, so an entry of any other name costs a look at its name and
+/// nothing more. `None` when `dir` cannot be listed.
 fn wanted_names_capped(
     dir: &Path,
     scanned: usize,
     wanted: impl Fn(&str) -> bool,
-) -> Option<Vec<String>> {
-    let entries = std::fs::read_dir(dir).ok()?;
-    Some(
-        entries
-            .flatten()
-            .take(scanned)
-            .filter_map(|e| e.file_name().into_string().ok())
-            .filter(|n| wanted(n))
-            .collect(),
-    )
+) -> Option<(Vec<String>, bool)> {
+    let mut entries = std::fs::read_dir(dir).ok()?.flatten();
+    let names = entries
+        .by_ref()
+        .take(scanned)
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| wanted(n))
+        .collect();
+    Some((names, entries.next().is_some()))
 }
 
 fn wanted_names(dir: &Path, wanted: impl Fn(&str) -> bool) -> Option<Vec<String>> {
-    wanted_names_capped(dir, MAX_SCANNED, wanted)
+    wanted_names_capped(dir, MAX_SCANNED, wanted).map(|(names, _)| names)
 }
 
 /// How far ahead of now a modification time may be and still be believed: a clock stepped back (NTP) leaves a live
@@ -57,14 +57,14 @@ const CLOCK_SKEW: std::time::Duration = std::time::Duration::from_secs(86_400);
 /// pids of a readable process table; `None` when there is none, which changes nothing), then the newest by modification
 /// time. A name that cannot be looked at, or whose mtime is further in the future than `CLOCK_SKEW`, counts as the
 /// oldest; one a little ahead counts as now. The name breaks a tie so the order is stable. `None` when `dir` cannot be
-/// listed.
+/// listed. Also whether the directory held more entries than `scanned`.
 fn ordered_record_names(
     dir: &Path,
     scanned: usize,
     keep_all_below: usize,
     alive: Option<&HashSet<u32>>,
-) -> Option<Vec<String>> {
-    let mut names = wanted_names_capped(dir, scanned, is_record_file)?;
+) -> Option<(Vec<String>, bool)> {
+    let (mut names, cut) = wanted_names_capped(dir, scanned, is_record_file)?;
     if names.len() > keep_all_below {
         let now = std::time::SystemTime::now();
         let modified = |n: &String| {
@@ -86,7 +86,7 @@ fn ordered_record_names(
             )
         });
     }
-    Some(names)
+    Some((names, cut))
 }
 
 /// Read the records of `dir` (`<pid>.json`) with `read` giving the text of one name. Candidates are taken running pids
@@ -94,6 +94,7 @@ fn ordered_record_names(
 /// under their own pid, so junk, however fresh, cannot push a valid record out; the junk is bounded separately, at most `max_opened`
 /// files opened in one pass. Returns the records ordered by pid and how many opened files were not valid records. `None`
 /// when `dir` cannot be listed.
+#[cfg(test)]
 pub(crate) fn scan_records_with(
     dir: &Path,
     scanned: usize,
@@ -102,12 +103,51 @@ pub(crate) fn scan_records_with(
     alive: Option<&HashSet<u32>>,
     read: impl Fn(&str) -> Option<String>,
 ) -> Option<(Vec<Record>, usize)> {
-    let names = ordered_record_names(dir, scanned, max_records, alive)?;
-    let (mut records, mut malformed) = (Vec::new(), 0);
+    let s = scan_records_bounded(dir, scanned, max_records, max_opened, alive, read)?;
+    Some((s.records, s.malformed))
+}
+
+/// Whether `unread` (names left unread by a bound) may hold a record that matters: any of them when there is no process
+/// table, else one whose pid runs (the order puts those first, so what is left is of pids that do not run, and a
+/// record of a pid that does not run can only read as gone).
+fn cut_running(unread: &[String], alive: Option<&HashSet<u32>>) -> bool {
+    match alive {
+        None => !unread.is_empty(),
+        Some(set) => unread.iter().any(|n| {
+            n.trim_end_matches(".json")
+                .parse::<u32>()
+                .is_ok_and(|p| set.contains(&p))
+        }),
+    }
+}
+
+/// What one pass over a registry directory found.
+pub(crate) struct Scan {
+    /// The valid records, ordered by pid.
+    pub(crate) records: Vec<Record>,
+    /// How many opened files were not valid records.
+    pub(crate) malformed: usize,
+    /// A bound stopped the pass with names left unread that may matter (see `cut_running`): the records are a part of
+    /// the directory, not all of it. Names of pids that do not run, left unread, do not count.
+    pub(crate) truncated: bool,
+}
+
+/// `scan_records_with` that also says whether a bound cut the pass.
+pub(crate) fn scan_records_bounded(
+    dir: &Path,
+    scanned: usize,
+    max_records: usize,
+    max_opened: usize,
+    alive: Option<&HashSet<u32>>,
+    read: impl Fn(&str) -> Option<String>,
+) -> Option<Scan> {
+    let (names, truncated) = ordered_record_names(dir, scanned, max_records, alive)?;
+    let (mut records, mut malformed, mut visited) = (Vec::new(), 0, 0);
     for name in names.iter().take(max_opened) {
         if records.len() >= max_records {
             break;
         }
+        visited += 1;
         let filed_under: u32 = name.trim_end_matches(".json").parse().unwrap_or(0);
         match read(name).and_then(|t| parse_record(&t)) {
             Some(rec) if rec.pid == filed_under => records.push(rec),
@@ -115,7 +155,11 @@ pub(crate) fn scan_records_with(
         }
     }
     records.sort_by_key(|r| r.pid);
-    Some((records, malformed))
+    Some(Scan {
+        records,
+        malformed,
+        truncated: truncated || cut_running(&names[visited..], alive),
+    })
 }
 
 /// `scan_records_with` under the module bounds.
@@ -123,8 +167,8 @@ pub(crate) fn scan_records(
     dir: &Path,
     alive: Option<&HashSet<u32>>,
     read: impl Fn(&str) -> Option<String>,
-) -> Option<(Vec<Record>, usize)> {
-    scan_records_with(dir, MAX_SCANNED, MAX_ENTRIES, MAX_OPENED, alive, read)
+) -> Option<Scan> {
+    scan_records_bounded(dir, MAX_SCANNED, MAX_ENTRIES, MAX_OPENED, alive, read)
 }
 
 /// Whether `meta` is of something this user owns that no one else can write.
@@ -206,7 +250,7 @@ impl Registry for OwnRegistry {
         scan_records(&self.dir, None, |name| {
             read_named(&self.dir, name, self.uid)
         })
-        .unwrap_or((Vec::new(), 0))
+        .map_or((Vec::new(), 0), |s| (s.records, s.malformed))
     }
 }
 

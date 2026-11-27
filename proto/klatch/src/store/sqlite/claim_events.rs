@@ -63,24 +63,31 @@ impl SqliteStore {
 
     /// Record several events with one prune after the last insert, not one per event (a sweep of thousands of lapses
     /// paid for a prune each, #1620). The rows kept are the same as with one call each: the prune keeps the newest
-    /// rows by id. A failure is counted once and swallowed.
+    /// rows by id. Each failed insert is counted and the rest are still tried (#1702), as when each event had a call of
+    /// its own; a failed prune is counted once. A failure is swallowed.
     pub(super) fn record_claim_events(&self, now: i64, events: &[ClaimEvent]) {
         if events.is_empty() {
             return;
         }
-        if self.try_record(now, events).is_err() {
-            self.claim_record_errors
-                .set(self.claim_record_errors.get() + 1);
-        }
+        let failed = self.try_record(now, events);
+        self.claim_record_errors
+            .set(self.claim_record_errors.get() + failed);
     }
 
-    fn try_record(&self, now: i64, events: &[ClaimEvent]) -> Result<()> {
+    /// How many of the statements failed.
+    fn try_record(&self, now: i64, events: &[ClaimEvent]) -> u64 {
+        let mut failed = 0;
         for e in events {
-            self.exec(
+            let r = self.exec(
                 "INSERT INTO claim_events(ts,room,event,class,reason,held,waited) VALUES(?1,?2,?3,?4,?5,?6,?7)",
                 params![now, e.room, e.event, claim_class(e.path), e.reason, e.held, e.waited],
-            )?;
+            );
+            failed += u64::from(r.is_err());
         }
+        failed + u64::from(self.prune_claim_events(now, events).is_err())
+    }
+
+    fn prune_claim_events(&self, now: i64, events: &[ClaimEvent]) -> Result<()> {
         self.exec(
             "DELETE FROM claim_events WHERE ts<?1",
             params![now - CLAIM_EVENT_MAX_AGE_SECS],

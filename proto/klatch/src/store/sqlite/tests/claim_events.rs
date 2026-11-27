@@ -299,3 +299,27 @@ fn passive_events_and_explicit_events_keep_their_own_caps() {
     );
     assert_eq!(count("NOT LIKE"), 1);
 }
+
+#[test]
+fn a_failed_insert_in_a_sweep_batch_is_counted_and_the_rest_is_still_recorded() {
+    // #1702: one bad row must not drop the events after it
+    let s = store();
+    s.conn
+        .execute_batch(
+            "CREATE TRIGGER refuse_bad BEFORE INSERT ON claim_events WHEN NEW.room='bad'
+             BEGIN SELECT RAISE(ABORT,'refused'); END;",
+        )
+        .unwrap();
+    let ev = |room| crate::store::sqlite::claim_events::ClaimEvent {
+        room,
+        path: "p",
+        event: "expired",
+        reason: "",
+        held: 1,
+        waited: None,
+    };
+    s.record_claim_events(10, &[ev("a"), ev("bad"), ev("b"), ev("bad"), ev("c")]);
+    let rooms: Vec<String> = events(&s).into_iter().map(|e| e.1).collect();
+    assert_eq!(rooms, ["a", "b", "c"]);
+    assert_eq!(s.claim_record_errors(), 2, "each failed insert counts once");
+}
