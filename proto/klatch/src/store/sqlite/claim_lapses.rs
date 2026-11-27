@@ -32,9 +32,9 @@ impl SqliteStore {
     /// passive or ask claims, not a lapse already past the report window. One row per room, path and holder (a repeat
     /// replaces it). The table is pruned past the window at every sweep (so the next claim attempt of any room clears old
     /// rows; a store with no attempts at all runs nothing, and the report filters by the window anyway), and, when rows
-    /// were added, per room that gained rows down to `LAPSE_RECORD_CAP` newest and in all down to `LAPSE_TOTAL_CAP` (the rooms with the most rows give up theirs first), the rows dropped
-    /// counted in `claim_lapses_dropped`, so
-    /// claiming and letting claims lapse cannot grow it without bound.
+    /// were added, per room that gained rows down to `LAPSE_RECORD_CAP` newest and in all down to `LAPSE_TOTAL_CAP` (the
+    /// rooms with the most rows give up theirs first), the rows dropped counted in `claim_lapses_dropped`, so claiming
+    /// and letting claims lapse cannot grow it without bound.
     pub(super) fn record_lapses(&self, lapsed: &[Lapsed], now: i64) -> Result<()> {
         let floor = now - LAPSED_WINDOW_SECS;
         let named = |l: &&Lapsed| !l.passive && ask_number(&l.path).is_none() && l.expires > floor;

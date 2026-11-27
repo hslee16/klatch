@@ -294,3 +294,55 @@ fn a_real_record_below_the_bound_is_still_found() {
         Verdict::WaitingOnHuman
     );
 }
+
+/// The ticket #1712 scenario: the dead member's real record under dead pid 6000, 255 decoys of running pids, and a
+/// forged record of the same session under pid 7000 (a live process named like the harness).
+fn dead_member_flood(reg: &FsRegistry) -> Table {
+    write(reg, 6000, "victim", START);
+    age(reg, 6000);
+    forge_fresh(reg, 255, "decoy");
+    write(reg, 7000, "victim", START);
+    flooded(255, Table::default().with(7000, START, "claude"))
+}
+
+#[test]
+fn a_flood_of_running_pid_records_cannot_hide_the_dead_members_real_record_from_a_forgery() {
+    // #1712: pid 6000 is dead, so the bound fills with running pids and 6000 is never read in full; its claim is
+    // still a second (Gone) claim, so the forged alive record no longer reads as the only one
+    let (_d, reg) = dir("dead-member-flood");
+    let table = dead_member_flood(&reg);
+    assert_eq!(seen(&reg, &table, "victim"), None);
+}
+
+#[test]
+fn dead_pid_names_left_past_the_open_bound_turn_an_alive_answer_into_none_and_let_gone_stand() {
+    // more dead-pid files than one pass opens: what is unread may hold the second claim of the session
+    let (_d, reg) = dir("dead-unread");
+    for pid in 100..100 + 4200u32 {
+        write(&reg, pid, "old", "other");
+    }
+    write(&reg, 7000, "victim", START);
+    let alive = Table::default().with(7000, START, "claude");
+    assert_eq!(seen(&reg, &alive, "victim"), None, "alive answer");
+    let dead = Table::default();
+    assert_eq!(
+        seen(&reg, &dead, "victim").unwrap().verdict,
+        Verdict::Gone,
+        "Gone stands"
+    );
+}
+
+#[test]
+fn many_leftover_dead_pid_files_with_one_real_record_change_nothing() {
+    // 600 dead-pid files plus one real record: found, not truncated, behaviour as before
+    let (_d, reg) = dir("dead-many");
+    write(&reg, 7000, "victim", START);
+    for pid in 100..700u32 {
+        write(&reg, pid, "old", "other");
+    }
+    let table = Table::default().with(7000, START, "claude");
+    assert_eq!(
+        seen(&reg, &table, "victim").unwrap().verdict,
+        Verdict::WaitingOnHuman
+    );
+}
