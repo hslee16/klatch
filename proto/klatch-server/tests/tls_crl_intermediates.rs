@@ -377,7 +377,7 @@ fn with_the_flag_a_crl_of_a_listed_issuer_that_its_certificate_did_not_sign_is_r
     rewrite_file(&s.crl, &s.inter.forged_crl_pem(&[4242]), 0o644);
     refused(
         &s,
-        "holds a CRL (number 1) whose signature does not verify against the certificate listed for its issuer in the client intermediates file",
+        "holds a CRL (number 1) whose signature does not verify (or its key is not usable) against the certificate listed for its issuer in the client intermediates file",
     );
     // a good CRL first and a forged one of the same name second: the second is the one named
     let other = s
