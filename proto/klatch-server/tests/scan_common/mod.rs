@@ -147,14 +147,22 @@ fn tokens_of(text: &str) -> Vec<String> {
             }
             let word: String = c[start..i].iter().collect();
             // a raw string: r"..", r#".."#, br".."
-            let raw = matches!(word.as_str(), "r" | "br") && matches!(c.get(i), Some('"' | '#'));
-            if raw {
-                let mut hashes = 0;
-                while c.get(i) == Some(&'#') {
+            let mut hashes = 0;
+            if matches!(word.as_str(), "r" | "br") {
+                while c.get(i + hashes) == Some(&'#') {
                     hashes += 1;
-                    i += 1;
                 }
+            }
+            let raw = matches!(word.as_str(), "r" | "br") && c.get(i + hashes) == Some(&'"');
+            if word == "r"
+                && hashes == 1
+                && !raw
+                && c.get(i + 1).is_some_and(|x| x.is_alphabetic() || *x == '_')
+            {
+                // a raw identifier (r#ring): the word after the `r#`, read as itself
                 i += 1;
+            } else if raw {
+                i += hashes + 1;
                 while i < c.len()
                     && !(c[i] == '"' && (0..hashes).all(|k| c.get(i + 1 + k) == Some(&'#')))
                 {

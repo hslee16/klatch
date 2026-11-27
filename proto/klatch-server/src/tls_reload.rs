@@ -263,8 +263,10 @@ impl Slot {
                 gave_up = true;
             }
             self.busy = Arc::new(AtomicBool::new(false));
-            self.ended = Arc::new(AtomicBool::new(false));
         }
+        // every build gets a marker of its own: one left over from a build that ended normally is already set, and would
+        // make the next stuck build uncounted when abandoned and its end take a place from another
+        self.ended = Arc::new(AtomicBool::new(false));
         self.busy.store(true, Ordering::SeqCst);
         self.started = Instant::now();
         Ok((

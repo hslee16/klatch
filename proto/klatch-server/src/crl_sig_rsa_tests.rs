@@ -10,10 +10,12 @@
 //! openssl crl -in crl256.pem -outform DER -out crl256.der; openssl x509 -in ca.pem -outform DER -out ca.der
 //! ```
 //!
-//! The openssl CA database files `ca ... -gencrl` needs (the config's `database` and `crlnumber`), made empty in the same
-//! directory: `touch index.txt; echo 01 > crlnumber`; the config also sets `default_crl_days = 3650` (the nextUpdate of a
-//! CRL is that many days after it is made, so these CRLs are in date for ten years from 2026-11-27, and a test that needs
-//! another date builds its CRL by hand, as `tls_crl_tests.rs` does).
+//! The openssl CA database files `ca ... -gencrl` needs (the config's `database` and `crlnumber`) were made empty in the
+//! same directory: `touch index.txt; echo 01 > crlnumber`. The config set `default_crl_days = 3650`: every CRL here (the
+//! older fixtures made on 2026-11-27 as well as `CRL_PSS`) has a nextUpdate 3650 days after its thisUpdate, so none is
+//! in date past 2036-11 (the certificates `CA`, `CA_1024` and `CA_PSS` were made with `-days 36500`). None of the dates
+//! matters to these tests: `judge` reads only the signature and ignores every time in the CRL (expiry is `tls_crl.rs`'s
+//! concern, tested with hand-built CRLs in `tls_crl_tests.rs`).
 //!
 //! `CA_PSS` and `CRL_PSS` (#1704) are a second 2048 bit RSA CA of the same name with a CRL signed with RSA-PSS (SHA-256,
 //! salt 32), which `crl_sig` does not know and so leaves to the verifier:

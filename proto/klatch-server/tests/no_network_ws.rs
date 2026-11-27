@@ -114,6 +114,18 @@ fn the_ring_scan_sees_a_second_use_on_one_line_a_group_an_alias_and_ignores_comm
         paths("rustls::crypto::ring::default_provider()"),
         ["default_provider"]
     );
+    // a raw identifier is the crate's name too, and does not swallow what follows it
+    assert_eq!(paths("let _ = r#ring::rand::X::new();"), ["rand"]);
+    assert_eq!(
+        paths("ring::signature::X; use r#ring::rand; use ring::rand::Y;"),
+        ["signature", "rand", "rand"]
+    );
+    // a real raw string holding ring::rand is a string (with and without hashes)
+    assert!(paths("let a = r#\"ring::rand \"quoted\" \"#; let b = r\"ring::rand\"; let c = br\"ring::rand\";").is_empty());
+    assert_eq!(
+        paths("let a = r#\"x\"#; use ring::signature::K;"),
+        ["signature"]
+    );
     // not the crate: another word, a comment, a string, a block comment
     assert!(paths("let string = 1; let ring_size = 2; fn during() {}").is_empty());
     assert!(
