@@ -1,0 +1,1 @@
+- The screen's unit-word exemption for a long `+` number now applies only to an epoch-like run (ten or thirteen unbroken digits starting 16 or 17), so `+14155550142 seconds` and a spaced international number before a unit word are flagged again; `+1700000000 seconds` and `+1700000000 ms` stay unflagged (#1741).

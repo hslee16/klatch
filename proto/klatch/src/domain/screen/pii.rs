@@ -204,8 +204,17 @@ fn international(b: &[u8], i: usize) -> bool {
         && b[i + 1].is_ascii_digit()
         && n >= 9
         && !b.get(e).is_some_and(u8::is_ascii_alphanumeric)
-        // a long number read as a measure (`+1700000000 seconds`), not as a phone number
-        && !RANGE_AFTER.contains(&word_after(b, e).as_str())
+        // only an epoch-like run read as a measure (`+1700000000 seconds`) is not a phone number
+        && !(epoch_like(&b[i + 1..e]) && RANGE_AFTER.contains(&word_after(b, e).as_str()))
+}
+
+/// Ten or thirteen unbroken digits starting 16 or 17 (epoch seconds or milliseconds, 2020 to 2033). A real number is
+/// written with a country code of one to three digits and has separators or a different shape, and no `+1` number
+/// has ten digits, so `+14155550142 seconds` and `+1 415 555 0142 seconds` stay flagged.
+fn epoch_like(d: &[u8]) -> bool {
+    matches!(d.len(), 10 | 13)
+        && d.iter().all(u8::is_ascii_digit)
+        && (d.starts_with(b"16") || d.starts_with(b"17"))
 }
 
 const STREET_SUFFIX: &[&str] = &[

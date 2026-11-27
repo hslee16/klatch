@@ -400,6 +400,11 @@ fn an_international_number_is_flagged_before_a_word_before_punctuation_and_at_th
         ("at +1 415 555 0142, thanks", "internal", "public"),
         ("(mobile +49 151 2345 6789) is hers", "internal", "public"),
         ("call +1 415 555 0142", "internal", "public"),
+        ("+14155550142 seconds", "internal", "public"),
+        ("+14155550142 ms", "internal", "public"),
+        ("+1 415 555 0142 seconds", "internal", "public"),
+        ("+44 20 7946 0958 minutes", "internal", "public"),
+        ("+16505550142 s", "internal", "public"),
     ]);
     must_pass(&[
         ("version +1 2 3 is the next one", "internal", "public"),
