@@ -326,6 +326,18 @@ static LAST: [Mutex<Option<Instant>>; 3] = [const { Mutex::new(None) }; 3];
 /// Say, in the server log, why a handshake failed when the cause is the revocation check (and say nothing for any other
 /// failure: those are the clients that never had a certificate, and the operator did not ask to hear of each).
 pub fn note_refusal(err: &std::io::Error) {
+    note_to(err, &LAST, Instant::now(), |text| {
+        eprintln!("klatch-server: https: client certificate refused: {text}");
+    });
+}
+
+/// [`note_refusal`] with the slots, the time and the writer given (the seam the tests use to block the writer).
+fn note_to(
+    err: &std::io::Error,
+    slots: &[Mutex<Option<Instant>>; 3],
+    now: Instant,
+    say: impl FnOnce(&str),
+) {
     let Some(found) = err
         .get_ref()
         .and_then(|inner| inner.downcast_ref::<rustls::Error>())
@@ -335,11 +347,11 @@ pub fn note_refusal(err: &std::io::Error) {
     let Some((slot, text)) = classify(found) else {
         return;
     };
-    if !due(&LAST[slot], Instant::now()) {
+    if !due(&slots[slot], now) {
         return;
     }
     // written after the lock is released: a blocked stderr must not hold every later refusal at the mutex (#1632)
-    eprintln!("klatch-server: https: client certificate refused: {text}");
+    say(text);
 }
 
 /// Whether a line of this kind may be said at `now` (and, if so, that it was): the lock is held only here.
@@ -353,19 +365,8 @@ fn due(slot: &Mutex<Option<Instant>>, now: Instant) -> bool {
 }
 
 #[cfg(test)]
-mod due_tests {
-    use super::*;
-
-    #[test]
-    fn a_line_is_due_once_per_interval_and_the_lock_is_free_afterwards() {
-        let slot = Mutex::new(None);
-        let t = Instant::now();
-        assert!(due(&slot, t));
-        assert!(!due(&slot, t + EVERY / 2));
-        assert!(slot.try_lock().is_ok());
-        assert!(due(&slot, t + EVERY));
-    }
-}
+#[path = "tls_crl_log_tests.rs"]
+mod log_tests;
 
 /// The log slot and the fixed text (no subject, no serial, nothing of the certificate) for a refusal that the revocation
 /// check caused; `None` for every other failure.

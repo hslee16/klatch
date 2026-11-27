@@ -542,9 +542,11 @@ fn a_fresh_crl_taken_at_a_reload_is_the_one_in_force_for_the_next_reload() {
 #[test]
 fn a_crl_taken_at_a_reload_that_has_lapsed_lets_an_expired_file_be_taken_with_an_alert() {
     let r = rig(true);
-    put_crl(&r, 3);
+    // due in 5 s (whole seconds: 4 to 5 s after the write), so a reload that reads it up to 4 s late still finds it in
+    // date (#1689); then wait past the longest it can live
+    put_crl(&r, 5);
     r.reload_until(OK, 1);
-    std::thread::sleep(Duration::from_secs(4));
+    std::thread::sleep(Duration::from_secs(6));
     put_crl(&r, -3_600);
     let log = r.reload_until(OK, 2);
     assert!(log.contains("ALERT"), "{log}");

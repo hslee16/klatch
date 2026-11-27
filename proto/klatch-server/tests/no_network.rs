@@ -428,6 +428,8 @@ const TLS_MODULES: &[&str] = &[
     "src/tls_bridge.rs",
     "src/tls_crl.rs",
     "src/crl_sig.rs",
+    // the tests of tls_crl.rs, split out for the line cap (#1689): they build a rustls error to classify
+    "src/tls_crl_log_tests.rs",
 ];
 
 /// Names that skip or weaken a check: none may appear in the source, in any file. (A test file may build a client that

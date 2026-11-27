@@ -83,7 +83,7 @@ fn ring_is_named_only_for_the_tls_provider_and_for_the_sha_1_of_the_upgrade_answ
         .unwrap();
     let uses: Vec<&str> = sig.lines().map(code_of).filter(|l| names_ring(l)).collect();
     assert!(
-        uses.iter().all(|l| l.contains("signature")),
+        !uses.is_empty() && uses.iter().all(|l| l.contains("ring::signature::")),
         "crl_sig.rs uses ring for signature verification only: {uses:?}"
     );
     let (_, ws) = rust_sources()

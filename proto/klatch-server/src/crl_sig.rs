@@ -132,7 +132,7 @@ pub fn check(
             .collect();
         if !verdicts.is_empty() && verdicts.iter().all(|v| *v == Verdict::Invalid) {
             bail!(
-                "the client CRL file {} holds a CRL (number {}) whose signature does not verify against the certificate listed for its issuer in the client intermediates file: it would refuse every client of that issuer; replace the CRL, or the certificate in the intermediates file",
+                "the client CRL file {} holds a CRL (number {}) whose signature does not verify (or its key is not usable) against the certificate listed for its issuer in the client intermediates file: it would refuse every client of that issuer; replace the CRL, or the certificate in the intermediates file",
                 path.display(),
                 i + 1
             );
@@ -140,6 +140,10 @@ pub fn check(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "crl_sig_rsa_tests.rs"]
+mod rsa_tests;
 
 #[cfg(test)]
 mod tests {
@@ -242,6 +246,37 @@ mod tests {
         assert!(check(std::slice::from_ref(&forged), &[subject], &inters, path).is_ok());
         // an issuer that is not listed is not judged here
         assert!(check(&[forged], &[], &[], path).is_ok());
+    }
+
+    /// #1694 (mutant: `check` refuses `Unknown` too): a CRL this module cannot judge (here the listed certificate holds an
+    /// Ed25519 key while the CRL is signed with P-256) passes `check`, left to the verifier as before.
+    #[test]
+    fn check_lets_a_crl_it_cannot_judge_pass() {
+        let (params, key, _) = ca(&rcgen::PKCS_ECDSA_P256_SHA256);
+        let (_, _, other) = ca(&rcgen::PKCS_ED25519);
+        let inters = listed(&other);
+        let crl = CertificateRevocationListDer::from(crl(&params, &key));
+        assert_eq!(
+            judge(crl.as_ref(), &inters[0].spki),
+            Verdict::Unknown,
+            "the setup must be a case the module cannot judge"
+        );
+        assert!(check(&[crl], &[], &inters, Path::new("/d/crl.pem")).is_ok());
+    }
+
+    /// #1694 (mutant: `any(Invalid)` for `all(Invalid)`): a key rollover lists the same CA name twice, the old and the
+    /// new certificate, and a CRL signed by the old key still passes while one that no listed certificate verifies does not.
+    #[test]
+    fn check_passes_when_any_certificate_of_the_issuer_name_verifies_the_crl() {
+        let (params, old_key, old_cert) = ca(&rcgen::PKCS_ECDSA_P256_SHA256);
+        let (_, _, new_cert) = ca(&rcgen::PKCS_ECDSA_P256_SHA256);
+        let mut both = listed(&new_cert);
+        both.extend(listed(&old_cert));
+        let path = Path::new("/d/crl.pem");
+        let by_old = CertificateRevocationListDer::from(crl(&params, &old_key));
+        assert!(check(std::slice::from_ref(&by_old), &[], &both, path).is_ok());
+        // only the new certificate listed: the CRL signed by the old key is refused
+        assert!(check(std::slice::from_ref(&by_old), &[], &listed(&new_cert), path).is_err());
     }
 
     /// The intermediates file is held to the owner and mode rule of the CA file, with its own words about what a writer

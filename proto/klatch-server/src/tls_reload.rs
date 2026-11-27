@@ -74,6 +74,7 @@ enum Kind {
     Other,
     TimedOut,
     Busy,
+    Restart,
 }
 
 impl Kind {
@@ -88,6 +89,9 @@ impl Kind {
             Kind::Other => "other",
             Kind::TimedOut => "timeout (a file did not answer in time)",
             Kind::Busy => "an earlier reload has not finished",
+            Kind::Restart => {
+                "an earlier reload is stuck and no more may be abandoned: restart the server"
+            }
         }
     }
 }
@@ -203,18 +207,20 @@ impl Slot {
         }
     }
 
-    /// Take the right to build: `Err` while an earlier build is unfinished and not yet abandonable. Past the bound, and
+    /// Take the right to build: `Err(restart_needed)` while an earlier build is unfinished and not yet abandonable. Past the bound, and
     /// under the cap, the unfinished build is abandoned: the slot gets a NEW flag (the old build clears only the old one)
     /// and its answer, if it ever comes, has no receiver, so it can never be swapped in. `Ok(true)` says one was abandoned.
     fn claim(
         &mut self,
         abandon_after: Duration,
         max_abandoned: usize,
-    ) -> Result<(bool, Arc<AtomicBool>), ()> {
+    ) -> Result<(bool, Arc<AtomicBool>), bool> {
         let mut gave_up = false;
         if self.busy.load(Ordering::SeqCst) {
-            if self.started.elapsed() < abandon_after || self.abandoned >= max_abandoned {
-                return Err(());
+            let overdue = self.started.elapsed() >= abandon_after;
+            if !overdue || self.abandoned >= max_abandoned {
+                // `Err(true)`: given up but for the cap, so only a restart clears it (#1694)
+                return Err(overdue);
             }
             self.busy = Arc::new(AtomicBool::new(false));
             self.abandoned += 1;
@@ -295,8 +301,10 @@ fn reload_with<T: Send + Sync + 'static>(
     in_force_due: &mut Option<i64>,
     limits: &Limits,
 ) -> Option<String> {
-    let Ok((gave_up, busy)) = slot.claim(limits.abandon_after, limits.max_abandoned) else {
-        return Some(failure_line(Kind::Busy));
+    let (gave_up, busy) = match slot.claim(limits.abandon_after, limits.max_abandoned) {
+        Ok(taken) => taken,
+        Err(true) => return Some(failure_line(Kind::Restart)),
+        Err(false) => return Some(failure_line(Kind::Busy)),
     };
     let (tx, rx) = channel();
     let guard = Done(busy.clone());
@@ -398,6 +406,7 @@ mod tests {
             Kind::Other,
             Kind::TimedOut,
             Kind::Busy,
+            Kind::Restart,
         ] {
             let line = failure_line(kind);
             assert!(!line.contains("/d/"), "{line}");
@@ -441,6 +450,14 @@ mod tests {
         assert_eq!(wait_for(&rx, &stop, Duration::from_secs(5)), Wait::Gone);
     }
 
+    /// Make the build in flight look `by` older: a bound is crossed without waiting (no timing margin to flake).
+    fn backdate(slot: &mut Slot, by: Duration) {
+        slot.started = slot
+            .started
+            .checked_sub(by)
+            .expect("the clock is past boot");
+    }
+
     /// A `Slot` for the tests: a build that blocks until the test lets it go, and one that answers at once.
     fn blocked_build<T: Send + 'static>(
         release: Receiver<()>,
@@ -463,7 +480,7 @@ mod tests {
         let mut due = None;
         let limits = Limits {
             deadline: Duration::from_millis(100),
-            abandon_after: Duration::from_millis(400),
+            abandon_after: Duration::from_secs(30),
             max_abandoned: 2,
         };
         let (free_first, hold_first) = channel();
@@ -477,7 +494,6 @@ mod tests {
             &limits,
         );
         assert_eq!(first, Some(failure_line(Kind::TimedOut)));
-        // before the bound the flag stays: an earlier reload has not finished
         let early = reload_with(
             || Ok((Arc::new(9u8), None)),
             "ok",
@@ -490,7 +506,7 @@ mod tests {
         assert_eq!(early, Some(failure_line(Kind::Busy)));
         assert_eq!(*current.get(), 0);
         // past the bound the stuck build is given up, said in the log, and a new reload runs and swaps
-        std::thread::sleep(Duration::from_millis(450));
+        backdate(&mut slot, Duration::from_secs(31));
         let later = reload_with(
             || Ok((Arc::new(2u8), None)),
             "ok",
@@ -507,6 +523,8 @@ mod tests {
         );
         assert!(later.ends_with("ok"), "{later}");
         assert_eq!(*current.get(), 2);
+        // the build thread clears its flag just after it answers: wait for that
+        while slot.busy.load(Ordering::SeqCst) {}
         // the abandoned build ends now: nothing changes, and the flag of a running build is not cleared by it
         let (free_third, hold_third) = channel();
         let third = reload_with(
@@ -548,7 +566,7 @@ mod tests {
         let mut due = None;
         let limits = Limits {
             deadline: Duration::from_millis(50),
-            abandon_after: Duration::from_millis(100),
+            abandon_after: Duration::from_secs(30),
             max_abandoned: 1,
         };
         let mut releases = Vec::new();
@@ -565,17 +583,16 @@ mod tests {
                 &mut due,
                 &limits,
             ));
-            std::thread::sleep(Duration::from_millis(150));
+            backdate(&mut slot, Duration::from_secs(31));
         }
-        // the first build is stuck (timed out); the second replaced it (abandoned note on the timed out line is not
-        // required) and is stuck; the third finds the cap reached and stays busy
         assert_eq!(lines[0], Some(failure_line(Kind::TimedOut)));
         assert!(
             lines[1].as_deref().unwrap().contains("abandoned"),
             "{:?}",
             lines[1]
         );
-        assert_eq!(lines[2], Some(failure_line(Kind::Busy)));
+        // the third finds the cap reached: only a restart clears the stuck build (#1694)
+        assert_eq!(lines[2], Some(failure_line(Kind::Restart)));
         for free in releases {
             let _ = free.send(());
         }
