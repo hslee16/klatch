@@ -128,8 +128,10 @@ impl Counts {
     /// What was counted since `earlier` (an earlier reading of the same counters): each number minus its old value, and
     /// no name above the requests of the difference. The two readings are each consistent but their difference need
     /// not be (a request half counted at the first reading has its names in the difference and itself in the one
-    /// after), so a name is held to the request difference; what is held back stays unflushed and is in a later row once
-    /// its requests are (`plus` moves the baseline by what a row held, not to the reading).
+    /// after), so a name is held to the request difference; what is held back stays unflushed (`plus` moves the baseline by
+    /// what a row held, not to the reading) and goes into a later row only once requests arrive without it. Where every
+    /// request carries the name (behind a proxy) a backlog never drains, so the rows are a lower bound for a name over a
+    /// whole run; only the shutdown summary (`Ignored::summary`) has the true total.
     pub(crate) fn since(&self, earlier: &Counts) -> Counts {
         let requests = self.requests.saturating_sub(earlier.requests);
         Counts {

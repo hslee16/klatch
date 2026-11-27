@@ -63,7 +63,8 @@ pub fn valid_kind(kind: &str) -> bool {
 
 /// Collapse line breaks so one message stays on one line: every line separator (CR, LF, U+0085, U+2028, U+2029) and every
 /// other control character (a terminal escape, a tab, a bell) becomes a space, so text shown in a listing cannot start a
-/// line of its own or move a terminal's cursor. Only the copy shown changes; what is stored does not.
+/// line of its own or move a terminal's cursor. It returns a copy; where a caller stores the result (a release note is
+/// stored after `flat`), the stored text has these characters as spaces.
 pub fn flat(s: &str) -> String {
     s.chars()
         .map(|c| {

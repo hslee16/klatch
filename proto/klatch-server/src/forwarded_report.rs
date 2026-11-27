@@ -5,7 +5,8 @@
 //!   counts changed since the last line (`klatch-server: forwarded identity headers seen so far: requests=N name=K ...`);
 //! - **durable**: one audit row (`forwarded-ignored`, `Backend::note_forwarded_ignored`) per flush interval, only when
 //!   the counts changed, holding what was counted since the last row; plus one at shutdown. `klatch admin audit` shows
-//!   the rows, and summing them gives the total across restarts.
+//!   the rows; summing them gives a lower bound of the total across restarts (a name can be held back in a row, see
+//!   `Counts::since`), the shutdown summary line has the whole-run total.
 //!
 //! Nothing here runs on a request. A request only bumps an in-memory counter; the timer thread is the only writer, so
 //! a flood of requests with these headers cannot cause more lines or rows than one per interval (and one at stop). The
@@ -100,7 +101,8 @@ impl Pacer {
 
     /// The row handed out by `due` (or `last`) from `counts` was kept: the next row holds what is counted after that
     /// row. The baseline moves by what the row held, not to `counts`, so a name held back by `Counts::since` (more
-    /// than the request difference) is not lost. A name still held back at shutdown is only in the summary line.
+    /// than the request difference) waits for a later row. It drains only when requests arrive without that name, so the
+    /// audit rows are a lower bound for a name over a whole run; the shutdown summary line has the true total.
     pub(crate) fn kept(&mut self, counts: &Counts) {
         self.flushed = self.flushed.plus(&counts.since(&self.flushed));
         self.refusal_said = false;
