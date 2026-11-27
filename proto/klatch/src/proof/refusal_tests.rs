@@ -116,3 +116,15 @@ fn a_row_stamped_in_the_future_does_not_silence_refusal_audits() {
     assert!(s.policy_set("admin-passphrase", Some("x"), 6_400).is_err());
     assert_eq!(refusals(&s, "admin-passphrase"), 2);
 }
+
+#[test]
+fn a_future_stamped_row_queued_in_one_transaction_does_not_silence_the_next_either() {
+    let s = store();
+    s.atomically(&mut || {
+        assert!(s.policy_set("admin-passphrase", Some("x"), 10_000).is_err());
+        assert!(s.policy_set("admin-passphrase", Some("x"), 6_400).is_err());
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(refusals(&s, "admin-passphrase"), 2);
+}

@@ -55,11 +55,14 @@ fn install(hangup: bool) {
 mod tests {
     use super::*;
 
+    /// The handler of `signal` and its `SA_RESTART` bit. Other flag bits are left out on purpose: glibc (and musl on
+    /// some architectures) add `SA_RESTORER` to every action it installs, so a whole-flags comparison never matches on
+    /// Linux (#1708).
     fn flags_of(signal: libc::c_int) -> (usize, libc::c_int) {
         let mut cur: libc::sigaction = unsafe { std::mem::zeroed() };
         let r = unsafe { libc::sigaction(signal, std::ptr::null(), &mut cur) };
         assert_eq!(r, 0);
-        (cur.sa_sigaction, cur.sa_flags)
+        (cur.sa_sigaction, cur.sa_flags & libc::SA_RESTART)
     }
 
     /// Puts the signal actions back that the test found, so the test binary keeps its own Ctrl-C (#1689).
