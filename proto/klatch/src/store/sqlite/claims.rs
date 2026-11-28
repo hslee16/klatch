@@ -49,6 +49,12 @@ pub(super) fn ask_number(path: &str) -> Option<i64> {
     path.strip_prefix("ask:").and_then(|n| n.parse().ok())
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Marks examined by `note_lapsed_yield_ends` (a test-only work counter, #1761).
+    pub(super) static MATCH_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl SqliteStore {
     pub(super) fn live_claims(&self, room: &str) -> Result<Vec<Held>> {
         self.rows(
@@ -135,7 +141,7 @@ impl SqliteStore {
         let marked = self
             .optional(
                 "SELECT 1 FROM claim_yields WHERE room=?1 AND member=?2 AND path='' AND ts>=?3 AND ts<=?4",
-                params![room, owner, at - YIELD_WINDOW_SECS, at],
+                params![room, owner, at.saturating_sub(YIELD_WINDOW_SECS), at],
                 |r| r.get::<_, i64>(0),
             )?
             .is_some();
@@ -164,13 +170,22 @@ impl SqliteStore {
             return Ok(());
         }
         let marks = self.lapsed_marks(lapsed)?;
+        // grouped by (room, member), so a lapse looks at the marks of its own holder only
+        let mut by_holder: std::collections::HashMap<(&str, &str), Vec<i64>> =
+            std::collections::HashMap::new();
+        for (room, member, ts) in &marks {
+            by_holder.entry((room, member)).or_default().push(*ts);
+        }
         for l in lapsed.iter().filter(|l| {
-            marks.iter().any(|(room, member, ts)| {
-                *room == l.room
-                    && *member == l.owner
-                    && *ts >= l.expires - YIELD_WINDOW_SECS
-                    && *ts <= l.expires
-            })
+            by_holder
+                .get(&(l.room.as_str(), l.owner.as_str()))
+                .is_some_and(|tss| {
+                    tss.iter().any(|ts| {
+                        #[cfg(test)]
+                        MATCH_WORK.with(|w| w.set(w.get() + 1));
+                        *ts >= l.expires.saturating_sub(YIELD_WINDOW_SECS) && *ts <= l.expires
+                    })
+                })
         }) {
             self.mark_yield_end(&l.room, (&l.owner, &l.path), l.expires)?;
         }
@@ -197,7 +212,7 @@ impl SqliteStore {
             let sql = format!(
                 "SELECT room,member,ts FROM claim_yields WHERE path='' AND ts>=?1 AND ts<=?2 AND room IN ({holes})"
             );
-            let lo = first - YIELD_WINDOW_SECS;
+            let lo = first.saturating_sub(YIELD_WINDOW_SECS);
             let args = [&lo as &dyn rusqlite::ToSql, &last]
                 .into_iter()
                 .chain(chunk.iter().map(|r| r as &dyn rusqlite::ToSql));
