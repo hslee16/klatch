@@ -437,16 +437,15 @@ pub(super) fn raw_echoes(file: &str, src: &str) -> Vec<Echo> {
         if p(k, '|')
             && (p(k + 1, '|') || id(k + 1).is_some())
             && (p(k.wrapping_sub(1), '=') || id(k.wrapping_sub(1)) == Some("move"))
+            && let Some(close) = (k + 1..t.len()).find(|&j| p(j, '|'))
         {
-            if let Some(close) = (k + 1..t.len()).find(|&j| p(j, '|')) {
-                let names: Vec<String> = (k + 1..close)
-                    .filter(|&j| p(j + 1, ':') || p(j + 1, ',') || j + 1 == close)
-                    .filter_map(|j| id(j).map(str::to_string))
-                    .collect();
-                // the closure body is the rest of its let statement
-                let end = (close..t.len()).find(|&j| p(j, ';')).unwrap_or(t.len() - 1);
-                params_of.push((close, end, names));
-            }
+            let names: Vec<String> = (k + 1..close)
+                .filter(|&j| p(j + 1, ':') || p(j + 1, ',') || j + 1 == close)
+                .filter_map(|j| id(j).map(str::to_string))
+                .collect();
+            // the closure body is the rest of its let statement
+            let end = (close..t.len()).find(|&j| p(j, ';')).unwrap_or(t.len() - 1);
+            params_of.push((close, end, names));
         }
     }
     // let statements: (name, start, end), and the ones that bind a closure
