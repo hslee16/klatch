@@ -61,7 +61,10 @@ impl<S: Store> Gateway<S> {
             check_room(room)?;
         }
         if !valid_name(member) {
-            return Err(Error::Invalid(format!("bad member name: {member}")));
+            return Err(Error::Invalid(format!(
+                "bad member name: {}",
+                shown(member)
+            )));
         }
         self.administer(who, ("remove", &format!("{room}/{member}")), |now| {
             let rooms = if room == "*" {
@@ -87,7 +90,10 @@ impl<S: Store> Gateway<S> {
             check_room(room)?;
         }
         if !valid_name(member) {
-            return Err(Error::Invalid(format!("bad member name: {member}")));
+            return Err(Error::Invalid(format!(
+                "bad member name: {}",
+                shown(member)
+            )));
         }
         self.administer(who, ("allow", &format!("{room}/{member}")), |now| {
             let tripped = room == "*"

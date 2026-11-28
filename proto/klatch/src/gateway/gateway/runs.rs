@@ -63,7 +63,8 @@ impl<S: Store> Gateway<S> {
     pub fn admin_run_create(&self, who: &Principal, id: &str) -> Result<()> {
         if !valid_run_id(id) {
             return Err(Error::Invalid(format!(
-                "a run id is 1 to 32 characters of letters, digits, dash and underscore: {id:?}"
+                "a run id is 1 to 32 characters of letters, digits, dash and underscore: \"{}\"",
+                shown(id)
             )));
         }
         self.administer(who, ("run-create", id), |now| {
@@ -85,7 +86,7 @@ impl<S: Store> Gateway<S> {
         mut archive: Option<Archive>,
     ) -> Result<DeletedRooms> {
         if !valid_run_id(id) {
-            return Err(Error::Invalid(format!("bad run id: {id:?}")));
+            return Err(Error::Invalid(format!("bad run id: \"{}\"", shown(id))));
         }
         let mut gone = DeletedRooms::default();
         self.administer(who, ("run-end", id), |now| {

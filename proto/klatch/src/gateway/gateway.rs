@@ -1,6 +1,6 @@
 use crate::domain::{
     Claim, Error, MemberInfo, Message, PARKED_DEFAULT_SECS, Parked, Posted, Principal, Result,
-    RoomDigest, parse_parked, valid_name,
+    RoomDigest, parse_parked, shown, valid_name,
 };
 use crate::gateway::{Clock, Guard, Operation};
 use crate::store::{ClaimRequest, HookEvent, NewMessage, Release, Seat, Seq, Store};

@@ -294,6 +294,27 @@ fn releasing_a_claim_you_do_not_hold_is_not_found() {
 }
 
 #[test]
+fn an_unknown_method_is_named_capped_and_ascii() {
+    let g = gateway();
+    let hostile = format!("{}\u{1b}[31m\u{202e}\u{e0041}\n", "m".repeat(100 * 1024));
+    let f = run(
+        &g,
+        &alice(),
+        &[
+            req("1", &hostile, json!({})),
+            req("2", "tele port", json!({})),
+        ],
+    );
+    let (_, msg) = response(&f, "1").2.unwrap();
+    assert!(
+        msg.is_ascii() && !msg.chars().any(char::is_control),
+        "{msg:?}"
+    );
+    assert!(msg.len() < 200, "{}", msg.len());
+    assert_eq!(response(&f, "2").2.unwrap().1, "unknown method tele port");
+}
+
+#[test]
 fn invalid_input_and_unknown_methods_get_distinct_error_codes() {
     let g = gateway();
     let f = run(

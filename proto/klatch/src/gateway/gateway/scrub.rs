@@ -59,7 +59,7 @@ impl<S: Store> Gateway<S> {
     /// List a private term under a rule name. Matching ignores case.
     pub fn admin_add_scrub_term(&self, who: &Principal, name: &str, term: &str) -> Result<()> {
         if !valid_name(name) {
-            return Err(Error::Invalid(format!("bad rule name: {name}")));
+            return Err(Error::Invalid(format!("bad rule name: {}", shown(name))));
         }
         let ok = !term.trim().is_empty() && plain_text(term, MAX_TERM_BYTES);
         invalid(
@@ -76,7 +76,7 @@ impl<S: Store> Gateway<S> {
     /// Stop refusing a rule's term.
     pub fn admin_remove_scrub_term(&self, who: &Principal, name: &str) -> Result<()> {
         if !valid_name(name) {
-            return Err(Error::Invalid(format!("bad rule name: {name}")));
+            return Err(Error::Invalid(format!("bad rule name: {}", shown(name))));
         }
         self.administer(who, ("scrub-remove", name), |now| {
             let key = format!("{PREFIX}{name}");

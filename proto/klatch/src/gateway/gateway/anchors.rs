@@ -28,7 +28,7 @@ impl<S: Store> Gateway<S> {
     /// launcher's act, not an agent's: it goes through the guard and is audited.
     pub fn anchor_done(&self, who: &Principal, anchor: &str) -> Result<usize> {
         if !valid_anchor(anchor) {
-            return Err(Error::Invalid(format!("bad anchor: {anchor:?}")));
+            return Err(Error::Invalid(format!("bad anchor: \"{}\"", shown(anchor))));
         }
         let anchor = &normalize_anchor(anchor);
         let mut released = 0;

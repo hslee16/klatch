@@ -31,7 +31,10 @@ impl<S: Store> Gateway<S> {
         on: bool,
     ) -> Result<()> {
         if !valid_name(member) {
-            return Err(Error::Invalid(format!("bad member name: {member}")));
+            return Err(Error::Invalid(format!(
+                "bad member name: {}",
+                shown(member)
+            )));
         }
         self.administer(who, ("grant-rooms", &format!("{member}={on}")), |now| {
             self.store
@@ -123,7 +126,7 @@ impl<S: Store> Gateway<S> {
         check_member(who)?;
         for (what, name) in [("member", member), ("room", room), ("room", via)] {
             if !valid_name(name) {
-                return Err(Error::Invalid(format!("bad {what} name: {name}")));
+                return Err(Error::Invalid(format!("bad {what} name: {}", shown(name))));
             }
         }
         if member == who.member {

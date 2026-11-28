@@ -93,7 +93,10 @@ impl<S: Store> Gateway<S> {
         check_member(who)?;
         check_room(room)?;
         if !valid_name(member) {
-            return Err(Error::Invalid(format!("bad member name: {member}")));
+            return Err(Error::Invalid(format!(
+                "bad member name: {}",
+                shown(member)
+            )));
         }
         self.authorize(
             who,
@@ -211,7 +214,10 @@ impl<S: Store> Gateway<S> {
     ) -> Result<()> {
         check_room(room)?;
         if !valid_name(member) {
-            return Err(Error::Invalid(format!("bad member name: {member}")));
+            return Err(Error::Invalid(format!(
+                "bad member name: {}",
+                shown(member)
+            )));
         }
         self.administer(who, ("grantor", &format!("{room}/{member}={on}")), |now| {
             let key = format!("{GRANTOR}{room}");
@@ -235,7 +241,10 @@ impl<S: Store> Gateway<S> {
     ) -> Result<()> {
         check_room(room)?;
         if !valid_name(member) {
-            return Err(Error::Invalid(format!("bad member name: {member}")));
+            return Err(Error::Invalid(format!(
+                "bad member name: {}",
+                shown(member)
+            )));
         }
         let shown = label.unwrap_or("none");
         self.administer(

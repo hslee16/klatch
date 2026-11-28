@@ -84,7 +84,10 @@ impl<S: Store> Gateway<S> {
     pub(super) fn set_role(&self, who: &Principal, change: RoleChange) -> Result<()> {
         let RoleChange { member, role, on } = change;
         if !valid_name(member) {
-            return Err(Error::Invalid(format!("bad member name: {member}")));
+            return Err(Error::Invalid(format!(
+                "bad member name: {}",
+                shown(member)
+            )));
         }
         let held = self.role_of(member)?;
         self.administer(who, (role_action(role), &format!("{member}={on}")), |now| {

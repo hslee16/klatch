@@ -46,7 +46,10 @@ pub(crate) fn check_name(name: &str) -> Result<(), Error> {
     if ok {
         Ok(())
     } else {
-        Err(Error::Bad(format!("bad key name {name:?}")))
+        Err(Error::Bad(format!(
+            "bad key name \"{}\"",
+            crate::domain::shown(name)
+        )))
     }
 }
 
@@ -309,6 +312,22 @@ mod tests {
         src.delete("store").unwrap();
         assert!(src.get("store").unwrap().is_none());
         src.delete("store").unwrap();
+    }
+
+    #[test]
+    fn a_refused_name_is_shown_capped_and_ascii() {
+        let hostile = format!("{}\u{1b}[31m\u{202e}\u{e0041}\n", "n".repeat(100 * 1024));
+        let e = MemoryKeys::default().get(&hostile).unwrap_err();
+        let Error::Bad(text) = e else {
+            panic!("not Bad")
+        };
+        assert!(
+            text.is_ascii() && !text.chars().any(char::is_control),
+            "{text:?}"
+        );
+        assert!(text.len() < 200, "{}", text.len());
+        let plain = MemoryKeys::default().get("a b").unwrap_err();
+        assert!(matches!(plain, Error::Bad(t) if t == "bad key name \"a b\""));
     }
 
     #[test]

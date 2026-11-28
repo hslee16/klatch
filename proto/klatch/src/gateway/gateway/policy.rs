@@ -221,7 +221,10 @@ impl<S: Store> Gateway<S> {
     /// Set a member's clearance, at most the agent cap: `secret` is out of every agent's reach (D4).
     pub fn admin_set_clearance(&self, who: &Principal, member: &str, label: &str) -> Result<()> {
         if !valid_name(member) {
-            return Err(Error::Invalid(format!("bad member name: {member}")));
+            return Err(Error::Invalid(format!(
+                "bad member name: {}",
+                shown(member)
+            )));
         }
         // a facilitator is refused for its role, not for the cap (#190)
         self.refuse_facilitator(who, "clear")?;
@@ -294,7 +297,8 @@ pub(super) fn known_label(chain: &LabelChain, label: &str) -> Result<()> {
     match chain.rank(label) {
         Some(_) => Ok(()),
         None => Err(Error::Invalid(format!(
-            "unknown label {label}; the levels are {}",
+            "unknown label {}; the levels are {}",
+            shown(label),
             chain.to_text()
         ))),
     }

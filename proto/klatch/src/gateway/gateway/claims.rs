@@ -22,7 +22,7 @@ impl<S: Store> Gateway<S> {
         if let Some(a) = anchor
             && !valid_anchor(a)
         {
-            return Err(Error::Invalid(format!("bad anchor: {a:?}")));
+            return Err(Error::Invalid(format!("bad anchor: \"{}\"", shown(a))));
         }
         self.refuse_text(who, (room, "claim"), reason)?;
         if ttl <= 0 {

@@ -28,7 +28,10 @@ impl<S: Store> Gateway<S> {
         check_member(who)?;
         check_room(room)?;
         if !valid_name(member) {
-            return Err(Error::Invalid(format!("bad member name: {member}")));
+            return Err(Error::Invalid(format!(
+                "bad member name: {}",
+                shown(member)
+            )));
         }
         if member == who.member {
             self.authorize(who, &Operation::read(room, false))?;
