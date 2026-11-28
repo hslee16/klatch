@@ -96,45 +96,69 @@ fn name_problems(rel: &str, code: &str, at: &str) -> Vec<String> {
     outside_daemon.into_iter().chain(never).collect()
 }
 
-/// Whether a line opens an outbound connection: a connect is allowed only in the loopback listener's own tests.
-fn connects_outward(rel: &str, code: &str) -> bool {
-    let unix_connect = code.contains("UnixStream::connect(") && !is_in(rel, DAEMON_ONLY);
-    let connects =
-        code.contains("TcpStream::connect") || code.contains("connect_timeout(") || unix_connect;
-    connects && !is_in(rel, TEST_CLIENT)
-}
-
-/// A program started: none, by literal name or chosen at run time, and the process `Command` type is not named.
-fn program_problems(code: &str, at: &str) -> Vec<String> {
+/// The socket calls and the program starts of a file, read from tokens (#1783): `TcpStream :: connect`, `<TcpStream>::connect`
+/// and the `loopback::Stream` alias of it, `connect_timeout`, the same for `bind` on `TcpListener` and its alias
+/// `Listener`, whatever the spacing and the lines, and every way to start a program.
+fn token_problems(rel: &str, text: &str) -> Vec<String> {
     let mut problems = Vec::new();
-    if let Some(i) = code.find("Command::new(") {
-        let arg = &code[i + "Command::new(".len()..];
-        match arg.strip_prefix('"').and_then(|a| a.split('"').next()) {
-            Some(p) if PROGRAMS.contains(&p) => {}
-            Some(p) => problems.push(format!("{at}: runs {p}")),
-            None => problems.push(format!("{at}: runs a program chosen at run time")),
+    let mut add = |line: usize, what: &str| problems.push(format!("{rel}:{line}: {what}"));
+    // a connect is allowed only in the loopback listener's own tests; the daemon probes its own Unix path
+    if !is_in(rel, TEST_CLIENT) {
+        for method in ["connect", "connect_timeout"] {
+            for line in net_scan::assoc_calls(text, TCP_STREAMS, method) {
+                add(line, "opens an outbound connection");
+            }
+        }
+        if !is_in(rel, DAEMON_ONLY) {
+            for line in net_scan::assoc_calls(text, &["UnixStream"], "connect") {
+                add(line, "opens an outbound connection");
+            }
         }
     }
-    if code.contains("process::Command") || code.contains("std::process::Command") {
-        problems.push(format!("{at}: names the process Command type"));
+    // no listener but the one in `bind_loopback`
+    if !is_in(rel, LOOPBACK_ONLY) {
+        for line in net_scan::assoc_calls(text, TCP_LISTENERS, "bind") {
+            add(line, "binds a listener outside the loopback module");
+        }
     }
+    // no program is started, by any route
+    for u in net_scan::command_uses(text) {
+        match u {
+            net_scan::CommandUse::Call {
+                line,
+                program: Some(p),
+                ..
+            } if !PROGRAMS.contains(&p.as_str()) => add(line, &format!("runs {p}")),
+            net_scan::CommandUse::Call {
+                line,
+                program: None,
+                ..
+            } => add(line, "runs a program chosen at run time"),
+            net_scan::CommandUse::Indirect { line, what } => add(line, &what),
+            net_scan::CommandUse::Call { .. } => {}
+        }
+    }
+    for (line, name) in net_scan::ids(text) {
+        if name == "Command" {
+            add(line, "names the process Command type");
+        }
+    }
+    problems.sort();
+    problems.dedup();
     problems
 }
+
+/// The types a TCP connection is made through: the std type and the `loopback::Stream` alias of it (`pub type Stream =
+/// TcpStream`).
+const TCP_STREAMS: &[&str] = &["TcpStream", "Stream"];
+
+/// The types a TCP listener is made through: the std type and the `loopback::Listener` alias of it.
+const TCP_LISTENERS: &[&str] = &["TcpListener", "Listener"];
 
 /// Everything one line of source may not do.
 fn line_problems(rel: &str, code: &str, at: &str) -> Vec<String> {
     let mut problems = socket_problems(rel, code, at);
     problems.extend(name_problems(rel, code, at));
-    if connects_outward(rel, code) {
-        problems.push(format!("{at}: opens an outbound connection"));
-    }
-    // No listener but the one in `bind_loopback`.
-    if code.contains("TcpListener::bind") && !is_in(rel, LOOPBACK_ONLY) {
-        problems.push(format!(
-            "{at}: binds a listener outside the loopback module"
-        ));
-    }
-    problems.extend(program_problems(code, at));
     problems
 }
 
@@ -145,9 +169,10 @@ fn the_source_opens_no_socket_outside_the_loopback_module_and_starts_no_program(
     let problems: Vec<String> = sources
         .iter()
         .flat_map(|(rel, text)| {
-            text.lines().enumerate().flat_map(move |(n, line)| {
+            let by_line = text.lines().enumerate().flat_map(move |(n, line)| {
                 line_problems(rel, code_of(line), &format!("{rel}:{}", n + 1))
-            })
+            });
+            by_line.chain(token_problems(rel, text))
         })
         .collect();
     assert!(
@@ -171,8 +196,8 @@ fn there_is_exactly_one_bind_and_each_way_to_it_checks_the_address_first() {
     let binds: Vec<&str> = sources
         .iter()
         .flat_map(|(rel, text)| {
-            text.lines()
-                .filter(|l| code_of(l).contains("TcpListener::bind"))
+            net_scan::assoc_calls(text, TCP_LISTENERS, "bind")
+                .into_iter()
                 .map(move |_| rel.as_str())
         })
         .collect();
@@ -239,9 +264,14 @@ fn the_daemon_module_has_one_unix_listener_one_probe_and_checks_the_peer_before_
         .take_while(|l| !l.contains("#[cfg(test)]"))
         .collect();
     let count = |needle: &str| code.iter().filter(|l| l.contains(needle)).count();
-    assert_eq!(count("UnixListener::bind("), 1, "one listener");
+    let code_text = code.join("\n");
     assert_eq!(
-        count("UnixStream::connect("),
+        net_scan::assoc_calls(&code_text, &["UnixListener"], "bind").len(),
+        1,
+        "one listener"
+    );
+    assert_eq!(
+        net_scan::assoc_calls(&code_text, &["UnixStream"], "connect").len(),
         1,
         "one probe, of the daemon's own path"
     );
@@ -616,13 +646,14 @@ fn protected_test_files() -> Vec<&'static str> {
         .collect()
 }
 
-/// Whether `text` has `#[path = "target"]` directly under `#[cfg(test)]`.
+/// Whether `text` declares `#[path = "target"] mod ..;` exactly once, directly under `#[cfg(test)]`, read from tokens: a
+/// comment cannot fake the attribute and a second, unconditional declaration of the same file is not accepted.
 fn declared_under_cfg_test(text: &str, target: &str) -> bool {
-    let lines: Vec<&str> = text.lines().map(str::trim).collect();
-    let want = format!("#[path = \"{target}\"]");
-    lines
-        .windows(2)
-        .any(|w| w[0] == "#[cfg(test)]" && w[1] == want)
+    let decls: Vec<_> = net_scan::path_decls(text)
+        .into_iter()
+        .filter(|(t, _)| t == target)
+        .collect();
+    decls.len() == 1 && decls[0].1.iter().any(|a| a == "cfg(test)")
 }
 
 /// The OS-level network findings of one file that no allowance covers. `std::os::unix::net` is the daemon's own and is
@@ -637,6 +668,17 @@ fn net_problems(rel: &str, text: &str) -> Vec<String> {
             let legit = TEST_ONLY_FILES.iter().any(|(parent, file)| {
                 *parent == rel && *file == resolved && declared_under_cfg_test(text, &target)
             });
+            let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+            if !resolved.ends_with(".rs") {
+                return Some(format!(
+                    "{rel}:{line}: a #[path] or include! of {resolved}, which is not a Rust file"
+                ));
+            }
+            if !root.join(&resolved).is_file() {
+                return Some(format!(
+                    "{rel}:{line}: a #[path] or include! of {resolved}, which does not exist"
+                ));
+            }
             (protected_test_files().contains(&resolved.as_str()) && !legit)
                 .then(|| format!("{rel}:{line}: a #[path] or include! of {resolved}"))
         });
@@ -808,5 +850,241 @@ fn the_line_scans_see_past_a_double_slash_in_a_string() {
             .iter()
             .any(|p| p.contains("TcpListener") || p.contains("listener")),
         "{problems:?}"
+    );
+}
+
+/// A throwaway crate directory under cargo's temporary directory, with these files.
+fn temp_crate(tag: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("server-guard-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for (rel, text) in files {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+    root
+}
+
+/// Only the build output is skipped, never a directory named `target` under `src` or `tests` (#1783).
+#[test]
+fn a_directory_named_target_under_src_is_read() {
+    let evil = "fn f() { unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) }; }\n";
+    let root = temp_crate(
+        "walk",
+        &[
+            ("src/lib.rs", "// ok\n"),
+            ("src/target/mod.rs", evil),
+            ("src/artifacts/mod.rs", evil),
+            ("tests/corpus/t.rs", evil),
+            ("target/b.rs", evil),
+        ],
+    );
+    let files = all_sources_in(&root);
+    let rels: Vec<&str> = files.iter().map(|(r, _)| r.as_str()).collect();
+    for want in [
+        "src/lib.rs",
+        "src/target/mod.rs",
+        "src/artifacts/mod.rs",
+        "tests/corpus/t.rs",
+    ] {
+        assert!(rels.contains(&want), "{want}: {rels:?}");
+    }
+    assert!(!rels.contains(&"target/b.rs"), "{rels:?}");
+    for (rel, text) in &files {
+        if rel.contains("target/mod") {
+            assert!(!net_problems(rel, text).is_empty(), "{rel}");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The sockets the loopback module makes by an alias, and every spelling of a connect or a bind, are found from tokens
+/// (#1783): `pub type Stream = TcpStream;` and `pub type Listener = TcpListener;` are the way in.
+#[test]
+fn a_connect_or_a_bind_is_found_by_tokens_through_the_aliases_and_any_spacing() {
+    for (what, rel, src) in [
+        (
+            "the Stream alias from another file",
+            "src/wire_http.rs",
+            "fn f() { crate::loopback::Stream::connect(\"evil:443\"); }\n",
+        ),
+        (
+            "the Listener alias from another file",
+            "src/wire_http.rs",
+            "fn f() { crate::loopback::Listener::bind(\"0.0.0.0:80\"); }\n",
+        ),
+        (
+            "spaces around ::",
+            "src/loopback.rs",
+            "fn f() { TcpStream :: connect(a); }\n",
+        ),
+        (
+            "UFCS connect",
+            "src/loopback.rs",
+            "fn f() { <TcpStream>::connect(a); }\n",
+        ),
+        (
+            "a split path",
+            "src/wire_http.rs",
+            "fn f() { TcpStream\n    ::\n    connect(a); }\n",
+        ),
+        (
+            "connect_timeout",
+            "src/wire_http.rs",
+            "fn f() { TcpStream::connect_timeout(&a, t); }\n",
+        ),
+        (
+            "a bind from another file",
+            "src/wire_http.rs",
+            "fn f() { TcpListener :: bind(a); }\n",
+        ),
+        (
+            "a UFCS bind from another file",
+            "src/daemon.rs",
+            "fn f() { <TcpListener>::bind(a); }\n",
+        ),
+        (
+            "a Unix connect outside the daemon",
+            "src/wire_http.rs",
+            "fn f() { UnixStream :: connect(p); }\n",
+        ),
+    ] {
+        assert!(!token_problems(rel, src).is_empty(), "not flagged: {what}");
+    }
+    // loopback.rs may bind, but the count of binds in it is read from tokens, so a second one in any spelling is seen
+    let count = |src: &str| net_scan::assoc_calls(src, TCP_LISTENERS, "bind").len();
+    assert_eq!(
+        count(
+            "TcpListener :: bind(a); <TcpListener>::bind(b); Listener::bind(c); loopback::Listener\n::\nbind(d);"
+        ),
+        4
+    );
+    assert_eq!(
+        count("// TcpListener::bind(a)\nlet s = \"TcpListener::bind\";"),
+        0
+    );
+    // the real files pass: the one bind is in loopback.rs
+    let bind_in_loopback =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/loopback.rs"))
+            .unwrap();
+    assert_eq!(count(&net_scan::strip_comments(&bind_in_loopback)), 1);
+}
+
+/// Every way to start a program is found by identifier (#1783); the server starts none.
+#[test]
+fn a_program_start_is_found_by_identifier_in_every_form() {
+    for (what, src) in [
+        (
+            "a call",
+            "fn f() { std::process::Command::new(\"curl\"); }\n",
+        ),
+        ("a type alias", "type C = std::process::Command;\n"),
+        (
+            "map with Command::new",
+            "use std::process::{Stdio, Command};\nfn f() { v.map(Command::new); }\n",
+        ),
+        ("a UFCS call", "fn f() { <Command>::new(\"curl\"); }\n"),
+        ("a path value", "fn f() { let mk = Command::new; }\n"),
+        ("only an import", "use std::process::{Stdio, Command};\n"),
+    ] {
+        assert!(
+            !token_problems("src/some/new_file.rs", src).is_empty(),
+            "not flagged: {what}"
+        );
+    }
+    assert!(
+        token_problems(
+            "src/some/new_file.rs",
+            "use std::process::ExitCode;\nfn f() { let c = \"Command::new\"; }\n"
+        )
+        .is_empty()
+    );
+}
+
+/// A declaration is read from tokens: a comment cannot fake `#[cfg(test)]`, and a second declaration of the same file is
+/// not accepted (#1783).
+#[test]
+fn the_declaration_of_the_daemon_tests_is_read_from_tokens_and_must_be_the_only_one() {
+    let real = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/daemon.rs"))
+        .unwrap();
+    assert!(
+        net_problems("src/daemon.rs", &real)
+            .iter()
+            .all(|p| !p.contains("daemon_tests")),
+        "the real declaration is fine"
+    );
+    for (what, extra) in [
+        (
+            "a second unconditional declaration",
+            "\n#[path = \"daemon_tests.rs\"]\nmod shipped;\n",
+        ),
+        (
+            "a second conditional declaration",
+            "\n#[cfg(test)]\n#[path = \"daemon_tests.rs\"]\nmod shipped;\n",
+        ),
+    ] {
+        let text = format!("{real}{extra}");
+        assert!(
+            net_problems("src/daemon.rs", &text)
+                .iter()
+                .any(|p| p.contains("daemon_tests")),
+            "not flagged: {what}"
+        );
+    }
+    let faked = "/*\n#[cfg(test)]\n#[ */\n#[path = \"daemon_tests.rs\"]\nmod tests;\n";
+    assert!(!declared_under_cfg_test(faked, "daemon_tests.rs"));
+    assert!(declared_under_cfg_test(
+        "#[ cfg ( test ) ]\n#[path = \"daemon_tests.rs\"]\nmod tests;\n",
+        "daemon_tests.rs"
+    ));
+}
+
+/// A `#[path]` is read whatever its extension, and a missing target is a finding (#1783).
+#[test]
+fn a_path_is_read_whatever_its_extension_and_a_missing_target_is_a_finding() {
+    for (what, rel, src) in [
+        (
+            "a non-Rust target",
+            "src/some/new_file.rs",
+            "#[path = \"sock.inc\"]\nmod sock;\n",
+        ),
+        (
+            "an include! of a non-Rust file",
+            "src/some/new_file.rs",
+            "include!(\"sock.inc\");\n",
+        ),
+        (
+            "a missing Rust target",
+            "src/some/new_file.rs",
+            "#[path = \"nowhere.rs\"]\nmod nowhere;\n",
+        ),
+    ] {
+        assert!(!net_problems(rel, src).is_empty(), "not flagged: {what}");
+    }
+}
+
+/// The shared tokenizer matches rustc on the lexer edge cases, keeps step on every file of this crate, and so the
+/// `ring_paths` reading of `scan_common` no longer trips on `'\\''` or a C string (#1783).
+#[test]
+fn the_tokenizer_matches_rustc_and_ring_paths_uses_it() {
+    net_scan::check_lexer_cases();
+    for (rel, text) in all_sources() {
+        assert!(
+            net_scan::brackets_balance(&text),
+            "the brackets of {rel} do not balance in the tokens"
+        );
+    }
+    assert_eq!(
+        ring_paths("let q = '\\''; let d = \"\"; ring::digest::SHA1;"),
+        ["digest"]
+    );
+    assert_eq!(
+        ring_paths("quotes! { '\\'', '\"' } ring::hmac::Key;"),
+        ["hmac"]
+    );
+    assert_eq!(
+        ring_paths("let _a = cr\"\\\"; let _b = c\"\"; ring::rand::SystemRandom;"),
+        ["rand"]
     );
 }

@@ -712,8 +712,13 @@ pub fn resolve_relative(from_rel: &str, target: &str) -> String {
     for seg in target.split('/') {
         match seg {
             "" | "." => {}
+            // a `..` out of the crate stays a `..` (the shared test helper of a sibling crate is reached that way)
             ".." => {
-                parts.pop();
+                if parts.last().is_some_and(|l| *l != "..") {
+                    parts.pop();
+                } else {
+                    parts.push("..");
+                }
             }
             s => parts.push(s),
         }

@@ -44,31 +44,14 @@ pub fn rust_sources() -> Vec<(String, String)> {
 }
 
 /// Every Rust file this crate builds or runs: `src` and `tests` (there is no build script), as `(path relative to the
-/// crate, text with the comments removed)`.
+/// crate, text as written)`. Only the build output is skipped, where cargo puts it (`net_scan::crate_sources`).
 pub fn all_sources() -> Vec<(String, String)> {
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        let Ok(read) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for e in read.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                walk(&p, out);
-            } else if p.extension().is_some_and(|x| x == "rs") {
-                out.push(p);
-            }
-        }
-    }
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut files = Vec::new();
-    for d in ["src", "tests"] {
-        walk(&root.join(d), &mut files);
-    }
-    if root.join("build.rs").is_file() {
-        files.push(root.join("build.rs"));
-    }
-    files.sort();
-    files
+    all_sources_in(Path::new(env!("CARGO_MANIFEST_DIR")))
+}
+
+/// `all_sources` of the crate at `root`.
+pub fn all_sources_in(root: &Path) -> Vec<(String, String)> {
+    net_scan::crate_sources(root)
         .into_iter()
         .map(|p| {
             let rel = p.strip_prefix(root).unwrap().display().to_string();
@@ -137,93 +120,26 @@ pub fn ring_paths(text: &str) -> Vec<String> {
 }
 
 /// The tokens of Rust source with comments, string literals and char literals left out: words, `::`, and every other
-/// character on its own. Enough to read paths; it parses nothing else.
+/// character on its own. Enough to read paths; it parses nothing else. It reads with the shared tokenizer
+/// (`net_scan::tokenize`), which handles every string and char literal form (the `'\\''` and the C strings that the
+/// tokenizer written here before it got wrong, #1783).
 fn tokens_of(text: &str) -> Vec<String> {
-    let c: Vec<char> = text.chars().collect();
+    use net_scan::Kind;
+    let toks = net_scan::tokenize(text);
     let mut out = Vec::new();
-    let mut i = 0;
-    while i < c.len() {
-        let ch = c[i];
-        if ch == '/' && c.get(i + 1) == Some(&'/') {
-            while i < c.len() && c[i] != '\n' {
-                i += 1;
+    let mut k = 0;
+    while k < toks.len() {
+        match &toks[k].kind {
+            Kind::Id(s) => out.push(s.clone()),
+            Kind::Num => out.push("0".to_string()),
+            Kind::Str(_) => {}
+            Kind::P(':') if matches!(toks.get(k + 1), Some(t) if t.kind == Kind::P(':')) => {
+                out.push("::".to_string());
+                k += 1;
             }
-        } else if ch == '/' && c.get(i + 1) == Some(&'*') {
-            let mut depth = 0;
-            while i < c.len() {
-                if c[i] == '/' && c.get(i + 1) == Some(&'*') {
-                    depth += 1;
-                    i += 2;
-                } else if c[i] == '*' && c.get(i + 1) == Some(&'/') {
-                    depth -= 1;
-                    i += 2;
-                    if depth == 0 {
-                        break;
-                    }
-                } else {
-                    i += 1;
-                }
-            }
-        } else if ch == '"' {
-            i += 1;
-            while i < c.len() && c[i] != '"' {
-                i += if c[i] == '\\' { 2 } else { 1 };
-            }
-            i += 1;
-        } else if ch == '\'' {
-            // a char literal ('x', '\n', '"'); anything else with a quote is a lifetime
-            if c.get(i + 1) == Some(&'\\') {
-                i += 2;
-                while i < c.len() && c[i] != '\'' {
-                    i += 1;
-                }
-                i += 1;
-            } else if c.get(i + 2) == Some(&'\'') {
-                i += 3;
-            } else {
-                i += 1;
-            }
-        } else if ch.is_alphanumeric() || ch == '_' {
-            let start = i;
-            while i < c.len() && (c[i].is_alphanumeric() || c[i] == '_') {
-                i += 1;
-            }
-            let word: String = c[start..i].iter().collect();
-            // a raw string: r"..", r#".."#, br".."
-            let mut hashes = 0;
-            if matches!(word.as_str(), "r" | "br") {
-                while c.get(i + hashes) == Some(&'#') {
-                    hashes += 1;
-                }
-            }
-            let raw = matches!(word.as_str(), "r" | "br") && c.get(i + hashes) == Some(&'"');
-            if word == "r"
-                && hashes == 1
-                && !raw
-                && c.get(i + 1).is_some_and(|x| x.is_alphabetic() || *x == '_')
-            {
-                // a raw identifier (r#ring): the word after the `r#`, read as itself
-                i += 1;
-            } else if raw {
-                i += hashes + 1;
-                while i < c.len()
-                    && !(c[i] == '"' && (0..hashes).all(|k| c.get(i + 1 + k) == Some(&'#')))
-                {
-                    i += 1;
-                }
-                i += 1 + hashes;
-            } else {
-                out.push(word);
-            }
-        } else if ch == ':' && c.get(i + 1) == Some(&':') {
-            out.push("::".into());
-            i += 2;
-        } else {
-            if !ch.is_whitespace() {
-                out.push(ch.to_string());
-            }
-            i += 1;
+            Kind::P(c) => out.push(c.to_string()),
         }
+        k += 1;
     }
     out
 }
