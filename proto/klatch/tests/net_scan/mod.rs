@@ -15,6 +15,15 @@
 //! l`, a name imported alone, in braces or by glob); other network APIs by module path; resolvers; `extern` blocks that
 //! declare such a function, with or without an ABI string; any `#[link_name]`; inline assembly; a symbol looked up at
 //! run time; an alias of `Command` and a glob of `std::process`. The callers decide which findings a file may keep.
+//!
+//! **What this is and is not.** This is a tripwire over source text, not a proof that the crate opens no network
+//! connection and starts no unlisted program. A scan of text cannot see code that macros build from names (`$a::$b`,
+//! `fn $n`), a path that goes through `crate::`, `self::`, `super::` or a re-export (`pub use ::libc as sys`) defined in
+//! another file, `cfg_attr` that adds `link_name` or `path`, `include!(concat!(..))`, a build script that emits
+//! `cargo:rustc-cfg=test`, a symbol resolved at run time through a table, or a descriptor inherited from the parent. The
+//! real boundary is elsewhere: the dependency-tree tests (no networking crate in the tree, none in `Cargo.lock` outside the
+//! optional `jev-http` feature), review of every allowlist line (exact file, exact line, a reason), and the code review of
+//! what the tree does let in. A new evasion found is a ticket and, if cheap, a self-test here (#1787).
 #![allow(dead_code)]
 
 use std::collections::BTreeSet;
@@ -34,6 +43,32 @@ pub struct Tok {
     pub line: usize,
 }
 
+/// What rustc reads as white space: `Pattern_White_Space`, that is U+0009 to U+000D, U+0020, U+0085, U+200E, U+200F,
+/// U+2028 and U+2029. Not `char::is_whitespace`: that has U+00A0 and more, and lacks the two direction marks, which rustc
+/// skips like a space (`libc\u{200e}::socket` is `libc::socket`).
+pub fn is_rust_whitespace(c: char) -> bool {
+    matches!(
+        c,
+        '\u{9}'..='\u{d}' | ' ' | '\u{85}' | '\u{200e}' | '\u{200f}' | '\u{2028}' | '\u{2029}'
+    )
+}
+
+/// The length in characters of a shebang line at the start of the source, which rustc ignores: `#!` that is not the start
+/// of an inner attribute (`#![`, with white space allowed after the bang), and the rest of that first line. 0 if none.
+fn shebang_len(c: &[char]) -> usize {
+    if c.first() != Some(&'#') || c.get(1) != Some(&'!') {
+        return 0;
+    }
+    let mut j = 2;
+    while c.get(j).is_some_and(|x| is_rust_whitespace(*x)) {
+        j += 1;
+    }
+    if c.get(j) == Some(&'[') {
+        return 0;
+    }
+    c.iter().position(|x| *x == '\n').unwrap_or(c.len())
+}
+
 fn is_id_start(c: char) -> bool {
     c.is_alphabetic() || c == '_'
 }
@@ -47,7 +82,9 @@ fn is_id_char(c: char) -> bool {
 pub fn strip_comments(src: &str) -> String {
     let c: Vec<char> = src.chars().collect();
     let mut out = String::with_capacity(src.len());
-    let mut i = 0;
+    // a shebang is not code: blank it like a comment
+    let mut i = shebang_len(&c);
+    out.extend(std::iter::repeat_n(' ', i));
     while i < c.len() {
         let ch = c[i];
         if ch == '/' && c.get(i + 1) == Some(&'/') {
@@ -157,14 +194,15 @@ fn raw_string_at(c: &[char], i: usize) -> Option<(usize, String)> {
 pub fn tokenize(src: &str) -> Vec<Tok> {
     let c: Vec<char> = src.chars().collect();
     let mut out = Vec::new();
-    let (mut i, mut line) = (0, 1);
+    // a first-line shebang is skipped like rustc does
+    let (mut i, mut line) = (shebang_len(&c), 1);
     let mut push = |kind: Kind, line: usize| out.push(Tok { kind, line });
     while i < c.len() {
         let ch = c[i];
         if ch == '\n' {
             line += 1;
             i += 1;
-        } else if ch.is_whitespace() {
+        } else if is_rust_whitespace(ch) {
             i += 1;
         } else if ch == '/' && c.get(i + 1) == Some(&'/') {
             while i < c.len() && c[i] != '\n' {
@@ -303,6 +341,19 @@ fn close_of(t: &[Tok], open: usize) -> usize {
         }
     }
     t.len().saturating_sub(1)
+}
+
+/// The index of the token that closes the group opened at `open`, or `None` when it is never closed (a source that is not
+/// valid Rust).
+fn close_checked(t: &[Tok], open: usize) -> Option<usize> {
+    let close = close_of(t, open);
+    let want = match t.get(open).map(|x| &x.kind) {
+        Some(Kind::P('(')) => ')',
+        Some(Kind::P('[')) => ']',
+        Some(Kind::P('{')) => '}',
+        _ => return None,
+    };
+    (close > open && is_p(t, close, want)).then_some(close)
 }
 
 /// Expand one `use` tree that starts at `k` (after `use`, or after a `,` or `{` inside one) with `prefix`; returns the
@@ -644,6 +695,16 @@ pub fn findings(src: &str) -> Vec<Finding> {
             }
         }
     }
+    for k in 0..t.len() {
+        if is_p(&t, k, '#')
+            && (is_p(&t, k + 1, '[') || (is_p(&t, k + 1, '!') && is_p(&t, k + 2, '[')))
+        {
+            let open = if is_p(&t, k + 1, '[') { k + 1 } else { k + 2 };
+            if close_checked(&t, open).is_none() {
+                add(t[k].line, "an attribute that is never closed".to_string());
+            }
+        }
+    }
     for (k, tok) in t.iter().enumerate() {
         let Kind::Id(name) = &tok.kind else { continue };
         if RESOLVERS.contains(&name.as_str()) {
@@ -767,6 +828,56 @@ pub fn evasions() -> Vec<(&'static str, &'static str, String)> {
     let new = "src/some/new_file.rs";
     let s = |x: &str| x.to_string();
     let mut v: Vec<(&'static str, &'static str, String)> = vec![
+        (
+            "a shebang line holding a quote",
+            new,
+            s("#!/x\"\nfn f() { unsafe { libc::socket(1, 2, 3) }; }\n"),
+        ),
+        (
+            "a shebang with env",
+            new,
+            s("#!/usr/bin/env run\nuse libc::connect;\n"),
+        ),
+        (
+            "a left-to-right mark before ::",
+            new,
+            s("fn f() { unsafe { libc\u{200e}::socket(1, 2, 3) }; }\n"),
+        ),
+        (
+            "a right-to-left mark before ::",
+            new,
+            s("fn f() { unsafe { libc\u{200f}::connect(1, 2, 3) }; }\n"),
+        ),
+        (
+            "a mark after ::",
+            new,
+            s("fn f() { unsafe { libc::\u{200e}socket(1, 2, 3) }; }\n"),
+        ),
+        (
+            "a mark in a use list",
+            new,
+            s("use libc\u{200e}::{socket, connect};\n"),
+        ),
+        (
+            "a next-line character before ::",
+            new,
+            s("fn f() { unsafe { libc\u{85}::socket(1, 2, 3) }; }\n"),
+        ),
+        (
+            "a line separator before ::",
+            new,
+            s("fn f() { unsafe { libc\u{2028}::socket(1, 2, 3) }; }\n"),
+        ),
+        (
+            "a paragraph separator in a use",
+            new,
+            s("use libc\u{2029}::socket;\n"),
+        ),
+        (
+            "a mark in a network module path",
+            new,
+            s("use nix\u{200e}::sys::socket;\n"),
+        ),
         (
             "a // inside a string before the call",
             new,
@@ -1361,6 +1472,66 @@ pub fn lexer_cases() -> Vec<(
             vec![],
         ),
         (
+            "a shebang line holding a quote",
+            "#!/x\"\nlet a = 1;",
+            vec!["let", "a"],
+            vec![],
+        ),
+        (
+            "a shebang with env and no quote",
+            "#!/usr/bin/env run\nlet a = 1;",
+            vec!["let", "a"],
+            vec![],
+        ),
+        (
+            "an inner attribute is not a shebang",
+            "#![allow(dead_code)]\nlet a = 1;",
+            vec!["allow", "dead_code", "let", "a"],
+            vec![],
+        ),
+        (
+            "a shebang before an inner attribute",
+            "#!/usr/bin/env x\n#![allow(a)]\nz",
+            vec!["allow", "a", "z"],
+            vec![],
+        ),
+        (
+            "a #! that is not on the first line is not a shebang",
+            "x\n#!/y\"\nz\"",
+            vec!["x", "y"],
+            vec!["\nz"],
+        ),
+        (
+            "a left-to-right mark between words",
+            "a\u{200e}b",
+            vec!["a", "b"],
+            vec![],
+        ),
+        (
+            "a right-to-left mark between words",
+            "a\u{200f}b",
+            vec!["a", "b"],
+            vec![],
+        ),
+        (
+            "a next-line character between words",
+            "a\u{85}b",
+            vec!["a", "b"],
+            vec![],
+        ),
+        (
+            "a line separator between words",
+            "a\u{2028}b",
+            vec!["a", "b"],
+            vec![],
+        ),
+        (
+            "a paragraph separator between words",
+            "a\u{2029}b",
+            vec!["a", "b"],
+            vec![],
+        ),
+        (
             "a string over lines",
             "let s = \"a\\nb\"; after",
             vec!["let", "s", "after"],
@@ -1432,7 +1603,10 @@ pub fn mod_decls(src: &str) -> Vec<ModDecl> {
     let mut k = 0;
     while k < t.len() {
         if is_p(&t, k, '#') && is_p(&t, k + 1, '[') {
-            let close = close_of(&t, k + 1);
+            // an attribute that is never closed ends the reading (it is a finding of `findings`)
+            let Some(close) = close_checked(&t, k + 1) else {
+                break;
+            };
             pending.push(t[k + 2..close].iter().map(|x| kind_text(&x.kind)).collect());
             k = close + 1;
             continue;
@@ -1652,4 +1826,87 @@ pub fn crate_sources(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     }
     files.sort();
     files
+}
+
+/// Source that is not valid Rust must not panic the scanner: an attribute that is never closed is a finding, and nothing
+/// that follows can slice out of bounds.
+pub fn check_unclosed_attributes() {
+    for src in [
+        "#[",
+        "#[cfg(test",
+        "mod a; #[cfg(test",
+        "#![",
+        "mod a;\n#[path = \"x.rs\"",
+        "#[a] #[b",
+        "#[cfg(test)] mod t; #[",
+    ] {
+        let _ = tokenize(src);
+        let _ = mod_decls(src);
+        let _ = path_decls(src);
+        let _ = path_targets(src);
+        let _ = command_uses(src);
+        let _ = paths(&tokenize(src));
+        let f = findings(src);
+        assert!(
+            f.iter().any(|x| x.what.contains("never closed")),
+            "no finding for {src:?}: {f:?}"
+        );
+    }
+    // a closed attribute is no finding
+    assert!(
+        findings("#[cfg(test)] mod t;")
+            .iter()
+            .all(|x| !x.what.contains("never closed"))
+    );
+}
+
+/// The names this file gives the socket types in `types`: `use path::T as X`, `type X = path::T;` (any type whose
+/// definition names one), and an alias of an alias, to a fixed point. Only the file itself is read: an alias another
+/// file defines and re-exports is a known gap (#1787).
+pub fn type_aliases(src: &str, types: &[&str]) -> Vec<String> {
+    let t = tokenize(src);
+    let imports = paths(&t);
+    let mut known: Vec<String> = types.iter().map(|x| x.to_string()).collect();
+    let mut aliases: Vec<String> = Vec::new();
+    loop {
+        let mut grew = false;
+        for p in &imports {
+            if p.import
+                && !p.glob
+                && let (Some(last), Some(alias)) = (p.segs.last(), &p.alias)
+                && known.contains(last)
+                && !known.contains(alias)
+            {
+                known.push(alias.clone());
+                aliases.push(alias.clone());
+                grew = true;
+            }
+        }
+        for k in 0..t.len() {
+            if id(&t, k) == Some("type")
+                && !is_p(&t, k.wrapping_sub(1), '.')
+                && let Some(name) = id(&t, k + 1)
+                && let Some(eq) = (k + 2..t.len()).find(|&j| is_p(&t, j, '=') || is_p(&t, j, ';'))
+                && is_p(&t, eq, '=')
+                && let Some(end) = (eq..t.len()).find(|&j| is_p(&t, j, ';'))
+                && (eq..end).any(|j| id(&t, j).is_some_and(|x| known.iter().any(|y| y == x)))
+                && !known.iter().any(|y| y == name)
+            {
+                known.push(name.to_string());
+                aliases.push(name.to_string());
+                grew = true;
+            }
+        }
+        if !grew {
+            return aliases;
+        }
+    }
+}
+
+/// `assoc_calls` for `types` and for every name the file gives them (see `type_aliases`).
+pub fn assoc_calls_aliased(src: &str, types: &[&str], method: &str) -> Vec<usize> {
+    let aliases = type_aliases(src, types);
+    let mut all: Vec<&str> = types.to_vec();
+    all.extend(aliases.iter().map(String::as_str));
+    assoc_calls(src, &all, method)
 }

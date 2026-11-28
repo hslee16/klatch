@@ -2,6 +2,12 @@
 //! checks what the binary could do (its dependencies and its source), not what it did on one run, and it cannot prove a
 //! negative about code it does not read. What it pins is that nothing in klatch opens a network connection or runs a
 //! network program, and that the documents never tell anyone to pipe a downloaded script into a shell.
+//!
+//! A tripwire, not a proof (#1787): the scans read source text with a tokenizer (`tests/net_scan`), so they stop the
+//! obvious and the cheap evasions, and they cannot see what macros build from names, `crate::` or re-exported paths,
+//! `cfg_attr`, `include!(concat!(..))`, a build script that emits `cargo:rustc-cfg=test`, or symbols resolved at run time.
+//! The real boundary is the dependency-tree tests (no networking crate in the tree or in `Cargo.lock`), the exact-line
+//! allowlists with their reasons, and review. `net_scan/mod.rs` says the same at more length.
 
 mod net_scan;
 
@@ -1392,6 +1398,22 @@ fn programs_are_found_by_identifier_and_each_name_is_allowed_only_where_it_is_li
             "fn f() { Command::new(\"sh\").arg(\"-c\"); }\n",
         ),
         (
+            "a mark before ::",
+            "fn f() { Command\u{200e}::new(\"curl\"); }\n",
+        ),
+        (
+            "a mark after ::",
+            "fn f() { Command::\u{200f}new(\"curl\"); }\n",
+        ),
+        (
+            "a line separator in the call",
+            "fn f() { Command\u{2028}::new(\"curl\"); }\n",
+        ),
+        (
+            "a shebang line holding a quote",
+            "#!/x\"\nfn f() { Command::new(\"curl\"); }\n",
+        ),
+        (
             "a program with spaces around the path",
             "fn f() { Command :: new ( \"curl\" ); }\n",
         ),
@@ -1496,4 +1518,10 @@ fn a_declaration_is_read_from_tokens_and_must_be_the_only_one() {
     // the real parents still pass
     assert!(may_connect_unix_socket("src/client/socket.rs"));
     assert!(may_connect_tcp("src/client/http.rs"));
+}
+
+/// Source that is not valid Rust (an attribute never closed) is a finding, not a panic of the scanner (#1783).
+#[test]
+fn an_attribute_that_is_never_closed_is_a_finding_not_a_panic() {
+    net_scan::check_unclosed_attributes();
 }

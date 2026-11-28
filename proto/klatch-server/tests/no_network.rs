@@ -11,6 +11,12 @@
 //! after the loopback check; the Unix socket types and the peer-credential calls only in the daemon module, which has
 //! one `UnixListener::bind` and one `UnixStream::connect` (the probe of its own socket path that tells a live daemon from
 //! a dead one's file); no UDP, datagram socket, name resolution or HTTP client anywhere; no `Command`.
+//!
+//! A tripwire, not a proof (#1787): the scans read source text with a tokenizer (`tests/net_scan`), so they stop the
+//! obvious and the cheap evasions, and they cannot see what macros build from names, `crate::` or re-exported paths,
+//! `cfg_attr`, `include!(concat!(..))`, a build script that emits `cargo:rustc-cfg=test`, or symbols resolved at run time.
+//! The real boundary is the dependency-tree tests (no networking crate in the tree or in `Cargo.lock`), the exact-line
+//! allowlists with their reasons, and review. `net_scan/mod.rs` says the same at more length.
 
 mod scan_common;
 
@@ -105,19 +111,19 @@ fn token_problems(rel: &str, text: &str) -> Vec<String> {
     // a connect is allowed only in the loopback listener's own tests; the daemon probes its own Unix path
     if !is_in(rel, TEST_CLIENT) {
         for method in ["connect", "connect_timeout"] {
-            for line in net_scan::assoc_calls(text, TCP_STREAMS, method) {
+            for line in net_scan::assoc_calls_aliased(text, TCP_STREAMS, method) {
                 add(line, "opens an outbound connection");
             }
         }
         if !is_in(rel, DAEMON_ONLY) {
-            for line in net_scan::assoc_calls(text, &["UnixStream"], "connect") {
+            for line in net_scan::assoc_calls_aliased(text, &["UnixStream"], "connect") {
                 add(line, "opens an outbound connection");
             }
         }
     }
     // no listener but the one in `bind_loopback`
     if !is_in(rel, LOOPBACK_ONLY) {
-        for line in net_scan::assoc_calls(text, TCP_LISTENERS, "bind") {
+        for line in net_scan::assoc_calls_aliased(text, TCP_LISTENERS, "bind") {
             add(line, "binds a listener outside the loopback module");
         }
     }
@@ -196,7 +202,7 @@ fn there_is_exactly_one_bind_and_each_way_to_it_checks_the_address_first() {
     let binds: Vec<&str> = sources
         .iter()
         .flat_map(|(rel, text)| {
-            net_scan::assoc_calls(text, TCP_LISTENERS, "bind")
+            net_scan::assoc_calls_aliased(text, TCP_LISTENERS, "bind")
                 .into_iter()
                 .map(move |_| rel.as_str())
         })
@@ -266,12 +272,12 @@ fn the_daemon_module_has_one_unix_listener_one_probe_and_checks_the_peer_before_
     let count = |needle: &str| code.iter().filter(|l| l.contains(needle)).count();
     let code_text = code.join("\n");
     assert_eq!(
-        net_scan::assoc_calls(&code_text, &["UnixListener"], "bind").len(),
+        net_scan::assoc_calls_aliased(&code_text, &["UnixListener"], "bind").len(),
         1,
         "one listener"
     );
     assert_eq!(
-        net_scan::assoc_calls(&code_text, &["UnixStream"], "connect").len(),
+        net_scan::assoc_calls_aliased(&code_text, &["UnixStream"], "connect").len(),
         1,
         "one probe, of the daemon's own path"
     );
@@ -953,7 +959,7 @@ fn a_connect_or_a_bind_is_found_by_tokens_through_the_aliases_and_any_spacing() 
         assert!(!token_problems(rel, src).is_empty(), "not flagged: {what}");
     }
     // loopback.rs may bind, but the count of binds in it is read from tokens, so a second one in any spelling is seen
-    let count = |src: &str| net_scan::assoc_calls(src, TCP_LISTENERS, "bind").len();
+    let count = |src: &str| net_scan::assoc_calls_aliased(src, TCP_LISTENERS, "bind").len();
     assert_eq!(
         count(
             "TcpListener :: bind(a); <TcpListener>::bind(b); Listener::bind(c); loopback::Listener\n::\nbind(d);"
@@ -1092,4 +1098,112 @@ fn the_tokenizer_matches_rustc_and_ring_paths_uses_it() {
         ring_paths("let _a = cr\"\\\"; let _b = c\"\"; ring::rand::SystemRandom;"),
         ["rand"]
     );
+}
+
+/// A connect or a bind through any name the file gives a socket type is judged like the original (#1783): `use .. as`,
+/// `type X = ..`, an alias of an alias, for the loopback aliases and the std types.
+#[test]
+fn a_connect_or_a_bind_through_any_alias_name_is_judged_like_the_original() {
+    for (what, rel, src) in [
+        (
+            "a use rename of the Stream alias",
+            "src/wire_http.rs",
+            "use crate::loopback::Stream as S;\nfn f() { S::connect(\"evil:443\"); }\n",
+        ),
+        (
+            "a type alias of the Listener alias",
+            "src/wire_http.rs",
+            "type L = crate::loopback::Listener;\nfn f() { L::bind(\"0.0.0.0:80\"); }\n",
+        ),
+        (
+            "an alias of an alias",
+            "src/wire_http.rs",
+            "use crate::loopback::Stream as S;\ntype T = S;\nfn f() { T::connect(a); }\n",
+        ),
+        (
+            "a type alias of TcpStream",
+            "src/wire_http.rs",
+            "type C = std::net::TcpStream;\nfn f() { C::connect(a); }\n",
+        ),
+        (
+            "a use rename of TcpListener",
+            "src/wire_http.rs",
+            "use std::net::TcpListener as T;\nfn f() { T::bind(a); }\n",
+        ),
+        (
+            "a use rename inside braces",
+            "src/wire_http.rs",
+            "use std::net::{TcpStream as C, IpAddr};\nfn f() { C::connect(a); }\n",
+        ),
+        (
+            "a Unix alias",
+            "src/wire_http.rs",
+            "use std::os::unix::net::UnixStream as U;\nfn f() { U::connect(p); }\n",
+        ),
+        (
+            "a UFCS call through an alias",
+            "src/wire_http.rs",
+            "type L = crate::loopback::Listener;\nfn f() { <L>::bind(a); }\n",
+        ),
+    ] {
+        let found = token_problems(rel, src);
+        assert!(!found.is_empty(), "not flagged: {what}");
+    }
+    // the bind count sees the alias names too
+    let count = |src: &str| net_scan::assoc_calls_aliased(src, TCP_LISTENERS, "bind").len();
+    assert_eq!(
+        count("type L = Listener; fn f() { L::bind(a); Listener::bind(b); }"),
+        2
+    );
+    assert_eq!(
+        count("use std::net::TcpListener as T; type U = T; fn f() { U::bind(a); }"),
+        1
+    );
+    // an unrelated alias is not a socket
+    assert!(
+        token_problems(
+            "src/wire_http.rs",
+            "type M = std::collections::HashMap<u8, u8>;\nfn f() { M::new(); }\n"
+        )
+        .is_empty()
+    );
+}
+
+/// An invisible mark that rustc reads as white space, between path segments, hides nothing from the guard (#1783).
+#[test]
+fn a_whitespace_mark_between_path_segments_hides_no_socket_call() {
+    for (what, src) in [
+        (
+            "a mark before ::",
+            "fn f() { Stream\u{200e}::connect(\"evil:443\"); }\n",
+        ),
+        (
+            "a mark after ::",
+            "fn f() { Stream::\u{200f}connect(\"evil:443\"); }\n",
+        ),
+        (
+            "a bind",
+            "fn f() { Listener\u{200e}::bind(\"0.0.0.0:80\"); }\n",
+        ),
+        ("a Command", "fn f() { Command\u{200e}::new(\"curl\"); }\n"),
+        (
+            "a next-line character",
+            "fn f() { TcpStream\u{85}::connect(a); }\n",
+        ),
+        (
+            "a shebang line holding a quote",
+            "#!/x\"\nfn f() { TcpStream::connect(a); }\n",
+        ),
+    ] {
+        assert!(
+            !token_problems("src/wire_http.rs", src).is_empty(),
+            "not flagged: {what}"
+        );
+    }
+}
+
+/// Source that is not valid Rust (an attribute never closed) is a finding, not a panic of the scanner.
+#[test]
+fn an_attribute_that_is_never_closed_is_a_finding_not_a_panic() {
+    net_scan::check_unclosed_attributes();
 }
