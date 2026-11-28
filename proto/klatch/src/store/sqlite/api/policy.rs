@@ -4,7 +4,7 @@ use super::super::SqliteStore;
 use crate::domain::{AuditRecord, Error, RefusalRecord, Result};
 use crate::store::Census;
 use crate::store::PolicyStore;
-use crate::store::area::{is_proof_key, normalize_key};
+use crate::store::area::{audit_target, is_proof_key, normalize_key};
 use crate::store::{NewAudit, NewRefusal};
 use rusqlite::{Row, params};
 
@@ -96,10 +96,11 @@ impl PolicyStore for SqliteStore {
             // open transaction, so a loop of refused writes cannot fill the audit or the queue (#1588, #1701); what
             // was left out is one summary row for the minute (#1709)
             let nk = normalize_key(key);
-            if self.refusal_throttled(&nk, now) {
+            let target = audit_target(&nk);
+            if self.refusal_throttled(&nk, &target, now) {
                 self.note_throttled(now);
             } else {
-                self.audit_refusal("policy-reserved-refused", &nk, now);
+                self.audit_refusal("policy-reserved-refused", &target, now);
             }
             return Err(Error::Refused {
                 rule: "admin-passphrase-rows".into(),
@@ -276,8 +277,9 @@ impl SqliteStore {
     /// Whether a refusal of `key` at `now` is left unaudited: the key already has a row in the last minute, or it is
     /// not a real key and its family already has `FAMILY_CAP` rows of other keys. Written rows and rows queued in an
     /// open transaction both count; a row stamped after `now` (the clock stepped back) counts for neither, or it
-    /// would silence the audit (#1701).
-    fn refusal_throttled(&self, key: &str, now: i64) -> bool {
+    /// would silence the audit (#1701). `key` is the normalized key (family and real-key tests); `own_target` is
+    /// the sanitised form that is stored (#1755), which is what earlier rows are compared with.
+    fn refusal_throttled(&self, key: &str, own_target: &str, now: i64) -> bool {
         const ACTION: &str = "policy-reserved-refused";
         let fam = family(key);
         let (mut same, mut in_family) = self
@@ -287,7 +289,7 @@ impl SqliteStore {
                 params![
                     ACTION,
                     now - 60,
-                    key,
+                    own_target,
                     now,
                     fam,
                     crate::proof::VERIFIER_KEY,
@@ -302,7 +304,7 @@ impl SqliteStore {
         for (action, target, ts, _) in self.deferred_audit.borrow().iter() {
             if *action == ACTION && (now - 60..=now).contains(ts) && target.starts_with(fam) {
                 in_family += i64::from(!is_real_key(target));
-                same += i64::from(target == key);
+                same += i64::from(target == own_target);
             }
         }
         same > 0 || (!is_real_key(key) && in_family as u64 >= FAMILY_CAP)
