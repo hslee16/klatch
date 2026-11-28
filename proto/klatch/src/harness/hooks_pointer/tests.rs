@@ -143,13 +143,17 @@ fn a_settings_symlink_out_of_the_project_is_not_followed() {
 #[test]
 fn a_settings_symlink_inside_the_project_is_followed() {
     let f = fx();
-    fs::write(f.repo.join("shared.json"), HOOKS).unwrap();
+    // The target holds no hooks, so the pointer appears: a link refused outright would also show the
+    // pointer, so the second half proves the content behind the link is what is read.
+    fs::write(f.repo.join("shared.json"), "{}").unwrap();
     fs::create_dir_all(f.repo.join(".claude")).unwrap();
     std::os::unix::fs::symlink(
         f.repo.join("shared.json"),
         f.repo.join(".claude").join("settings.local.json"),
     )
     .unwrap();
+    assert!(ask(&f).is_some());
+    fs::write(f.repo.join("shared.json"), HOOKS).unwrap();
     assert_eq!(ask(&f), None);
 }
 
