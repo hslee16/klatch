@@ -138,8 +138,36 @@ fn a_reload_picks_up_a_changed_intermediates_file_and_refuses_a_crl_that_matches
 
     // the log of all of it names no subject, no serial and no content
     let log = r.dir.log();
-    for secret in ["inter a", "inter b", "1111", "2222", "BEGIN"] {
-        assert!(!log.contains(secret), "{secret:?} in:\n{log}");
+    if let Some(secret) = leaked(&log) {
+        panic!("{secret:?} in:\n{log}");
     }
     let _ = &r.files;
+}
+
+/// A secret the log of a reload names, if any. The line of the listening address holds a random port, which can contain
+/// the digits of a serial by chance (#1791), so that line is not searched.
+fn leaked(log: &str) -> Option<&'static str> {
+    let text: String = log
+        .lines()
+        .filter(|l| !l.contains(" listening on "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    ["inter a", "inter b", "1111", "2222", "BEGIN"]
+        .into_iter()
+        .find(|s| text.contains(s))
+}
+
+#[test]
+fn the_random_port_of_the_listening_line_is_not_a_leaked_serial() {
+    // #1791: a port such as 51111 or 62222 is not a serial in the log
+    for port in [51111, 62222] {
+        let log = format!("klatch-server: https listening on 127.0.0.1:{port}\n");
+        assert_eq!(leaked(&log), None, "{log}");
+    }
+    // while a serial or a subject in any other line is still found
+    assert_eq!(
+        leaked("x listening on 127.0.0.1:1\nreload failed 1111\n"),
+        Some("1111")
+    );
+    assert_eq!(leaked("a: inter b\n"), Some("inter b"));
 }
