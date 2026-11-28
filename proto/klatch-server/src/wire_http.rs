@@ -87,7 +87,7 @@ pub fn parse(args: &[&str]) -> Result<Options> {
             | "--stream-max-age-secs") => {
                 ws.take(flag, value(flag)?)?;
             }
-            other => bail!("unknown option {other} for http"),
+            other => bail!("unknown option {} for http", klatch::domain::shown(other)),
         }
     }
     Ok(Options {
@@ -535,6 +535,28 @@ mod tests {
         assert_eq!(
             parse(&["--listen", "[::1]:2"]).unwrap().max_connections,
             DEFAULT_MAX_CONNECTIONS
+        );
+    }
+}
+
+#[cfg(test)]
+mod echo_tests {
+    use super::*;
+
+    /// #1776: an unknown option the operator typed is echoed in the refusal; a terminal escape, a bidi override or a
+    /// zero-width character in it must not reach the terminal raw.
+    #[test]
+    fn an_unknown_option_is_echoed_escaped() {
+        let e = format!(
+            "{:#}",
+            parse(&["--bad\u{1b}[2J\u{202e}\u{200b}"])
+                .err()
+                .expect("an unknown option is refused")
+        );
+        assert!(e.contains("\\u{1b}"), "{e}");
+        assert!(
+            !e.chars().any(|c| c.is_control()) && !e.contains(['\u{202e}', '\u{200b}']),
+            "{e:?}"
         );
     }
 }

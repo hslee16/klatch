@@ -85,7 +85,10 @@ impl Secret {
             }
             (None, Some(name)) => {
                 let Some(value) = lookup(name) else {
-                    bail!("the environment variable {name} (--webhook-secret-env) is not set");
+                    bail!(
+                        "the environment variable {} (--webhook-secret-env) is not set",
+                        klatch::domain::shown(name)
+                    );
                 };
                 Secret::new(value.trim_end_matches(['\r', '\n']).as_bytes().to_vec())
                     .map_err(|_| anyhow::anyhow!("the environment variable {name} is empty"))
@@ -196,7 +199,7 @@ fn scan_flags<'a>(args: &[&'a str]) -> Result<RawArgs<'a>> {
             "--webhook-secret-file" => &mut raw.file,
             "--webhook-secret-env" => &mut raw.name,
             other if other.starts_with("--") && other.len() < 40 => {
-                bail!("unknown option {}", klatch::domain::flat(other))
+                bail!("unknown option {}", klatch::domain::shown(other))
             }
             _ => bail!(
                 "unexpected argument (the options are --webhook, --webhook-secret-file, --webhook-secret-env)"
@@ -452,4 +455,26 @@ pub fn setup(args: &[&str]) -> Result<Option<Bound>> {
         listener,
         secret: parsed.secret,
     }))
+}
+
+#[cfg(test)]
+mod echo_tests {
+    use super::*;
+
+    /// #1776: an unknown option the operator typed is echoed in the refusal; a terminal escape, a bidi override or a
+    /// zero-width character in it must not reach the terminal raw.
+    #[test]
+    fn an_unknown_option_is_echoed_escaped() {
+        let e = format!(
+            "{:#}",
+            scan_flags(&["--bad\u{1b}[2J\u{202e}\u{200b}"])
+                .err()
+                .expect("an unknown option is refused")
+        );
+        assert!(e.contains("\\u{1b}"), "{e}");
+        assert!(
+            !e.chars().any(|c| c.is_control()) && !e.contains(['\u{202e}', '\u{200b}']),
+            "{e:?}"
+        );
+    }
 }

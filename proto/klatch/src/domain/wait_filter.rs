@@ -30,10 +30,13 @@ fn dm_room_target(arg: &str, me: &str) -> Result<Option<String>, String> {
         None => (rest, None),
     };
     if !valid_name(name) {
-        return Err(format!("`{arg}` is not a member name; {DM_FORM}"));
+        return Err(format!(
+            "`{}` is not a member name; {DM_FORM}",
+            super::shown(arg)
+        ));
     }
     if name == me {
-        return Err(format!("`{arg}` is yourself; {DM_FORM}"));
+        return Err(format!("`{}` is yourself; {DM_FORM}", super::shown(arg)));
     }
     let room = super::dm_room(me, name);
     Ok(Some(match spec {
@@ -71,7 +74,7 @@ pub fn room_filters(args: &[String], global: &Filter) -> Result<Vec<(String, Fil
             None => (arg.as_str(), None),
         };
         if !valid_name(room) {
-            return Err(format!("`{arg}` is not a room; {FORM}"));
+            return Err(format!("`{}` is not a room; {FORM}", super::shown(arg)));
         }
         let at = match rooms.iter().position(|(r, _)| r == room) {
             Some(at) => at,
@@ -82,7 +85,7 @@ pub fn room_filters(args: &[String], global: &Filter) -> Result<Vec<(String, Fil
         };
         if let Some(spec) = spec {
             let f = rooms[at].1.get_or_insert_with(Filter::default);
-            add_spec(f, spec).map_err(|e| format!("`{arg}`: {e}; {FORM}"))?;
+            add_spec(f, spec).map_err(|e| format!("`{}`: {e}; {FORM}", super::shown(arg)))?;
         }
     }
     Ok(rooms
@@ -106,6 +109,31 @@ mod tests {
 
     fn args(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// #1776: a name the operator typed is echoed in the refusal; a terminal escape, a bidi override, a zero-width
+    /// character or a line break in it must not reach the terminal raw.
+    fn assert_escaped(e: &str, what: &str) {
+        assert!(e.contains("\\u{1b}"), "{what}: {e}");
+        assert!(
+            !e.chars().any(|c| c.is_control()) && !e.contains(['\u{202e}', '\u{200b}']),
+            "{what}: {e:?}"
+        );
+    }
+
+    #[test]
+    fn a_refused_argument_is_echoed_escaped() {
+        let h = "\u{1b}[2J\u{202e}\u{200b}\n";
+        for a in [format!("{h}x"), format!("lobby:{h}x")] {
+            let e = room_filters(&[a.clone()], &Filter::default()).unwrap_err();
+            assert_escaped(&e, &a);
+        }
+        for a in [format!("dm:{h}x"), format!("dm:{h}x:only=a")] {
+            let e = resolve_dm_targets(&[a.clone()], "me").unwrap_err();
+            assert_escaped(&e, &a);
+        }
+        let e = resolve_dm_targets(&["dm:me".to_string()], "me").unwrap_err();
+        assert!(e.contains("`dm:me` is yourself"), "{e}");
     }
 
     #[test]
