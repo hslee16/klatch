@@ -3,6 +3,8 @@
 //! negative about code it does not read. What it pins is that nothing in klatch opens a network connection or runs a
 //! network program, and that the documents never tell anyone to pipe a downloaded script into a shell.
 
+mod net_scan;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -68,20 +70,26 @@ fn declared_right_after(text: &str, attr: &str, decl: &str) -> bool {
     lines.windows(2).any(|w| w[0] == attr && w[1] == decl)
 }
 
-fn rust_sources() -> Vec<(PathBuf, String)> {
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        for e in std::fs::read_dir(dir).unwrap().flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                walk(&p, out);
-            } else if p.extension().is_some_and(|x| x == "rs") {
-                out.push(p);
+fn walk_rs(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in read.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            if p.file_name()
+                .is_some_and(|n| n == "target" || n == "corpus" || n == "artifacts")
+            {
+                continue;
             }
+            walk_rs(&p, out);
+        } else if p.extension().is_some_and(|x| x == "rs") {
+            out.push(p);
         }
     }
-    let mut files = Vec::new();
-    walk(&manifest("src"), &mut files);
-    files.sort();
+}
+
+fn read_all(files: Vec<PathBuf>) -> Vec<(PathBuf, String)> {
     files
         .into_iter()
         .map(|p| {
@@ -89,6 +97,28 @@ fn rust_sources() -> Vec<(PathBuf, String)> {
             (p, text)
         })
         .collect()
+}
+
+/// The shipped source: `src`.
+fn rust_sources() -> Vec<(PathBuf, String)> {
+    let mut files = Vec::new();
+    walk_rs(&manifest("src"), &mut files);
+    files.sort();
+    read_all(files)
+}
+
+/// Everything Rust that this crate builds or runs: `src`, `build.rs` (which runs on the machine of whoever installs it),
+/// `tests` and `fuzz` (#1783).
+fn all_sources() -> Vec<(PathBuf, String)> {
+    let mut files = Vec::new();
+    for d in ["src", "tests", "fuzz"] {
+        walk_rs(&manifest(d), &mut files);
+    }
+    if manifest("build.rs").is_file() {
+        files.push(manifest("build.rs"));
+    }
+    files.sort();
+    read_all(files)
 }
 
 const NETWORK: &[&str] = &[
@@ -117,6 +147,8 @@ const NETWORK: &[&str] = &[
     "hickory-resolver",
     "trust-dns-resolver",
     "reqwest-middleware",
+    "nix",
+    "rustix",
 ];
 
 #[test]
@@ -309,16 +341,16 @@ fn the_source_opens_no_socket_and_runs_only_the_programs_it_is_known_to_run() {
     let mut problems = Vec::new();
     for (path, text) in rust_sources() {
         let rel = rel_of(&path);
-        for (n, line) in text.lines().enumerate() {
-            let code = line.split("//").next().unwrap_or("");
-            let at = format!("{rel}:{}", n + 1);
+        // identifiers and `Command::new` calls come from the tokenizer: a `//` in a string hides nothing
+        for (line, name) in net_scan::ids(&text) {
+            if SOCKETS.contains(&name.as_str()) && !socket_allowed(&rel, &name) {
+                problems.push(format!("{rel}:{line}: uses {name}"));
+            }
+        }
+        for (line, code) in net_scan::command_new_calls(&text) {
             problems.extend(
-                SOCKETS
-                    .iter()
-                    .filter(|s| code.contains(*s) && !socket_allowed(&rel, s))
-                    .map(|s| format!("{at}: uses {s}")),
+                command_problem(&rel, &code, PROGRAMS).map(|p| format!("{rel}:{line}: {p}")),
             );
-            problems.extend(command_problem(&rel, code, PROGRAMS).map(|p| format!("{at}: {p}")));
         }
     }
     assert!(
@@ -327,76 +359,6 @@ fn the_source_opens_no_socket_and_runs_only_the_programs_it_is_known_to_run() {
         problems.join("\n")
     );
 }
-
-/// The `libc` calls that make, connect, bind, listen on, accept on, send or receive through a socket, or resolve a name
-/// (#1771). A socket made through one of them names no socket type, so the type-name list (`SOCKETS`) cannot see it.
-const LIBC_NET_CALLS: &[&str] = &[
-    "socket",
-    "socketpair",
-    "connect",
-    "bind",
-    "listen",
-    "accept",
-    "accept4",
-    "sendto",
-    "sendmsg",
-    "sendmmsg",
-    "recvfrom",
-    "recvmsg",
-    "recvmmsg",
-    "send",
-    "recv",
-    "getaddrinfo",
-    "getnameinfo",
-    "gethostbyname",
-    "gethostbyaddr",
-    "getsockname",
-    "getpeername",
-    "setsockopt",
-    "getsockopt",
-    "shutdown",
-];
-
-/// `libc` names that only a socket user needs: address families, socket types, protocols, option levels and options,
-/// message flags, and the address and message structs. A prefix of the name after `libc::`.
-const LIBC_NET_PREFIXES: &[&str] = &[
-    "AF_",
-    "PF_",
-    "SOCK_",
-    "IPPROTO_",
-    "SOL_",
-    "SO_",
-    "MSG_",
-    "sockaddr",
-    "in_addr",
-    "in6_addr",
-    "addrinfo",
-    "msghdr",
-    "cmsghdr",
-    "ip_mreq",
-    "ipv6_mreq",
-];
-
-/// Modules and crates of other network APIs, as they are written in a path.
-const NET_MODULES: &[&str] = &[
-    "nix::sys::socket",
-    "rustix::net",
-    "socket2",
-    "tokio::net",
-    "mio::net",
-    "async_std::net",
-    "smol::net",
-];
-
-/// Names that look a host up or turn a name into an address.
-const RESOLVERS: &[&str] = &[
-    "getaddrinfo",
-    "gethostbyname",
-    "getnameinfo",
-    "to_socket_addrs",
-    "ToSocketAddrs",
-    "lookup_host",
-];
 
 /// A use of an OS-level network call that is allowed, by exact file and exact line, with the reason. `test_only` needs
 /// the file to be declared `#[cfg(test)] mod name;` by its parent, so it is never part of a shipped binary. Nothing
@@ -409,14 +371,31 @@ struct NetAllowance {
     reason: &'static str,
 }
 
-const NET_ALLOWED: &[NetAllowance] = &[NetAllowance {
-    file: "src/harness/hooks_pointer/tests.rs",
-    line: "unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) },",
-    test_only: true,
-    reason: "the #1770 fixture: an unnamed pair of connected Unix sockets inside the test process, used only to hand the \
+const NET_ALLOWED: &[NetAllowance] = &[
+    NetAllowance {
+        file: "tests/harness_peer_identity.rs",
+        line: "use std::os::unix::net::{UnixListener, UnixStream};",
+        test_only: true,
+        reason: "an integration test (experiment 14.3, #29) of the peer-pid lookup: it listens on a Unix socket in its own \
+                 temporary directory and connects to it from the same test, so the pid of a local process can be read; it \
+                 is a test crate, never part of a shipped binary, and no network is involved",
+    },
+    NetAllowance {
+        file: "tests/harness_peer_identity.rs",
+        line: "fn getsockopt(",
+        test_only: true,
+        reason: "the same test: getsockopt(LOCAL_PEERPID or SO_PEERCRED) on that local Unix socket, to learn the pid at the \
+                 other end; it declares the one function it calls and nothing that opens, binds or connects a socket",
+    },
+    NetAllowance {
+        file: "src/harness/hooks_pointer/tests.rs",
+        line: "unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) },",
+        test_only: true,
+        reason: "the #1770 fixture: an unnamed pair of connected Unix sockets inside the test process, used only to hand the \
              hooks-pointer reader a socket file handle so its type check can be tested; no name, no address, nothing \
              leaves the process",
-}];
+    },
+];
 
 fn net_allowance_for<'a>(
     rel: &str,
@@ -427,156 +406,55 @@ fn net_allowance_for<'a>(
         a.file == rel
             && a.line == code.trim()
             && (!a.test_only
+                || rel.starts_with("tests/")
                 || parent(rel).is_some_and(|text| declared_under_cfg_test(&text, module_name(rel))))
     })
 }
 
-fn is_ident(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_'
+/// The files a test-only allowance names: a `#[path]` or `include!` that reaches one of them from shipped code would
+/// pull a test fixture, or a spawner, into a shipped binary (#1783).
+fn protected_files() -> Vec<&'static str> {
+    NET_ALLOWED
+        .iter()
+        .map(|a| a.file)
+        .chain(TEST_ONLY_SPAWNERS.iter().copied())
+        .chain(TEST_ONLY_LOOPBACK_SERVERS.iter().copied())
+        .collect()
 }
 
-/// Whether `code` holds `word` as a whole identifier (not inside a longer one).
-fn has_word(code: &str, word: &str) -> bool {
-    code.match_indices(word).any(|(i, _)| {
-        !code[..i].chars().next_back().is_some_and(is_ident)
-            && !code[i + word.len()..].chars().next().is_some_and(is_ident)
-    })
-}
-
-/// What a name imported from `libc` or declared in an `extern` block is, if it is a network name.
-fn is_libc_net_name(name: &str) -> bool {
-    name == "*"
-        || LIBC_NET_CALLS.contains(&name)
-        || LIBC_NET_PREFIXES.iter().any(|p| name.starts_with(p))
-}
-
-/// The identifiers (and `*`) of a `use libc::...;` statement starting at `from`.
-fn imported_names(rest: &str) -> Vec<String> {
-    let stmt = rest.split(';').next().unwrap_or("");
-    let mut names = Vec::new();
-    let mut cur = String::new();
-    for c in stmt.chars().chain(std::iter::once(' ')) {
-        if is_ident(c) || c == '*' {
-            cur.push(c);
-        } else if !cur.is_empty() {
-            names.push(std::mem::take(&mut cur));
-        }
-    }
-    names
-}
-
-/// The functions declared in the `extern "..." { }` blocks of `text`, with the line each is on.
-fn extern_declared_fns(text: &str) -> Vec<(usize, String)> {
-    let mut out = Vec::new();
-    let mut from = 0;
-    while let Some(i) = text[from..].find("extern \"") {
-        let at = from + i;
-        let after = &text[at..];
-        // `extern "C" {` (a block), not `extern "C" fn` (a callback)
-        let head_end = after.find(['{', ';', '(']).unwrap_or(after.len());
-        let head = &after[..head_end];
-        if after[head_end..].starts_with('{') && !head.contains(" fn ") {
-            let mut depth = 0;
-            let mut end = after.len();
-            for (k, c) in after[head_end..].char_indices() {
-                match c {
-                    '{' => depth += 1,
-                    '}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            end = head_end + k;
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            let block = &after[head_end..end];
-            for (k, _) in block.match_indices("fn ") {
-                let name: String = block[k + 3..]
-                    .chars()
-                    .take_while(|c| is_ident(*c))
-                    .collect();
-                let line = text[..at + head_end + k].matches('\n').count() + 1;
-                out.push((line, name));
-            }
-        }
-        from = at + 8;
-    }
-    out
-}
-
-/// OS-level network calls and names in one source file (#1771): `libc` calls by path or by import, `libc` socket
-/// constants and structs, an `extern` declaration of one, other network APIs by module path, resolvers, and the socket
-/// type names of `SOCKETS`. A line with an allowance (`NET_ALLOWED`) is not a problem.
+/// OS-level network calls and names in one source file (#1771, #1783): what `net_scan::findings` reports, the socket type
+/// names of `SOCKETS` (in `src` only; the integration tests are test code and test the client), and a `#[path]` or
+/// `include!` that names a protected test-only file. A line with an allowance (`NET_ALLOWED`) is not a problem.
 fn net_problems(rel: &str, text: &str, parent: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
+    let lines: Vec<&str> = text.lines().collect();
     let mut problems = Vec::new();
-    let mut report = |line: usize, what: String, code: &str| {
-        if net_allowance_for(rel, code, parent).is_none() {
-            problems.push(format!("{rel}:{line}: {what}: {}", code.trim()));
+    let mut report = |line: usize, what: String| {
+        let raw = lines.get(line.wrapping_sub(1)).copied().unwrap_or("");
+        if net_allowance_for(rel, raw, parent).is_none() {
+            problems.push(format!("{rel}:{line}: {what}: {}", raw.trim()));
         }
     };
-    let lines: Vec<&str> = text.lines().collect();
-    let code_of = |l: &str| l.split("//").next().unwrap_or("").to_string();
-    for (n, raw) in lines.iter().enumerate() {
-        let code = code_of(raw);
-        let at = n + 1;
-        for call in LIBC_NET_CALLS {
-            if has_word(&code, &format!("libc::{call}")) {
-                report(at, format!("libc::{call}"), &code);
-            }
-        }
-        for prefix in LIBC_NET_PREFIXES {
-            let want = format!("libc::{prefix}");
-            if code
-                .match_indices(&want)
-                .any(|(i, _)| !code[..i].chars().next_back().is_some_and(is_ident))
-            {
-                report(at, format!("{want}..."), &code);
-            }
-        }
-        for module in NET_MODULES {
-            if code.contains(module) {
-                report(at, format!("the network API {module}"), &code);
-            }
-        }
-        if code.contains("os::unix::net") && !may_connect_unix_socket(rel) {
-            report(at, "std::os::unix::net".to_string(), &code);
-        }
-        for name in RESOLVERS {
-            if has_word(&code, name) {
-                report(at, format!("the resolver {name}"), &code);
-            }
-        }
-        for socket in SOCKETS {
-            if has_word(&code, socket) && !socket_allowed(rel, socket) {
-                report(at, format!("the socket type {socket}"), &code);
-            }
-        }
-    }
-    // `use libc::name;` and `use libc::{a, b as c};`, on one line or several
-    for (i, _) in text.match_indices("use libc::") {
-        let before = &text[..i];
-        if before.chars().next_back().is_some_and(is_ident) {
+    for f in net_scan::findings(text) {
+        if f.what == "std::os::unix::net" && may_connect_unix_socket(rel) {
             continue;
         }
-        let line = before.matches('\n').count();
-        if code_of(lines.get(line).copied().unwrap_or(""))
-            .trim()
-            .is_empty()
-        {
-            continue; // the statement is in a comment
-        }
-        let names = imported_names(&text[i + "use libc::".len()..]);
-        if let Some(bad) = names.iter().find(|n| is_libc_net_name(n)) {
-            let first = code_of(lines.get(line).copied().unwrap_or(""));
-            report(line + 1, format!("use libc::{bad}"), &first);
+        report(f.line, f.what);
+    }
+    if rel.starts_with("src/") {
+        for (line, name) in net_scan::ids(text) {
+            if SOCKETS.contains(&name.as_str()) && !socket_allowed(rel, &name) {
+                report(line, format!("the socket type {name}"));
+            }
         }
     }
-    for (line, name) in extern_declared_fns(text) {
-        if LIBC_NET_CALLS.contains(&name.as_str()) {
-            let code = code_of(lines.get(line - 1).copied().unwrap_or(""));
-            report(line, format!("an extern declaration of {name}"), &code);
+    let protected = protected_files();
+    for (line, target) in net_scan::path_targets(text) {
+        let resolved = net_scan::resolve_relative(rel, &target);
+        if protected.contains(&resolved.as_str()) {
+            report(
+                line,
+                format!("a #[path] or include! of the test-only file {resolved}"),
+            );
         }
     }
     problems.sort();
@@ -690,32 +568,67 @@ fn every_network_pattern_is_flagged_in_a_throwaway_source() {
     }
 }
 
-/// Plain code that must not be flagged: comments, strings that are not code, and libc calls that make no network use.
+/// Every way past the first version of the guard (#1783) is reported, in a file with no allowance.
 #[test]
-fn ordinary_libc_use_and_comments_are_not_flagged() {
+fn every_evasion_of_the_first_guard_is_flagged() {
     let never = |_: &str| None;
-    for src in [
-        "// libc::socket(a, b, c) is what the guard looks for\nfn f() {}\n",
-        "/// a doc line that says libc::connect\nfn f() {}\n",
-        "fn f() { let _ = unsafe { libc::mkfifo(p, 0o600) }; }\n",
-        "fn f() { let _ = unsafe { libc::tcgetsid(fd) }; }\n",
-        "use libc::{c_int, pid_t};\n",
-        "extern \"C\" fn restore(sig: libc::c_int) {}\n",
-        "fn socket_path() -> PathBuf { PathBuf::new() }\nfn connect_timeout() {}\n",
-        "let bind_address = 1; let listen_port = 2; let accept_all = true;\n",
-        "use std::net::{IpAddr, SocketAddr};\n",
-    ] {
-        assert!(
-            net_problems("src/some/new_file.rs", src, &never).is_empty(),
-            "{src}"
-        );
+    for (what, file, src) in net_scan::evasions() {
+        let found = net_problems(file, &src, &never);
+        assert!(!found.is_empty(), "not flagged: {what}:\n{src}");
     }
+}
+
+/// Words in strings and comments, and libc names that make no network use, are not reported.
+#[test]
+fn comments_strings_and_ordinary_libc_use_are_not_flagged() {
+    let never = |_: &str| None;
+    for (what, src) in net_scan::clean_sources() {
+        let found = net_problems("src/some/new_file.rs", &src, &never);
+        assert!(found.is_empty(), "flagged: {what}: {found:?}");
+    }
+}
+
+/// The scanner reads a source as tokens: what a line search could not.
+#[test]
+fn the_scanner_reads_tokens_not_lines() {
+    use net_scan::*;
+    // a // in a string does not hide the rest of the line, and a comment does not make code
+    let f = findings("let _u = \"//\"; unsafe { libc::connect(1, 2, 3) }; // libc::bind\n");
+    assert_eq!(f.len(), 1, "{f:?}");
+    assert!(f[0].what.contains("connect"));
+    // the line of a finding is the line of the token, across a split path
+    let f = findings(
+        "fn f() {\n    unsafe {\n        libc\n            ::\n            socket(1, 2, 3)\n    };\n}\n",
+    );
+    assert_eq!(f.iter().map(|x| x.line).collect::<Vec<_>>(), [3]);
+    // an alias is followed, and only libc's own aliases
+    assert_eq!(
+        findings("use libc as l;\nfn f() { l::socket(1, 2, 3); }\n").len(),
+        1
+    );
+    assert!(findings("use other as l;\nfn f() { l::socket(1, 2, 3); }\n").is_empty());
+    // comments are stripped with the line count kept, strings stay
+    assert_eq!(
+        strip_comments("a // x\nb /* y\nz */ c \"//\"\n")
+            .lines()
+            .count(),
+        3
+    );
+    assert!(strip_comments("let u = \"//\"; // x\n").contains("\"//\""));
+    assert!(!strip_comments("let u = 1; // x\n").contains('x'));
+    // a #[path] and an include! are resolved against the file that names them
+    assert_eq!(
+        path_targets("#[path = \"a/b.rs\"] mod m;\ninclude!(\"c.rs\");\n"),
+        [(1, "a/b.rs".to_string()), (2, "c.rs".to_string())]
+    );
+    assert_eq!(resolve_relative("src/x/y.rs", "../z/w.rs"), "src/z/w.rs");
+    assert_eq!(resolve_relative("src/x.rs", "x/w.rs"), "src/x/w.rs");
 }
 
 #[test]
 fn the_source_makes_no_os_level_network_call() {
     let mut problems = Vec::new();
-    for (path, text) in rust_sources() {
+    for (path, text) in all_sources() {
         problems.extend(net_problems(&rel_of(&path), &text, &parent_text));
     }
     assert!(
@@ -744,8 +657,10 @@ fn every_network_allowance_matches_exactly_one_real_line() {
             a.file
         );
         assert!(
-            parent_text(a.file).is_some_and(|t| declared_under_cfg_test(&t, module_name(a.file))),
-            "{}: not declared #[cfg(test)] by its parent",
+            a.file.starts_with("tests/")
+                || parent_text(a.file)
+                    .is_some_and(|t| declared_under_cfg_test(&t, module_name(a.file))),
+            "{}: not a test crate and not declared #[cfg(test)] by its parent",
             a.file
         );
     }
@@ -753,88 +668,127 @@ fn every_network_allowance_matches_exactly_one_real_line() {
 
 /// The allowance is for one line of one file, declared one way. It is the whole list, and growing it is a deliberate act.
 #[test]
-fn the_network_allowance_is_one_line_and_covers_nothing_else() {
+fn the_network_allowance_is_three_exact_lines_and_covers_nothing_else() {
     assert_eq!(
         NET_ALLOWED.len(),
-        1,
+        3,
         "a new allowance needs a review and this number changed"
     );
-    let a = &NET_ALLOWED[0];
     let declared = |_: &str| Some("#[cfg(test)]\nmod tests;\n".to_string());
     let plain = |_: &str| Some("mod tests;\n".to_string());
     let none = |_: &str| None;
-    let text = format!("    {}\n", a.line);
-    // the exact line in the exact file, declared under cfg(test): allowed
-    assert!(net_problems(a.file, &text, &declared).is_empty());
-    // the same line in any other file, or the same file declared without cfg(test) or not declared: flagged
-    for other in [
-        "src/harness/hooks_pointer.rs",
-        "src/harness/other/tests.rs",
-        "src/x/src/harness/hooks_pointer/tests.rs",
-    ] {
-        assert!(!net_problems(other, &text, &declared).is_empty(), "{other}");
-    }
-    assert!(
-        !net_problems(a.file, &text, &plain).is_empty(),
-        "declared without cfg(test)"
-    );
-    assert!(
-        !net_problems(a.file, &text, &none).is_empty(),
-        "not declared"
-    );
-    // another network call in the allowed file is flagged
-    for call in [
-        "libc::connect(fd, a, 3)",
-        "libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0)",
-        "libc::socketpair(1, 2, 3, p)",
-    ] {
+    for a in NET_ALLOWED {
+        // the exact line in the exact file is allowed; the same line elsewhere is not
         assert!(
-            !net_problems(a.file, &format!("    {call}\n"), &declared).is_empty(),
-            "{call}"
+            net_allowance_for(a.file, &format!("    {}  ", a.line), &declared).is_some(),
+            "{}",
+            a.line
         );
-    }
-    // a changed line (another family, or a second call on the line) is flagged
-    for changed in [
-        a.line.replace("AF_UNIX", "AF_INET"),
-        format!("{} libc::connect(1, 2, 3);", a.line),
-        a.line.replace("SOCK_STREAM", "SOCK_DGRAM"),
-    ] {
-        assert!(
-            !net_problems(a.file, &format!("    {changed}\n"), &declared).is_empty(),
-            "{changed}"
-        );
+        for other in [
+            "src/harness/hooks_pointer.rs",
+            "src/harness/other/tests.rs",
+            "src/x/src/harness/hooks_pointer/tests.rs",
+            "tests/other.rs",
+            "src/tests/harness_peer_identity.rs",
+        ] {
+            assert!(
+                net_allowance_for(other, a.line, &declared).is_none(),
+                "{other}: {}",
+                a.line
+            );
+        }
+        // a changed line, or a second call on it, is not the allowed line
+        for changed in [
+            format!("{} libc::connect(1, 2, 3);", a.line),
+            format!("{}x", a.line),
+            a.line
+                .replace("net::", "net2::")
+                .replace("AF_UNIX", "AF_INET")
+                .replace("SOCK_STREAM", "SOCK_DGRAM"),
+        ] {
+            if changed != a.line {
+                assert!(
+                    net_allowance_for(a.file, &changed, &declared).is_none(),
+                    "{changed}"
+                );
+            }
+        }
+        // a module file needs its parent to declare it under cfg(test); a test crate (under tests/) is its own root
+        if !a.file.starts_with("tests/") {
+            assert!(
+                net_allowance_for(a.file, a.line, &plain).is_none(),
+                "declared without cfg(test)"
+            );
+            assert!(
+                net_allowance_for(a.file, a.line, &none).is_none(),
+                "not declared"
+            );
+        }
+        // and every other network call in the allowed file is still a problem
+        for call in [
+            "fn f() { unsafe { libc::connect(fd, a, 3) }; }",
+            "fn f() { unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) }; }",
+            "fn f() { unsafe { libc::socketpair(1, 2, 3, p) }; }",
+            "fn f() { unsafe { libc::syscall(41) }; }",
+        ] {
+            assert!(
+                !net_problems(a.file, &format!("{call}\n"), &declared).is_empty(),
+                "{call}"
+            );
+        }
     }
 }
 
 /// The calls the ticket names are in the list: dropping one makes this fail (and its throwaway snippet too).
 #[test]
 fn the_network_pattern_lists_keep_the_calls_they_must_catch() {
+    use net_scan::*;
     for call in [
         "socket",
         "socketpair",
         "connect",
+        "connectx",
         "bind",
         "listen",
         "accept",
+        "paccept",
         "sendto",
         "sendmsg",
+        "sendmsg_x",
         "recvfrom",
         "recvmsg",
         "getaddrinfo",
+        "getifaddrs",
+        "res_init",
+        "syscall",
     ] {
         assert!(LIBC_NET_CALLS.contains(&call), "{call}");
     }
-    for prefix in ["AF_", "SOCK_", "IPPROTO_", "sockaddr"] {
+    for call in ["execvp", "system", "popen", "posix_spawnp", "fexecve"] {
+        assert!(LIBC_SPAWN_CALLS.contains(&call), "{call}");
+    }
+    for prefix in [
+        "AF_", "SOCK_", "IPPROTO_", "sockaddr", "SYS_", "INADDR_", "NETLINK_", "SIOC", "SO_",
+        "MSG_", "PF_",
+    ] {
         assert!(LIBC_NET_PREFIXES.contains(&prefix), "{prefix}");
     }
-    for module in ["tokio::net", "mio::net", "socket2", "nix::sys::socket"] {
-        assert!(NET_MODULES.contains(&module), "{module}");
+    assert!(LIBC_NET_NAMES.contains(&"socklen_t"));
+    for module in [
+        ["tokio", "net"].as_slice(),
+        &["mio", "net"],
+        &["socket2"],
+        &["nix", "sys", "socket"],
+        &["rustix", "net"],
+    ] {
+        assert!(NET_MODULES.contains(&module), "{module:?}");
     }
     for name in [
         "ToSocketAddrs",
         "lookup_host",
         "getaddrinfo",
         "to_socket_addrs",
+        "getnameinfo",
     ] {
         assert!(RESOLVERS.contains(&name), "{name}");
     }
@@ -872,6 +826,7 @@ fn std_net_is_only_used_to_read_addresses() {
         if may_open_loopback_socket(&rel) {
             continue;
         }
+        let text = net_scan::strip_comments(&text);
         for line in text.lines().filter(|l| l.contains("std::net")) {
             assert!(
                 socket_item_in(&rel, line).is_none(),
