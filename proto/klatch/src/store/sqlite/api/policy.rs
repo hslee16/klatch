@@ -102,10 +102,12 @@ impl PolicyStore for SqliteStore {
             } else {
                 self.audit_refusal("policy-reserved-refused", &target, now);
             }
+            // the caller reads the key capped and escaped like the audit target, as typed (case kept)
+            let shown = audit_target(key);
             return Err(Error::Refused {
                 rule: "admin-passphrase-rows".into(),
                 reason: format!(
-                    "the policy key {key} belongs to the admin passphrase and is changed only by `klatch admin` passphrase commands"
+                    "the policy key {shown} belongs to the admin passphrase and is changed only by `klatch admin` passphrase commands"
                 ),
             });
         }
