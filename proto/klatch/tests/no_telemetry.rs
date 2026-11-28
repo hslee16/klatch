@@ -64,12 +64,6 @@ fn feature_bodies() -> std::collections::BTreeMap<String, String> {
     bodies
 }
 
-/// Whether `lines` has `decl` directly after the line `attr`.
-fn declared_right_after(text: &str, attr: &str, decl: &str) -> bool {
-    let lines: Vec<&str> = text.lines().map(str::trim).collect();
-    lines.windows(2).any(|w| w[0] == attr && w[1] == decl)
-}
-
 fn walk_rs(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(read) = std::fs::read_dir(dir) else {
         return;
@@ -77,11 +71,6 @@ fn walk_rs(dir: &Path, out: &mut Vec<PathBuf>) {
     for e in read.flatten() {
         let p = e.path();
         if p.is_dir() {
-            if p.file_name()
-                .is_some_and(|n| n == "target" || n == "corpus" || n == "artifacts")
-            {
-                continue;
-            }
             walk_rs(&p, out);
         } else if p.extension().is_some_and(|x| x == "rs") {
             out.push(p);
@@ -99,26 +88,11 @@ fn read_all(files: Vec<PathBuf>) -> Vec<(PathBuf, String)> {
         .collect()
 }
 
-/// The shipped source: `src`.
-fn rust_sources() -> Vec<(PathBuf, String)> {
-    let mut files = Vec::new();
-    walk_rs(&manifest("src"), &mut files);
-    files.sort();
-    read_all(files)
-}
-
 /// Everything Rust that this crate builds or runs: `src`, `build.rs` (which runs on the machine of whoever installs it),
-/// `tests` and `fuzz` (#1783).
+/// `tests` and `fuzz` (#1783). Only the build output is skipped, where cargo puts it (`net_scan::crate_sources`); a
+/// directory named `target` under `src` is source and is read.
 fn all_sources() -> Vec<(PathBuf, String)> {
-    let mut files = Vec::new();
-    for d in ["src", "tests", "fuzz"] {
-        walk_rs(&manifest(d), &mut files);
-    }
-    if manifest("build.rs").is_file() {
-        files.push(manifest("build.rs"));
-    }
-    files.sort();
-    read_all(files)
+    read_all(net_scan::crate_sources(&manifest("")))
 }
 
 const NETWORK: &[&str] = &[
@@ -233,10 +207,10 @@ const CLIENT_SOCKET_FILE: &str = "src/client/socket.rs";
 fn may_connect_unix_socket(rel: &str) -> bool {
     rel == CLIENT_SOCKET_FILE
         && parent_text(rel).is_some_and(|text| {
-            declared_right_after(
+            net_scan::declared_with_attr(
                 &text,
-                "#[cfg(all(unix, feature = \"client-socket\"))]",
-                "mod socket;",
+                "socket",
+                "cfg(all(unix, feature = \"client-socket\"))",
             )
         })
 }
@@ -251,7 +225,7 @@ const CLIENT_HTTP_FILE: &str = "src/client/http.rs";
 fn may_connect_tcp(rel: &str) -> bool {
     rel == CLIENT_HTTP_FILE
         && parent_text(rel).is_some_and(|text| {
-            declared_right_after(&text, "#[cfg(feature = \"client-http\")]", "mod http;")
+            net_scan::declared_with_attr(&text, "http", "cfg(feature = \"client-http\")")
         })
 }
 
@@ -264,18 +238,10 @@ fn parent_text(rel: &str) -> Option<String> {
         .find_map(|p| std::fs::read_to_string(manifest(p)).ok())
 }
 
-/// Whether `text` declares `mod name;` directly under `#[cfg(test)]` (other attributes may sit between them).
+/// Whether `text` declares `mod name;` exactly once, directly under `#[cfg(test)]` (other attributes may sit between them),
+/// read from tokens: a comment, a string or odd spacing cannot fake it, and a second declaration of the module is refused.
 fn declared_under_cfg_test(text: &str, name: &str) -> bool {
-    let lines: Vec<&str> = text.lines().map(str::trim).collect();
-    let want = format!("mod {name};");
-    lines.iter().enumerate().any(|(i, l)| {
-        *l == want
-            && lines[..i]
-                .iter()
-                .rev()
-                .take_while(|a| a.starts_with("#["))
-                .any(|a| *a == "#[cfg(test)]")
-    })
+    net_scan::declared_under_cfg_test(text, name)
 }
 
 /// Whether the file at `rel` may run a program chosen at run time: it is listed in `exempt` by its exact path and
@@ -290,18 +256,85 @@ fn is_test_only_spawner(
         && parent_text(rel).is_some_and(|text| declared_under_cfg_test(&text, name))
 }
 
-/// What is wrong with a `Command::new(...)` on this line of code, if anything: it runs a program that is not on the
-/// list, or one chosen at run time outside the client and the test-only modules.
-fn command_problem(rel: &str, code: &str, programs: &[&str]) -> Option<String> {
-    let arg = &code[code.find("Command::new(")? + "Command::new(".len()..];
-    match arg.strip_prefix('"').and_then(|a| a.split('"').next()) {
-        Some(program) if programs.contains(&program) => None,
-        Some(program) => Some(format!("runs {program}")),
-        None if rel.ends_with("src/client.rs") => None,
-        None if FIXED_PATH_SPAWNERS.contains(&rel) => None,
-        None if is_test_only_spawner(rel, TEST_ONLY_SPAWNERS, &parent_text) => None,
-        None => Some("runs a program chosen at run time".to_string()),
+/// Where a program name may be started: the file, and whether the call has to be in test code. `WholeFile` is a file that
+/// its parent declares under `#[cfg(test)]`; `InTestItem` is a `#[cfg(test)]` item inside a shipped file.
+#[derive(Clone, Copy, PartialEq)]
+enum Scope {
+    Shipped,
+    InTestItem,
+    WholeFile,
+}
+
+/// The programs klatch starts by literal name, and the only files that may start each (#1783: a name allowed in one file
+/// is not allowed in all). git finds a repository (and the build script reads the commit); ps is the process table of a
+/// unit test; secret-tool and busctl ask the keyring (busctl only whether a locked keyring hid a key, #561); codex is only
+/// `--version` and `queue --help` in `klatch doctor`; claude is `--version` in `klatch doctor` and before `klatch wake`
+/// (#482: no login, no model call) and, only when an operator opts in with `klatch judge run --hosted-judge`, one headless
+/// call per queued item (#960): the one call that reaches a model service; sh runs only in unit tests (a script that must
+/// become executable, a child that exits, a fifo). Every other program is run for a local answer and is not asked to talk
+/// to a network. The Rust client starts the binary the caller names.
+const PROGRAM_FILES: &[(&str, &str, Scope)] = &[
+    ("git", "src/member/scope.rs", Scope::Shipped),
+    ("git", "build.rs", Scope::Shipped),
+    ("ps", "src/session/cancel_hook_tests.rs", Scope::WholeFile),
+    ("secret-tool", "src/keys/linux.rs", Scope::Shipped),
+    ("busctl", "src/keys/linux.rs", Scope::Shipped),
+    ("codex", "src/codex.rs", Scope::Shipped),
+    ("claude", "src/gateway/claude_judge.rs", Scope::Shipped),
+    ("claude", "src/harness/capability.rs", Scope::Shipped),
+    ("sh", "src/harness/process.rs", Scope::InTestItem),
+    ("sh", "src/keys/linux.rs", Scope::InTestItem),
+    ("sh", "src/proof/filelimit.rs", Scope::InTestItem),
+];
+
+/// The programs the integration tests (`tests/`, test crates that run the built binary) may start by literal name.
+const TEST_CRATE_PROGRAMS: &[&str] = &["bash", "sh", "ps", "kill", "secret-tool", "git"];
+
+/// What is wrong with the ways the source starts a program, if anything: a program not listed for this file, a program
+/// chosen at run time outside the client and the test-only modules, or `Command::new` that is not called at once.
+fn command_problems(rel: &str, text: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    for u in net_scan::command_uses(text) {
+        match u {
+            net_scan::CommandUse::Indirect { line, what } => {
+                problems.push(format!("{rel}:{line}: {what}"))
+            }
+            net_scan::CommandUse::Call {
+                line,
+                program: Some(p),
+                in_test,
+            } => {
+                let listed = PROGRAM_FILES.iter().any(|(prog, file, scope)| {
+                    *prog == p
+                        && *file == rel
+                        && match scope {
+                            Scope::Shipped => true,
+                            Scope::InTestItem => in_test,
+                            Scope::WholeFile => is_test_only_spawner(rel, &[file], &parent_text),
+                        }
+                });
+                let in_test_crate =
+                    rel.starts_with("tests/") && TEST_CRATE_PROGRAMS.contains(&p.as_str());
+                if !listed && !in_test_crate {
+                    problems.push(format!("{rel}:{line}: runs {p}"));
+                }
+            }
+            net_scan::CommandUse::Call {
+                line,
+                program: None,
+                ..
+            } => {
+                let fine = rel.ends_with("src/client.rs")
+                    || FIXED_PATH_SPAWNERS.contains(&rel)
+                    || is_test_only_spawner(rel, TEST_ONLY_SPAWNERS, &parent_text)
+                    || rel.starts_with("tests/");
+                if !fine {
+                    problems.push(format!("{rel}:{line}: runs a program chosen at run time"));
+                }
+            }
+        }
     }
+    problems
 }
 
 const SOCKETS: [&str; 9] = [
@@ -316,19 +349,6 @@ const SOCKETS: [&str; 9] = [
     "UnixSeqpacketListener",
 ];
 
-/// Programs klatch starts by name: git (to find a repository), ps (the process table), secret-tool, busctl (only to ask whether a locked keyring hid a key, #561) and security
-/// (the keystores), codex (only `--version` and `queue --help`, in `klatch doctor`: no login, no model call), claude (`--version` in `klatch doctor` and before `klatch wake`, #482: no login, no model call; and, only when an operator opts in with `klatch judge run --hosted-judge`, one headless call per queued item, #960), and sh only in a unit test that waits for a fake keystore script to be executable. Only that opt-in `claude` call reaches a model service (and only because the operator named `--hosted-judge`); every other listed program is run for a local answer and is not asked to talk to a network. The Rust client starts the binary the caller names.
-const PROGRAMS: &[&str] = &[
-    "git",
-    "ps",
-    "secret-tool",
-    "busctl",
-    "/usr/bin/security",
-    "codex",
-    "claude",
-    "sh",
-];
-
 /// Whether the file at `rel` is allowed to name this socket type.
 fn socket_allowed(rel: &str, socket: &str) -> bool {
     may_open_loopback_socket(rel)
@@ -337,25 +357,14 @@ fn socket_allowed(rel: &str, socket: &str) -> bool {
 }
 
 #[test]
-fn the_source_opens_no_socket_and_runs_only_the_programs_it_is_known_to_run() {
+fn the_source_runs_only_the_programs_it_is_known_to_run() {
     let mut problems = Vec::new();
-    for (path, text) in rust_sources() {
-        let rel = rel_of(&path);
-        // identifiers and `Command::new` calls come from the tokenizer: a `//` in a string hides nothing
-        for (line, name) in net_scan::ids(&text) {
-            if SOCKETS.contains(&name.as_str()) && !socket_allowed(&rel, &name) {
-                problems.push(format!("{rel}:{line}: uses {name}"));
-            }
-        }
-        for (line, code) in net_scan::command_new_calls(&text) {
-            problems.extend(
-                command_problem(&rel, &code, PROGRAMS).map(|p| format!("{rel}:{line}: {p}")),
-            );
-        }
+    for (path, text) in all_sources() {
+        problems.extend(command_problems(&rel_of(&path), &text));
     }
     assert!(
         problems.is_empty(),
-        "outbound capability in the source:\n{}",
+        "a program is started that this file may not start:\n{}",
         problems.join("\n")
     );
 }
@@ -367,6 +376,8 @@ fn the_source_opens_no_socket_and_runs_only_the_programs_it_is_known_to_run() {
 struct NetAllowance {
     file: &'static str,
     line: &'static str,
+    /// How many times the line occurs in the file.
+    count: usize,
     test_only: bool,
     reason: &'static str,
 }
@@ -375,6 +386,7 @@ const NET_ALLOWED: &[NetAllowance] = &[
     NetAllowance {
         file: "tests/harness_peer_identity.rs",
         line: "use std::os::unix::net::{UnixListener, UnixStream};",
+        count: 1,
         test_only: true,
         reason: "an integration test (experiment 14.3, #29) of the peer-pid lookup: it listens on a Unix socket in its own \
                  temporary directory and connects to it from the same test, so the pid of a local process can be read; it \
@@ -382,7 +394,24 @@ const NET_ALLOWED: &[NetAllowance] = &[
     },
     NetAllowance {
         file: "tests/harness_peer_identity.rs",
+        line: "let listener = UnixListener::bind(&socket).unwrap();",
+        count: 2,
+        test_only: true,
+        reason: "the same test, in its two cases: a Unix listener bound in its own temporary directory (a path under the \
+                 SUN_LEN limit it checks), so the pid of the local connecting process can be read; a test crate, no network",
+    },
+    NetAllowance {
+        file: "tests/harness_peer_identity.rs",
+        line: "fn peer_pid(stream: &UnixStream) -> Option<u32> {",
+        count: 1,
+        test_only: true,
+        reason: "the same test: the helper that reads the pid at the other end of a local Unix socket with getsockopt; it \
+                 takes a stream the test already holds and opens, binds and connects nothing",
+    },
+    NetAllowance {
+        file: "tests/harness_peer_identity.rs",
         line: "fn getsockopt(",
+        count: 1,
         test_only: true,
         reason: "the same test: getsockopt(LOCAL_PEERPID or SO_PEERCRED) on that local Unix socket, to learn the pid at the \
                  other end; it declares the one function it calls and nothing that opens, binds or connects a socket",
@@ -390,6 +419,7 @@ const NET_ALLOWED: &[NetAllowance] = &[
     NetAllowance {
         file: "src/harness/hooks_pointer/tests.rs",
         line: "unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) },",
+        count: 1,
         test_only: true,
         reason: "the #1770 fixture: an unnamed pair of connected Unix sockets inside the test process, used only to hand the \
              hooks-pointer reader a socket file handle so its type check can be tested; no name, no address, nothing \
@@ -440,17 +470,26 @@ fn net_problems(rel: &str, text: &str, parent: &dyn Fn(&str) -> Option<String>) 
         }
         report(f.line, f.what);
     }
-    if rel.starts_with("src/") {
-        for (line, name) in net_scan::ids(text) {
-            if SOCKETS.contains(&name.as_str()) && !socket_allowed(rel, &name) {
-                report(line, format!("the socket type {name}"));
-            }
+    for (line, name) in net_scan::ids(text) {
+        if SOCKETS.contains(&name.as_str()) && !socket_allowed(rel, &name) {
+            report(line, format!("the socket type {name}"));
         }
     }
     let protected = protected_files();
     for (line, target) in net_scan::path_targets(text) {
         let resolved = net_scan::resolve_relative(rel, &target);
-        if protected.contains(&resolved.as_str()) {
+        // any extension: a file that is not Rust, or one that is not there, cannot be read by this guard
+        if !resolved.ends_with(".rs") {
+            report(
+                line,
+                format!("a #[path] or include! of {resolved}, which is not a Rust file"),
+            );
+        } else if !manifest(&resolved).is_file() {
+            report(
+                line,
+                format!("a #[path] or include! of {resolved}, which does not exist"),
+            );
+        } else if protected.contains(&resolved.as_str()) {
             report(
                 line,
                 format!("a #[path] or include! of the test-only file {resolved}"),
@@ -605,6 +644,53 @@ fn every_evasion_of_the_first_guard_is_flagged() {
     }
 }
 
+/// A `#[path]` to a Rust file that exists and is not protected is fine (the integration tests share `test_dir.rs`); one
+/// to a file that is not Rust, or that is not there, is reported (#1783).
+#[test]
+fn a_path_is_read_whatever_its_extension_and_a_missing_target_is_a_finding() {
+    let never = |_: &str| None;
+    assert!(
+        net_problems(
+            "tests/x.rs",
+            "#[path = \"../src/store/test_dir.rs\"]\nmod test_dir;\n",
+            &never
+        )
+        .is_empty()
+    );
+    for (what, file, src) in [
+        (
+            "a non-Rust target",
+            "src/some/new_file.rs",
+            "#[path = \"sock.inc\"]\nmod sock;\n",
+        ),
+        (
+            "a non-Rust target with a dot dot",
+            "src/a/b.rs",
+            "#[path = \"../c/sock.txt\"] mod sock;\n",
+        ),
+        (
+            "an include! of a non-Rust file",
+            "src/some/new_file.rs",
+            "include!(\"sock.inc\");\n",
+        ),
+        (
+            "a missing Rust target",
+            "src/some/new_file.rs",
+            "#[path = \"nowhere.rs\"]\nmod nowhere;\n",
+        ),
+        (
+            "a missing Rust target through ..",
+            "src/some/new_file.rs",
+            "#[path = \"../nowhere/x.rs\"]\nmod nowhere;\n",
+        ),
+    ] {
+        assert!(
+            !net_problems(file, src, &never).is_empty(),
+            "not flagged: {what}"
+        );
+    }
+}
+
 /// A `#[path]` or `include!` that reaches a protected test-only file is reported, whichever file does it.
 #[test]
 fn a_path_or_include_of_a_protected_test_only_file_is_flagged() {
@@ -626,6 +712,42 @@ fn comments_strings_and_ordinary_libc_use_are_not_flagged() {
     for (what, src) in net_scan::clean_sources() {
         let found = net_problems("src/some/new_file.rs", &src, &never);
         assert!(found.is_empty(), "flagged: {what}: {found:?}");
+    }
+}
+
+/// The tokenizer reads every string and char literal form, comment and lifetime the way rustc does (#1783): a lexer that
+/// gets out of step after one hides the code that follows.
+#[test]
+fn the_tokenizer_matches_rustc_on_the_lexer_edge_cases() {
+    net_scan::check_lexer_cases();
+}
+
+/// The brackets of every Rust file of the repository balance token by token: a lexer that was out of step on a real file
+/// would hide or invent some.
+#[test]
+fn the_tokenizer_keeps_step_on_every_rust_file_of_the_repository() {
+    let mut files = Vec::new();
+    for dir in [
+        "../klatch/src",
+        "../klatch/tests",
+        "../klatch/fuzz",
+        "../klatch-server/src",
+        "../klatch-server/tests",
+        "../klatch-bench/src",
+        "../wire",
+        "../linux-keys",
+        "../linux-discovery",
+    ] {
+        walk_rs(&manifest(dir), &mut files);
+    }
+    assert!(files.len() > 300, "{} files", files.len());
+    for p in files {
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(
+            net_scan::brackets_balance(&text),
+            "the brackets of {} do not balance in the tokens",
+            p.display()
+        );
     }
 }
 
@@ -690,7 +812,7 @@ fn every_network_allowance_matches_exactly_one_real_line() {
             .lines()
             .filter(|l| l.split("//").next().unwrap_or("").trim() == a.line)
             .count();
-        assert_eq!(hits, 1, "{}: the allowed line {:?}", a.file, a.line);
+        assert_eq!(hits, a.count, "{}: the allowed line {:?}", a.file, a.line);
         assert!(a.reason.len() > 40, "{}: a reason is needed", a.file);
         assert!(
             a.test_only,
@@ -709,10 +831,10 @@ fn every_network_allowance_matches_exactly_one_real_line() {
 
 /// The allowance is for one line of one file, declared one way. It is the whole list, and growing it is a deliberate act.
 #[test]
-fn the_network_allowance_is_three_exact_lines_and_covers_nothing_else() {
+fn the_network_allowance_is_five_exact_lines_and_covers_nothing_else() {
     assert_eq!(
         NET_ALLOWED.len(),
-        3,
+        5,
         "a new allowance needs a review and this number changed"
     );
     let declared = |_: &str| Some("#[cfg(test)]\nmod tests;\n".to_string());
@@ -845,36 +967,79 @@ fn the_network_pattern_lists_keep_the_calls_they_must_catch() {
     }
 }
 
-/// What a line importing from `std::net` names that only a socket user needs, if anything.
-fn socket_item_in(rel: &str, line: &str) -> Option<&'static str> {
-    const ITEMS: [&str; 5] = [
-        "TcpStream",
-        "TcpListener",
-        "UdpSocket",
-        "ToSocketAddrs",
-        "lookup_host",
-    ];
-    ITEMS.into_iter().find(|item| {
-        // the client's HTTP file imports `TcpStream` and nothing else of the kind
-        line.contains(item) && !(*item == "TcpStream" && may_connect_tcp(rel))
+/// The `std::net` items that only a socket user, or a resolver, needs.
+const STD_NET_SOCKET_ITEMS: &[&str] = &[
+    "TcpStream",
+    "TcpListener",
+    "UdpSocket",
+    "ToSocketAddrs",
+    "lookup_host",
+];
+
+/// What a path out of `std::net` names that only a socket user needs, if anything. The client's HTTP file names
+/// `TcpStream` and nothing else of the kind.
+fn std_net_socket_item(rel: &str, segs: &[String]) -> Option<&'static str> {
+    STD_NET_SOCKET_ITEMS.iter().copied().find(|item| {
+        segs.iter().any(|s| s == item) && !(*item == "TcpStream" && may_connect_tcp(rel))
     })
 }
 
+/// `std::net` is read by paths (a `use` tree, braces and all, or an inline path), not by lines of text: only addresses may
+/// come out of it, apart from the allowances.
 #[test]
 fn std_net_is_only_used_to_read_addresses() {
-    for (path, text) in rust_sources() {
+    for (path, text) in all_sources() {
         let rel = rel_of(&path);
         if may_open_loopback_socket(&rel) {
             continue;
         }
-        let text = net_scan::strip_comments(&text);
-        for line in text.lines().filter(|l| l.contains("std::net")) {
-            assert!(
-                socket_item_in(&rel, line).is_none(),
-                "{}: {line}",
-                path.display()
-            );
+        let lines: Vec<&str> = text.lines().collect();
+        for p in net_scan::path_uses(&text) {
+            if p.segs.len() >= 2 && p.segs[..2] == ["std", "net"] {
+                let raw = lines.get(p.line.wrapping_sub(1)).copied().unwrap_or("");
+                assert!(
+                    std_net_socket_item(&rel, &p.segs).is_none()
+                        || net_allowance_for(&rel, raw, &parent_text).is_some(),
+                    "{}:{}: {raw}",
+                    path.display(),
+                    p.line
+                );
+            }
         }
+    }
+}
+
+/// The same reading, on throwaway sources: a socket item out of `std::net` is reported however it is written.
+#[test]
+fn std_net_socket_items_are_found_by_path_however_they_are_written() {
+    for src in [
+        "use std::net::TcpStream;",
+        "use std::net::{IpAddr, TcpStream};",
+        "use std::net::{self, UdpSocket};",
+        "use std::{net::TcpListener};",
+        "fn f() { std::net::UdpSocket::bind(a); }",
+        "fn f() { let s = std :: net :: TcpStream :: connect(a); }",
+        "use std::net::ToSocketAddrs;",
+        "fn f() { std::net::lookup_host(a); }",
+    ] {
+        let found = net_scan::path_uses(src).iter().any(|p| {
+            p.segs.len() >= 2
+                && p.segs[..2] == ["std", "net"]
+                && std_net_socket_item("src/some/new_file.rs", &p.segs).is_some()
+        });
+        assert!(found, "{src}");
+    }
+    for src in [
+        "use std::net::{IpAddr, SocketAddr};",
+        "use std::net::Shutdown;",
+        "let s = \"std::net::TcpStream\";",
+    ] {
+        let found = net_scan::path_uses(src).iter().any(|p| {
+            p.segs.len() >= 2
+                && p.segs[..2] == ["std", "net"]
+                && std_net_socket_item("src/some/new_file.rs", &p.segs).is_some()
+        });
+        assert!(!found, "{src}");
     }
 }
 
@@ -1059,16 +1224,271 @@ fn every_listed_test_only_spawner_exists_and_is_declared_under_cfg_test_in_the_r
 
 #[test]
 fn a_fixed_path_spawner_is_exempt_by_exact_path_and_runs_exactly_one_program() {
-    let call = "let mut c = Command::new(program);";
-    assert_eq!(
-        command_problem("src/harness/ps_snapshot.rs", call, PROGRAMS),
-        None
-    );
+    let call = "fn f() { let mut c = Command::new(program); }";
+    assert!(command_problems("src/harness/ps_snapshot.rs", call).is_empty());
     for other in ["src/harness/other.rs", "src/x/src/harness/ps_snapshot.rs"] {
-        assert!(command_problem(other, call, PROGRAMS).is_some(), "{other}");
+        assert!(!command_problems(other, call).is_empty(), "{other}");
     }
     for rel in FIXED_PATH_SPAWNERS {
         let text = std::fs::read_to_string(manifest(rel)).expect("a listed spawner exists");
         assert_eq!(text.matches("Command::new(").count(), 1, "{rel}");
     }
+}
+
+/// A throwaway crate directory under cargo's temporary directory, with these files.
+fn temp_crate(tag: &str, files: &[(&str, &str)]) -> PathBuf {
+    let root =
+        Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("guard-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for (rel, text) in files {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+    root
+}
+
+/// Only the build output is skipped, where cargo puts it: a directory named `target`, `corpus` or `artifacts` under `src`,
+/// `tests` or `fuzz` is source and is read, and what it holds is judged like any other file (#1783).
+#[test]
+fn only_the_build_output_directories_are_skipped_never_a_directory_of_that_name_under_src() {
+    let evil = "fn f() { unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) }; std::net::TcpStream::connect(a); std::process::Command::new(\"curl\"); }\n";
+    let root = temp_crate(
+        "walk",
+        &[
+            ("src/lib.rs", "// ok\n"),
+            ("src/target/mod.rs", evil),
+            ("src/artifacts/mod.rs", evil),
+            ("src/corpus/x.rs", evil),
+            ("tests/target/t.rs", evil),
+            ("fuzz/fuzz_targets/f.rs", "// ok\n"),
+            ("fuzz/src/target/g.rs", evil),
+            ("fuzz/corpus/c.rs", evil),
+            ("fuzz/target/t.rs", evil),
+            ("fuzz/artifacts/a.rs", evil),
+            ("target/b.rs", evil),
+            ("build.rs", "fn main() {}\n"),
+        ],
+    );
+    let files: Vec<String> = net_scan::crate_sources(&root)
+        .iter()
+        .map(|p| p.strip_prefix(&root).unwrap().display().to_string())
+        .collect();
+    for want in [
+        "src/lib.rs",
+        "src/target/mod.rs",
+        "src/artifacts/mod.rs",
+        "src/corpus/x.rs",
+        "tests/target/t.rs",
+        "fuzz/fuzz_targets/f.rs",
+        "fuzz/src/target/g.rs",
+        "build.rs",
+    ] {
+        assert!(
+            files.iter().any(|f| f == want),
+            "{want} is not read: {files:?}"
+        );
+    }
+    for skip in [
+        "fuzz/corpus/c.rs",
+        "fuzz/target/t.rs",
+        "fuzz/artifacts/a.rs",
+        "target/b.rs",
+    ] {
+        assert!(
+            !files.iter().any(|f| f == skip),
+            "{skip} is the build output and is read: {files:?}"
+        );
+    }
+    // and what src/target/mod.rs holds is a problem, three ways
+    let text = std::fs::read_to_string(root.join("src/target/mod.rs")).unwrap();
+    assert!(net_problems("src/target/mod.rs", &text, &|_: &str| None).len() >= 3);
+    assert!(!command_problems("src/target/mod.rs", &text).is_empty());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `build.rs` runs on the machine of whoever installs the crate, and `tests` and `fuzz` run in the project: sockets,
+/// `std::net`, and programs are judged there like in `src` (#1783).
+#[test]
+fn build_rs_tests_and_fuzz_get_every_check_src_gets() {
+    let never = |_: &str| None;
+    for file in ["build.rs", "tests/new_test.rs", "fuzz/fuzz_targets/new.rs"] {
+        for (what, src) in [
+            (
+                "a TcpStream connect",
+                "fn f() { std::net::TcpStream::connect(\"example.com:80\"); }\n",
+            ),
+            (
+                "a UdpSocket bind",
+                "use std::net::UdpSocket;\nfn f() { UdpSocket::bind(a); }\n",
+            ),
+            (
+                "a libc connect",
+                "fn f() { unsafe { libc::connect(1, 2, 3) }; }\n",
+            ),
+        ] {
+            assert!(
+                !net_problems(file, src, &never).is_empty(),
+                "{file}: {what}"
+            );
+        }
+        assert!(
+            !command_problems(
+                file,
+                "fn main() { std::process::Command::new(\"curl\"); }\n"
+            )
+            .is_empty(),
+            "{file}: curl"
+        );
+    }
+    // the program lists still let the build script read the commit, and a test crate run its helpers
+    assert!(command_problems("build.rs", "fn main() { Command::new(\"git\"); }\n").is_empty());
+    assert!(
+        command_problems(
+            "tests/new_test.rs",
+            "fn f() { Command::new(\"ps\"); Command::new(bin); }\n"
+        )
+        .is_empty()
+    );
+    assert!(
+        !command_problems(
+            "fuzz/fuzz_targets/new.rs",
+            "fn f() { Command::new(\"git\"); }\n"
+        )
+        .is_empty()
+    );
+    assert!(!command_problems("src/other.rs", "fn f() { Command::new(\"git\"); }\n").is_empty());
+}
+
+/// Every way to start a program that is not `Command::new("literal")` called at once, and a name allowed in one file is
+/// not allowed in another, nor outside test code where it is a test helper (#1783).
+#[test]
+fn programs_are_found_by_identifier_and_each_name_is_allowed_only_where_it_is_listed() {
+    for (what, src) in [
+        (
+            "a type alias",
+            "type C = std::process::Command;\nfn f() { C::new(\"curl\"); }\n",
+        ),
+        (
+            "map with Command::new",
+            "use std::process::Command;\nfn f() { v.iter().map(Command::new); }\n",
+        ),
+        ("a UFCS call", "fn f() { <Command>::new(\"curl\"); }\n"),
+        (
+            "a path value",
+            "fn f() { let mk = Command::new; mk(\"curl\"); }\n",
+        ),
+        (
+            "a nested use with map",
+            "use std::process::{Stdio, Command};\nfn f() { v.map(Command::new); }\n",
+        ),
+        (
+            "sh -c in a file that may not run sh",
+            "fn f() { Command::new(\"sh\").arg(\"-c\"); }\n",
+        ),
+        (
+            "a program with spaces around the path",
+            "fn f() { Command :: new ( \"curl\" ); }\n",
+        ),
+    ] {
+        assert!(
+            !command_problems("src/some/new_file.rs", src).is_empty(),
+            "not flagged: {what}"
+        );
+    }
+    // sh is listed for three files, and only inside #[cfg(test)] items there
+    let outside = "fn f() { std::process::Command::new(\"sh\").arg(\"-c\"); }\n";
+    let inside =
+        "#[cfg(test)]\nmod tests { fn f() { std::process::Command::new(\"sh\").arg(\"-c\"); } }\n";
+    for rel in [
+        "src/harness/process.rs",
+        "src/keys/linux.rs",
+        "src/proof/filelimit.rs",
+    ] {
+        assert!(
+            !command_problems(rel, outside).is_empty(),
+            "{rel} outside test code"
+        );
+        assert!(
+            command_problems(rel, inside).is_empty(),
+            "{rel} inside test code"
+        );
+    }
+    assert!(
+        !command_problems("src/gateway/claude_judge.rs", inside).is_empty(),
+        "claude_judge may not run sh"
+    );
+    // git is the member scope's and the build script's; claude is two files'; a name does not travel to another file
+    assert!(
+        command_problems("src/member/scope.rs", "fn f() { Command::new(\"git\"); }\n").is_empty()
+    );
+    assert!(
+        !command_problems("src/keys/linux.rs", "fn f() { Command::new(\"git\"); }\n").is_empty()
+    );
+    assert!(!command_problems("src/codex.rs", "fn f() { Command::new(\"claude\"); }\n").is_empty());
+    // every entry of the table is a real call of a real file
+    for (prog, file, _) in PROGRAM_FILES {
+        let text = std::fs::read_to_string(manifest(file))
+            .unwrap_or_else(|_| panic!("{file} does not exist"));
+        let found = net_scan::command_uses(&text)
+            .iter()
+            .any(|u| matches!(u, net_scan::CommandUse::Call { program: Some(p), .. } if p == prog));
+        assert!(found, "{file} never starts {prog}: remove the entry");
+    }
+}
+
+/// Declarations are read from tokens: a comment, odd spacing or a second declaration cannot fake the one that is
+/// required (#1783).
+#[test]
+fn a_declaration_is_read_from_tokens_and_must_be_the_only_one() {
+    // the commented-out attribute trick
+    let faked = "/*\n#[cfg(test)]\n#[ */\nmod survivor_tests;\n";
+    assert!(!declared_under_cfg_test(faked, "survivor_tests"));
+    assert!(!declared_under_cfg_test(
+        "// #[cfg(test)]\nmod survivor_tests;\n",
+        "survivor_tests"
+    ));
+    assert!(!declared_under_cfg_test(
+        "const S: &str = \"#[cfg(test)]\";\nmod survivor_tests;\n",
+        "survivor_tests"
+    ));
+    // spacing and other attributes between are fine
+    assert!(declared_under_cfg_test(
+        "#[ cfg ( test ) ]\n#[allow(dead_code)]\npub(crate) mod survivor_tests ;\n",
+        "survivor_tests"
+    ));
+    // a second declaration of the same module, unconditional or not, is refused
+    assert!(!declared_under_cfg_test(
+        "#[cfg(test)]\nmod survivor_tests;\nmod survivor_tests;\n",
+        "survivor_tests"
+    ));
+    assert!(!declared_under_cfg_test(
+        "mod survivor_tests;\n#[cfg(test)]\nmod survivor_tests;\n",
+        "survivor_tests"
+    ));
+    // the feature declarations of the client files
+    let ok = "#[cfg(all(unix, feature = \"client-socket\"))]\nmod socket;\n";
+    assert!(net_scan::declared_with_attr(
+        ok,
+        "socket",
+        "cfg(all(unix, feature = \"client-socket\"))"
+    ));
+    assert!(!net_scan::declared_with_attr(
+        "/*\n#[cfg(all(unix, feature = \"client-socket\"))]\n#[ */\nmod socket;\n",
+        "socket",
+        "cfg(all(unix, feature = \"client-socket\"))"
+    ));
+    assert!(!net_scan::declared_with_attr(
+        &format!("{ok}mod socket;\n"),
+        "socket",
+        "cfg(all(unix, feature = \"client-socket\"))"
+    ));
+    assert!(!net_scan::declared_with_attr(
+        "mod socket;\n",
+        "socket",
+        "cfg(all(unix, feature = \"client-socket\"))"
+    ));
+    // the real parents still pass
+    assert!(may_connect_unix_socket("src/client/socket.rs"));
+    assert!(may_connect_tcp("src/client/http.rs"));
 }

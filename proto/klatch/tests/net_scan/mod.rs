@@ -107,7 +107,8 @@ pub fn strip_comments(src: &str) -> String {
 /// The index after a char literal (`'x'`, `'\n'`, `'\u{..}'`) that starts at `i`, or after the lone quote of a lifetime.
 fn char_literal_end(c: &[char], i: usize) -> usize {
     if c.get(i + 1) == Some(&'\\') {
-        let mut j = i + 2;
+        // an escape: the character after the backslash is part of it, whatever it is (`'\''`, `'\\'`, `'\u{..}'`)
+        let mut j = i + 3;
         while j < c.len() && c[j] != '\'' {
             j += 1;
         }
@@ -125,7 +126,7 @@ fn raw_string_at(c: &[char], i: usize) -> Option<(usize, String)> {
         return None;
     }
     let mut j = i;
-    if c.get(j) == Some(&'b') {
+    if matches!(c.get(j), Some('b' | 'c')) {
         j += 1;
     }
     if c.get(j) != Some(&'r') {
@@ -192,9 +193,9 @@ pub fn tokenize(src: &str) -> Vec<Tok> {
             push(Kind::Str(text), line);
             line += c[i..end].iter().filter(|x| **x == '\n').count();
             i = end;
-        } else if ch == '"' || (ch == 'b' && c.get(i + 1) == Some(&'"')) {
+        } else if ch == '"' || (matches!(ch, 'b' | 'c') && c.get(i + 1) == Some(&'"')) {
             let start_line = line;
-            i += if ch == 'b' { 2 } else { 1 };
+            i += if ch == '"' { 1 } else { 2 };
             let mut s = String::new();
             while i < c.len() && c[i] != '"' {
                 if c[i] == '\\' && i + 1 < c.len() {
@@ -209,6 +210,10 @@ pub fn tokenize(src: &str) -> Vec<Tok> {
             }
             i += 1;
             push(Kind::Str(s), start_line);
+        } else if ch == 'b' && c.get(i + 1) == Some(&'\'') && char_literal_end(&c, i + 1) > i + 2 {
+            let end = char_literal_end(&c, i + 1);
+            push(Kind::Num, line);
+            i = end;
         } else if ch == '\'' {
             let end = char_literal_end(&c, i);
             if end > i + 1 {
@@ -357,6 +362,11 @@ fn use_tree(t: &[Tok], mut k: usize, prefix: &[String], out: &mut Vec<PathUse>) 
         });
         return k;
     }
+}
+
+/// Every path of the source (see `paths`), from the source text.
+pub fn path_uses(src: &str) -> Vec<PathUse> {
+    paths(&tokenize(src))
 }
 
 /// Every path in the source: the `use` trees expanded to full paths, `extern crate x as y`, and the paths written inline
@@ -1114,10 +1124,6 @@ pub fn clean_sources() -> Vec<(&'static str, String)> {
             s("use std::net::{IpAddr, SocketAddr};\n"),
         ),
         (
-            "a #[path] elsewhere",
-            s("#[path = \"../src/store/test_dir.rs\"]\nmod test_dir;\n"),
-        ),
-        (
             "Command with its own name",
             s("use std::process::{Child, Command, Stdio};\n"),
         ),
@@ -1126,4 +1132,513 @@ pub fn clean_sources() -> Vec<(&'static str, String)> {
             s("let m = libc::c_int::MAX;\n"),
         ),
     ]
+}
+
+/// The strings of the source (the text between the quotes, as written).
+pub fn strings(src: &str) -> Vec<String> {
+    tokenize(src)
+        .into_iter()
+        .filter_map(|t| match t.kind {
+            Kind::Str(s) => Some(s),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Lexer edge cases with what rustc reads in them: `(what, source, identifiers, strings)`. Every string and char literal
+/// form, nested comments, raw identifiers, lifetimes against chars. A lexer that gets out of step after one of them hides
+/// the code that follows (#1783).
+pub fn lexer_cases() -> Vec<(
+    &'static str,
+    &'static str,
+    Vec<&'static str>,
+    Vec<&'static str>,
+)> {
+    vec![
+        (
+            "an escaped quote in a string",
+            "let a = \"x\\\"y\"; let z = 1;",
+            vec!["let", "a", "let", "z"],
+            vec!["x\\\"y"],
+        ),
+        (
+            "a backslash at the end of a string",
+            "let a = \"x\\\\\"; tail",
+            vec!["let", "a", "tail"],
+            vec!["x\\\\"],
+        ),
+        ("a raw string", "r\"a\\\"; tail", vec!["tail"], vec!["a\\"]),
+        (
+            "a raw string with one hash holding a quote",
+            "r#\"a\"b\"#; tail",
+            vec!["tail"],
+            vec!["a\"b"],
+        ),
+        (
+            "a raw string with two hashes holding a quote and one hash",
+            "r##\"a\"#b\"##; tail",
+            vec!["tail"],
+            vec!["a\"#b"],
+        ),
+        (
+            "a raw string with three hashes",
+            "r###\"a\"##b\"###; tail",
+            vec!["tail"],
+            vec!["a\"##b"],
+        ),
+        (
+            "a byte string",
+            "b\"x\\\"y\"; tail",
+            vec!["tail"],
+            vec!["x\\\"y"],
+        ),
+        (
+            "a raw byte string",
+            "br#\"a\"b\"#; tail",
+            vec!["tail"],
+            vec!["a\"b"],
+        ),
+        (
+            "a C string",
+            "c\"x\\\"y\"; tail",
+            vec!["tail"],
+            vec!["x\\\"y"],
+        ),
+        (
+            "an empty C string",
+            "let _b = c\"\"; tail",
+            vec!["let", "_b", "tail"],
+            vec![""],
+        ),
+        (
+            "a raw C string ending in a backslash",
+            "let _a = cr\"\\\"; let _b = c\"\"; tail",
+            vec!["let", "_a", "let", "_b", "tail"],
+            vec!["\\", ""],
+        ),
+        (
+            "a raw C string with a hash",
+            "cr#\"a\"b\"#; tail",
+            vec!["tail"],
+            vec!["a\"b"],
+        ),
+        ("a byte char", "b'\\''; tail", vec!["tail"], vec![]),
+        (
+            "a byte char holding a quote",
+            "b'\"'; tail",
+            vec!["tail"],
+            vec![],
+        ),
+        (
+            "a char holding an escaped quote",
+            "quotes! { '\\'', '\"' } after",
+            vec!["quotes", "after"],
+            vec![],
+        ),
+        (
+            "a char holding a double quote",
+            "let c = '\"'; after",
+            vec!["let", "c", "after"],
+            vec![],
+        ),
+        (
+            "a char holding a backslash",
+            "let b = '\\\\'; next",
+            vec!["let", "b", "next"],
+            vec![],
+        ),
+        (
+            "a unicode escape char",
+            "let u = '\\u{1F600}'; next",
+            vec!["let", "u", "next"],
+            vec![],
+        ),
+        (
+            "a multi-byte char",
+            "let e = 'é'; next",
+            vec!["let", "e", "next"],
+            vec![],
+        ),
+        (
+            "a char holding a slash then a comment",
+            "let c = '/'; // x\n y",
+            vec!["let", "c", "y"],
+            vec![],
+        ),
+        (
+            "lifetimes are not chars",
+            "fn f<'a>(x: &'a str) -> char { 'x' }",
+            vec!["fn", "f", "x", "str", "char"],
+            vec![],
+        ),
+        (
+            "a lifetime before a char",
+            "fn f<'a, 'b>() { let c = 'b'; d }",
+            vec!["fn", "f", "let", "c", "d"],
+            vec![],
+        ),
+        (
+            "a static lifetime",
+            "let s: &'static str = \"s\"; after",
+            vec!["let", "s", "str", "after"],
+            vec!["s"],
+        ),
+        (
+            "a loop label",
+            "'outer: loop { break 'outer; } after",
+            vec!["loop", "break", "after"],
+            vec![],
+        ),
+        (
+            "a raw identifier",
+            "let r#type = 1; r#loop(); after",
+            vec!["let", "type", "loop", "after"],
+            vec![],
+        ),
+        (
+            "a nested block comment",
+            "/* a /* b */ still a comment */ real",
+            vec!["real"],
+            vec![],
+        ),
+        (
+            "a deeper block comment",
+            "/* 1 /* 2 /* 3 */ 2 */ 1 */ real",
+            vec!["real"],
+            vec![],
+        ),
+        (
+            "a block comment with a quote",
+            "/* \" */ real",
+            vec!["real"],
+            vec![],
+        ),
+        (
+            "a line comment with a quote",
+            "// \" x\n real",
+            vec!["real"],
+            vec![],
+        ),
+        (
+            "// in a string",
+            "let s = \"//\"; after",
+            vec!["let", "s", "after"],
+            vec!["//"],
+        ),
+        (
+            "/* in a string",
+            "let s = \"/*\"; after",
+            vec!["let", "s", "after"],
+            vec!["/*"],
+        ),
+        (
+            "/* in a raw string",
+            "let s = r#\"/*\"#; after",
+            vec!["let", "s", "after"],
+            vec!["/*"],
+        ),
+        (
+            "a number with a suffix",
+            "let n = 0x1F_u32; after",
+            vec!["let", "n", "after"],
+            vec![],
+        ),
+        (
+            "a float",
+            "let n = 1.5e3; after",
+            vec!["let", "n", "after"],
+            vec![],
+        ),
+        (
+            "a string over lines",
+            "let s = \"a\\nb\"; after",
+            vec!["let", "s", "after"],
+            vec!["a\\nb"],
+        ),
+    ]
+}
+
+/// Run every lexer case: the identifiers and the strings must be exactly what rustc reads.
+pub fn check_lexer_cases() {
+    for (what, src, want_ids, want_strs) in lexer_cases() {
+        let got: Vec<String> = ids(src).into_iter().map(|(_, s)| s).collect();
+        assert_eq!(got, want_ids, "identifiers of {what}: {src}");
+        assert_eq!(strings(src), want_strs, "strings of {what}: {src}");
+        // strip_comments keeps the strings and loses the comments, on the same lines
+        let stripped = strip_comments(src);
+        assert_eq!(
+            stripped.lines().count(),
+            src.lines().count(),
+            "lines of {what}"
+        );
+        let got2: Vec<String> = ids(&stripped).into_iter().map(|(_, s)| s).collect();
+        assert_eq!(got2, want_ids, "identifiers of the stripped {what}: {src}");
+    }
+}
+
+/// The brackets of a Rust source balance token by token; a lexer that is out of step hides or invents some. The token
+/// counts of `{`, `(` and `[` must equal those of their closers.
+pub fn brackets_balance(src: &str) -> bool {
+    let (mut c, mut p, mut b) = (0i64, 0i64, 0i64);
+    for t in tokenize(src) {
+        match t.kind {
+            Kind::P('{') => c += 1,
+            Kind::P('}') => c -= 1,
+            Kind::P('(') => p += 1,
+            Kind::P(')') => p -= 1,
+            Kind::P('[') => b += 1,
+            Kind::P(']') => b -= 1,
+            _ => {}
+        }
+    }
+    c == 0 && p == 0 && b == 0
+}
+
+/// A `mod name;` declaration with the attributes that stand directly before it, each as its tokens written without
+/// spaces (`cfg(test)`, `path="daemon_tests.rs"`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModDecl {
+    pub name: String,
+    pub line: usize,
+    pub attrs: Vec<String>,
+}
+
+fn kind_text(k: &Kind) -> String {
+    match k {
+        Kind::Id(s) => s.clone(),
+        Kind::Str(s) => format!("\"{s}\""),
+        Kind::Num => "0".to_string(),
+        Kind::P(c) => c.to_string(),
+    }
+}
+
+/// The `mod name;` declarations of the source (not `mod name { .. }`), read from tokens, so a comment, a string or the
+/// spacing of the attributes cannot fake one.
+pub fn mod_decls(src: &str) -> Vec<ModDecl> {
+    let t = tokenize(src);
+    let mut out = Vec::new();
+    let mut pending: Vec<String> = Vec::new();
+    let mut k = 0;
+    while k < t.len() {
+        if is_p(&t, k, '#') && is_p(&t, k + 1, '[') {
+            let close = close_of(&t, k + 1);
+            pending.push(t[k + 2..close].iter().map(|x| kind_text(&x.kind)).collect());
+            k = close + 1;
+            continue;
+        }
+        match id(&t, k) {
+            Some("mod") if id(&t, k + 1).is_some() && is_p(&t, k + 2, ';') => {
+                out.push(ModDecl {
+                    name: id(&t, k + 1).unwrap().to_string(),
+                    line: t[k].line,
+                    attrs: std::mem::take(&mut pending),
+                });
+                k += 3;
+                continue;
+            }
+            // visibility and `unsafe` may stand between the attributes and `mod`
+            Some("pub" | "unsafe" | "crate" | "super" | "self" | "in") => {}
+            _ if is_p(&t, k, '(') || is_p(&t, k, ')') => {}
+            _ => pending.clear(),
+        }
+        k += 1;
+    }
+    out
+}
+
+/// Whether the source declares `mod name;` exactly once, directly under `#[cfg(test)]` (other attributes may sit
+/// between them), by tokens. A second declaration of the same module, or one without the attribute, is not accepted.
+pub fn declared_under_cfg_test(src: &str, name: &str) -> bool {
+    declared_with_attr(src, name, "cfg(test)")
+}
+
+/// Whether the source declares `mod name;` exactly once and with the attribute `attr` (written without spaces, like
+/// `cfg(all(unix,feature="client-socket"))`) among those directly before it.
+pub fn declared_with_attr(src: &str, name: &str, attr: &str) -> bool {
+    let want: String = tokenize(attr).iter().map(|x| kind_text(&x.kind)).collect();
+    let decls: Vec<ModDecl> = mod_decls(src)
+        .into_iter()
+        .filter(|d| d.name == name)
+        .collect();
+    decls.len() == 1 && decls[0].attrs.iter().any(|a| *a == want)
+}
+
+/// The `#[path = "file"] mod name;` declarations of the source: the target as written and the attributes before it.
+pub fn path_decls(src: &str) -> Vec<(String, Vec<String>)> {
+    mod_decls(src)
+        .into_iter()
+        .filter_map(|d| {
+            let target = d.attrs.iter().find_map(|a| {
+                a.strip_prefix("path=\"")
+                    .and_then(|r| r.strip_suffix('"'))
+                    .map(str::to_string)
+            })?;
+            Some((target, d.attrs))
+        })
+        .collect()
+}
+
+/// How a program is started in the source.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CommandUse {
+    /// `Command::new(...)`, also `process::Command::new(` and `<Command>::new(`: the literal program, if it is one.
+    Call {
+        line: usize,
+        program: Option<String>,
+        in_test: bool,
+    },
+    /// Anything else that makes or passes a program starter: `Command::new` not called at once (`.map(Command::new)`,
+    /// `let mk = Command::new;`), and a `type` item that names `Command`.
+    Indirect { line: usize, what: String },
+}
+
+/// Whether token `k` is inside an item marked `#[cfg(test)]` (a module, a function, an impl): the attribute, then the item
+/// up to its `;` or past its `{ .. }`.
+pub fn in_test_item(t: &[Tok], k: usize) -> bool {
+    let mut j = 0;
+    while j < t.len() {
+        if is_p(t, j, '#')
+            && is_p(t, j + 1, '[')
+            && id(t, j + 2) == Some("cfg")
+            && is_p(t, j + 3, '(')
+            && id(t, j + 4) == Some("test")
+            && is_p(t, j + 5, ')')
+            && is_p(t, j + 6, ']')
+        {
+            let start = j;
+            let mut m = j + 7;
+            while is_p(t, m, '#') && is_p(t, m + 1, '[') {
+                m = close_of(t, m + 1) + 1;
+            }
+            let mut end = t.len();
+            let mut q = m;
+            while q < t.len() {
+                match t[q].kind {
+                    Kind::P(';') => {
+                        end = q;
+                        break;
+                    }
+                    Kind::P('{') => {
+                        end = close_of(t, q);
+                        break;
+                    }
+                    Kind::P('(' | '[') => q = close_of(t, q) + 1,
+                    _ => q += 1,
+                }
+            }
+            if start <= k && k <= end {
+                return true;
+            }
+            j = end.max(j + 1);
+        } else {
+            j += 1;
+        }
+    }
+    false
+}
+
+/// Every place the source starts, or could start, a program through `Command` (by identifier, not by text).
+pub fn command_uses(src: &str) -> Vec<CommandUse> {
+    let t = tokenize(src);
+    let mut out = Vec::new();
+    for k in 0..t.len() {
+        if id(&t, k) != Some("Command") {
+            continue;
+        }
+        // `Command :: new`, or `< Command > :: new`
+        let after = if is_p(&t, k + 1, '>') { k + 2 } else { k + 1 };
+        if is_sep(&t, after) && id(&t, after + 2) == Some("new") {
+            if is_p(&t, after + 3, '(') {
+                let program = match t.get(after + 4) {
+                    Some(Tok {
+                        kind: Kind::Str(s), ..
+                    }) if is_p(&t, after + 5, ')') => Some(s.clone()),
+                    _ => None,
+                };
+                out.push(CommandUse::Call {
+                    line: t[k].line,
+                    program,
+                    in_test: in_test_item(&t, k),
+                });
+            } else {
+                out.push(CommandUse::Indirect {
+                    line: t[k].line,
+                    what: "Command::new not called at once".to_string(),
+                });
+            }
+        }
+    }
+    // a `type X = ... Command ...;`
+    for k in 0..t.len() {
+        if id(&t, k) == Some("type")
+            && !is_p(&t, k.wrapping_sub(1), '.')
+            && let Some(end) = (k..t.len()).find(|&j| is_p(&t, j, ';'))
+            && (k..end).any(|j| id(&t, j) == Some("Command"))
+        {
+            out.push(CommandUse::Indirect {
+                line: t[k].line,
+                what: "a type that names Command".to_string(),
+            });
+        }
+    }
+    out
+}
+
+/// The lines where `ty` (one of `types`, also written `<ty>`) is followed by `::method`, with any spacing and over any
+/// number of lines: `TcpStream::connect`, `<TcpListener>::bind`, `loopback::Stream :: connect`.
+pub fn assoc_calls(src: &str, types: &[&str], method: &str) -> Vec<usize> {
+    let t = tokenize(src);
+    let mut out = Vec::new();
+    for k in 0..t.len() {
+        let Some(name) = id(&t, k) else { continue };
+        if !types.contains(&name) {
+            continue;
+        }
+        let after = if is_p(&t, k + 1, '>') { k + 2 } else { k + 1 };
+        if is_sep(&t, after) && id(&t, after + 2) == Some(method) {
+            out.push(t[k].line);
+        }
+    }
+    out
+}
+
+/// The crate's own Rust sources to scan, by the rule of the guards: everything under `src`, `tests` and `fuzz`, and
+/// `build.rs`. Only the build output is skipped, and only where cargo puts it: `<root>/target`, and the cargo-fuzz
+/// directories `<root>/fuzz/{target,corpus,artifacts}`. A directory of that name anywhere else (under `src`, say) is
+/// ordinary source and is read.
+pub fn crate_sources(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    fn walk(
+        dir: &std::path::Path,
+        skip: &dyn Fn(&std::path::Path) -> bool,
+        out: &mut Vec<std::path::PathBuf>,
+    ) {
+        let Ok(read) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in read.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if !skip(&p) {
+                    walk(&p, skip, out);
+                }
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    let skip = |p: &std::path::Path| {
+        p == root.join("target")
+            || ["target", "corpus", "artifacts"]
+                .iter()
+                .any(|n| p == root.join("fuzz").join(n))
+    };
+    let mut files = Vec::new();
+    for d in ["src", "tests", "fuzz"] {
+        walk(&root.join(d), &skip, &mut files);
+    }
+    if root.join("build.rs").is_file() {
+        files.push(root.join("build.rs"));
+    }
+    files.sort();
+    files
 }
