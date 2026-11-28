@@ -1,0 +1,1 @@
+- A claim sweep reads only the deadlock marks of the rooms and the time span of its lapses, so the read no longer grows with the stale marks of every room; new tests pin the lapse prune boundary, the window edges and room isolation of the mark read, and its equivalence with the per-lapse read (#1757).
