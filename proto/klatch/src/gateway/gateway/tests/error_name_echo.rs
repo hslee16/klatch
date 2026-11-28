@@ -176,9 +176,9 @@ fn a_label_chain_error_is_bounded_and_ascii() {
 
 /// The names a caller types. An error that formats one of these must pass it through `shown`, unless the site is in
 /// `ALLOWED` with a reason.
-const NAMEISH: [&str; 14] = [
+const NAMEISH: &[&str] = &[
     "name", "member", "room", "via", "to", "from", "label", "key", "id", "anchor", "event",
-    "method", "owner", "path",
+    "method", "owner", "path", "other",
 ];
 
 /// (file suffix, name, why a raw echo there is safe). Each is a value that has already passed `valid_name`,
