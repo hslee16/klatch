@@ -39,6 +39,15 @@ fn refuses(h: &Held, req: &Attempt) -> bool {
     h.owner != req.owner && overlaps(&h.path, req.path) && scopes_collide(&h.scope, req.scope)
 }
 
+/// A claim path is never empty (#1769): an empty path is the key of a deadlock mark in `claim_yields`, so a claim on
+/// one would collide with the marks, and the batched mark read of the lapse sweep relies on there being none.
+fn refuse_empty_path(path: &str) -> Result<()> {
+    if path.is_empty() {
+        return Err(Error::Invalid("a claim path is empty".into()));
+    }
+    Ok(())
+}
+
 /// Seconds a claim has been held, 0 when its start is unknown.
 pub(super) fn held_for(since: i64, now: i64) -> i64 {
     if since > 0 { (now - since).max(0) } else { 0 }
@@ -169,22 +178,27 @@ impl SqliteStore {
         if lapsed.is_empty() {
             return Ok(());
         }
+        // Invariant (#1769): no claim has an empty path (`take_claim` and `do_passive_claim` refuse one, as does the
+        // gateway's `check_path`). A lapse with an empty path would write its own mark row (a mark is the row with an
+        // empty path) mid-sweep, and the marks read once below would then differ from what the old per-lapse loop saw.
+        debug_assert!(
+            lapsed.iter().all(|l| !l.path.is_empty()),
+            "a lapse with an empty path"
+        );
         let marks = self.lapsed_marks(lapsed)?;
-        // grouped by (room, member), so a lapse looks at the marks of its own holder only
-        let mut by_holder: std::collections::HashMap<(&str, &str), Vec<i64>> =
-            std::collections::HashMap::new();
-        for (room, member, ts) in &marks {
-            by_holder.entry((room, member)).or_default().push(*ts);
-        }
+        // keyed by (room, member), so a lapse looks at the mark of its own holder only; the schema allows one mark per
+        // key (the primary key is room, member, path and a mark's path is empty)
+        let by_holder: std::collections::HashMap<(&str, &str), i64> = marks
+            .iter()
+            .map(|(room, member, ts)| ((room.as_str(), member.as_str()), *ts))
+            .collect();
         for l in lapsed.iter().filter(|l| {
             by_holder
                 .get(&(l.room.as_str(), l.owner.as_str()))
-                .is_some_and(|tss| {
-                    tss.iter().any(|ts| {
-                        #[cfg(test)]
-                        MATCH_WORK.with(|w| w.set(w.get() + 1));
-                        *ts >= l.expires.saturating_sub(YIELD_WINDOW_SECS) && *ts <= l.expires
-                    })
+                .is_some_and(|ts| {
+                    #[cfg(test)]
+                    MATCH_WORK.with(|w| w.set(w.get() + 1));
+                    *ts >= l.expires.saturating_sub(YIELD_WINDOW_SECS) && *ts <= l.expires
                 })
         }) {
             self.mark_yield_end(&l.room, (&l.owner, &l.path), l.expires)?;
@@ -491,6 +505,7 @@ impl SqliteStore {
         request: &ClaimRequest,
         now: i64,
     ) -> Result<PassiveTaken> {
+        refuse_empty_path(request.path)?;
         let attempt = Attempt {
             room: request.room,
             owner: request.owner,
@@ -548,6 +563,7 @@ impl SqliteStore {
     }
 
     pub(super) fn take_claim(&self, request: &ClaimRequest, now: i64) -> Result<()> {
+        refuse_empty_path(request.path)?;
         let attempt = Attempt {
             room: request.room,
             owner: request.owner,

@@ -390,3 +390,121 @@ fn matching_marks_to_lapses_is_linear_not_lapses_times_marks() {
         10_000
     );
 }
+
+// the i64 edges (#1769): a lease end or a mark at the extremes must neither overflow nor lose the match. A plain `-`
+// in place of `saturating_sub` panics in a debug build and wraps to a huge bound in a release build, which drops the
+// mark at i64::MIN; both fail these assertions.
+
+const MAX_MARK: i64 = i64::MAX - 1;
+
+#[test]
+fn note_yield_end_at_the_lowest_instant_matches_a_mark_there() {
+    let s = store();
+    mark(&s, "r", "bob", i64::MIN);
+    s.note_yield_end("r", ("bob", "job"), i64::MIN).unwrap();
+    assert_eq!(
+        yields(&s).iter().filter(|y| y.2 == "job").count(),
+        1,
+        "{:?}",
+        yields(&s)
+    );
+}
+
+#[test]
+fn note_yield_end_at_the_highest_instants_matches_a_mark_there() {
+    let s = store();
+    mark(&s, "r", "bob", MAX_MARK);
+    s.note_yield_end("r", ("bob", "job"), MAX_MARK).unwrap();
+    assert!(yields(&s).iter().any(|y| y.2 == "job"));
+}
+
+#[test]
+fn a_lapse_ending_at_the_lowest_instant_is_marked_by_a_mark_there() {
+    let s = store();
+    mark(&s, "r", "bob", i64::MIN);
+    s.note_lapsed_yield_ends(&[lapsed("r", "bob", "job", i64::MIN)])
+        .unwrap();
+    assert!(yields(&s).iter().any(|y| y.2 == "job"), "{:?}", yields(&s));
+}
+
+#[test]
+fn lapsed_marks_returns_marks_at_both_extremes_for_a_sweep_spanning_them() {
+    let s = store();
+    mark(&s, "r", "a", i64::MIN);
+    mark(&s, "r", "b", MAX_MARK);
+    let ls = [
+        lapsed("r", "a", "p", i64::MIN),
+        lapsed("r", "b", "q", MAX_MARK),
+    ];
+    let mut got = s.lapsed_marks(&ls).unwrap();
+    got.sort();
+    assert_eq!(
+        got,
+        [
+            ("r".to_string(), "a".to_string(), i64::MIN),
+            ("r".to_string(), "b".to_string(), MAX_MARK)
+        ]
+    );
+}
+
+#[test]
+fn a_sweep_spanning_the_extremes_marks_both_and_matches_the_per_lapse_path() {
+    let ls = [
+        lapsed("r", "a", "p", i64::MIN),
+        lapsed("r", "b", "q", MAX_MARK),
+        lapsed("r", "c", "z", 0),
+    ];
+    // c has a mark far from its lease end, so it stays unmarked
+    let marks = [
+        ("r".to_string(), "a".to_string(), i64::MIN),
+        ("r".to_string(), "b".to_string(), MAX_MARK),
+        ("r".to_string(), "c".to_string(), i64::MIN),
+    ];
+    same_yields(&ls, &marks, "extremes");
+    let s = store();
+    for (room, member, ts) in &marks {
+        mark(&s, room, member, *ts);
+    }
+    s.note_lapsed_yield_ends(&ls).unwrap();
+    let ended: Vec<String> = yields(&s)
+        .into_iter()
+        .filter(|y| !y.2.is_empty())
+        .map(|y| y.2)
+        .collect();
+    assert_eq!(ended, ["p", "q"]);
+}
+
+// a claim never has an empty path (#1769): the gateway's check_path refuses one, and the store refuses it too, so a
+// lapse with an empty path (which would overwrite its own mark row mid-sweep) cannot come out of the claims table
+
+#[test]
+fn the_store_refuses_an_explicit_claim_with_an_empty_path() {
+    let s = store();
+    let err = s
+        .claim(&ClaimRequest::new(("r", "bob"), "", 100, ""), NOW)
+        .unwrap_err();
+    assert!(matches!(err, crate::domain::Error::Invalid(_)), "{err:?}");
+    let n: i64 = s
+        .conn
+        .query_row("SELECT COUNT(*) FROM claims", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
+#[test]
+fn the_store_refuses_a_passive_claim_with_an_empty_path() {
+    let s = store();
+    let err = s
+        .do_passive_claim(&ClaimRequest::new(("r", "bob"), "", 100, ""), NOW)
+        .expect_err("refused");
+    assert!(matches!(err, crate::domain::Error::Invalid(_)), "{err:?}");
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "empty path")]
+fn a_lapse_with_an_empty_path_trips_the_debug_assertion() {
+    let s = store();
+    s.note_lapsed_yield_ends(&[lapsed("r", "bob", "", 100)])
+        .unwrap();
+}
