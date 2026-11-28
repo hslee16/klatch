@@ -17,6 +17,10 @@ pub struct ReviewItem {
     pub from_label: String,
     pub reason: String,
     pub text: String,
+    /// The room a verdict would release the message into, for a crossing request (#1751); empty for a plain item.
+    /// Only the reviewer is shown it. No judge prompt uses it, and the requester's name is never on an item: one
+    /// message can wait once per requester and target room, and the reviewer needs the place, not the person.
+    pub to_room: String,
 }
 
 /// What a judge returns. `Defer` means "no decision": the item stays queued, which is how an unreachable or absent

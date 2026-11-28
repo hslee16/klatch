@@ -299,6 +299,19 @@ item. A drain run is bounded by the cap times the number of members. The
 walk fails with an error, and leaves the queue as it is, if a store hands back a page that does not move forward.
 The cap is per member name, not per owner: one owner with many identities has many caps (#1745).
 
+**One message, several items; one ruling each (#1751).** One message can wait once per requester and target room (the
+dedupe key is the message, the label, the requester and the target room), so the judge and the reviewer are shown the
+same text once for each such item and may rule differently on each: a message allowed into one room can be denied into
+another, or redacted differently, and each verdict applies to its own item only (it is per id). The text is judged
+against the item's own label, so two items of one message differ only in the room and the requester. The reviewer's
+`review next` and `review_next` show the item's target room (plain characters `A-Za-z0-9._-` only, capped at 40, as
+data) so the reviewer can tell such items apart and knows where a verdict releases the text; a plain (non-crossing)
+item shows no target room. The requester's name is not shown to the reviewer or to a judge: the reviewer needs the place
+a verdict crosses to, not the person who asked, and a name would invite a ruling based on who asked (the human's
+`klatch admin review-queue` lists both). The target room must pass the same clearance check as the source: an item
+whose target room the reviewer cannot read is skipped like one whose text it cannot read, its room name is never shown,
+and a verdict on it, like one on an item whose source room it cannot read, gets exactly the error a missing id gets (`no waiting review N`), never a clearance refusal, which would carry the room's name and label to a reviewer walking the sequential ids. No judge prompt includes the target room.
+
 **What the default judge does.** The default is the local rules judge (`klatch judge run`; no model, no network, no
 cost, no new dependency). It has these checks, in this order, and the first to match decides. (1) The credential scanner:
 private key blocks; keys and tokens of well-known shapes (npm, AWS access keys, GitHub, Slack, Stripe, Google API keys,

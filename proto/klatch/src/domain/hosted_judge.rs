@@ -100,6 +100,7 @@ mod tests {
             from_label: label.into(),
             reason: "crossing".into(),
             text: "the text".into(),
+            to_room: String::new(),
         }
     }
 

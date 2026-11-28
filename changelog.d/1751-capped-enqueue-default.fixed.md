@@ -1,0 +1,1 @@
+- The default `enqueue_review_capped` returns a waiting duplicate instead of refusing it at the cap, and the review feature probe now runs the two capped tests and the dedupe-key test (#1751).

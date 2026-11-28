@@ -310,6 +310,7 @@ impl Client {
             room: str_of(&item["room"]),
             seq: item["seq"].as_u64().unwrap_or(0),
             to_label: str_of(&item["to_label"]),
+            to_room: str_of(&item["to_room"]),
             reason: str_of(&item["reason"]),
             text: str_of(&item["text"]),
         }))

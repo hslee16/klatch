@@ -27,6 +27,7 @@ fn a_reviewer_reads_the_queue_and_records_a_verdict() {
         (item.room.as_str(), item.text.as_str()),
         ("r", "candidate text")
     );
+    assert_eq!(item.to_room, "", "a plain item has no target room");
     g.review_verdict(&rev(), item.id, &Verdict::Deny("leaks".into()))
         .unwrap();
     assert!(g.review_next(&rev()).unwrap().is_none());
@@ -134,7 +135,7 @@ fn a_reviewer_is_held_to_clearance() {
         "above its clearance"
     );
     let id = g.store.pending_reviews(1).unwrap()[0].id;
-    assert!(is_refused(g.review_verdict(&rev(), id, &Verdict::Allow)));
+    assert!(is_invalid(g.review_verdict(&rev(), id, &Verdict::Allow)));
     g.admin_set_clearance(&admin(), "rev", "private").unwrap();
     assert!(g.review_next(&rev()).unwrap().is_some());
 }

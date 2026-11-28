@@ -252,6 +252,7 @@ mod tests {
             from_label: "public".into(),
             reason: "x".into(),
             text: "t".into(),
+            to_room: String::new(),
         };
         assert_eq!(stack.judge(&item), klatch::domain::Verdict::Defer);
     }

@@ -73,6 +73,7 @@ pub(crate) fn load_item<S: Store>(store: &S, q: &QueuedReview) -> Result<Option<
             from_label: m.label,
             reason: q.reason.clone(),
             text: m.body,
+            to_room: q.to_room.clone(),
         }))
 }
 

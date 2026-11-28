@@ -15,6 +15,8 @@ pub fn review_item(n: usize, item: &Item) -> ReviewItem {
         from_label: item.label.clone(),
         reason: "crossing".into(),
         text: item.text.clone(),
+        // judge-eval items are not crossing requests: no target room, and no judge prompt uses it
+        to_room: String::new(),
     }
 }
 
