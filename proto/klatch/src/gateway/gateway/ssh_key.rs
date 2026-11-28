@@ -18,11 +18,15 @@ impl<S: Store> Gateway<S> {
     ) -> Result<()> {
         if !valid_label(label) {
             return Err(Error::Invalid(format!(
-                "bad ssh key label: {label:?}; use 1 to 40 letters, digits, '.', '_' or '-'"
+                "bad ssh key label: \"{}\"; use 1 to 40 letters, digits, '.', '_' or '-'",
+                shown(label)
             )));
         }
         if !valid_name(member) || is_reserved_name(member) {
-            return Err(Error::Invalid(format!("bad member name: {member}")));
+            return Err(Error::Invalid(format!(
+                "bad member name: {}",
+                shown(member)
+            )));
         }
         self.administer(who, ("ssh-key", &format!("{label}/{member}={on}")), |now| {
             let key = format!("{POLICY_PREFIX}{label}");
@@ -32,7 +36,7 @@ impl<S: Store> Gateway<S> {
                     let e = Error::Refused {
                         rule: "ssh-key-mapped".into(),
                         reason: format!(
-                            "key {label} is already mapped to {other}; unmap it first with `klatch admin ssh-key {label} {other} --off`"
+                            "key {label} is already mapped to {other}; unmap it first with `klatch admin ssh-key {label} {other} --off`", label = shown(label), other = shown(other)
                         ),
                     };
                     self.note_refusal(who, ("*", "admin:ssh-key"), &e);
@@ -42,7 +46,7 @@ impl<S: Store> Gateway<S> {
                 (false, Some(h)) if h == member => self.store.policy_set(&key, None, now)?,
                 (false, _) => {
                     return Err(Error::Invalid(format!(
-                        "key {label} is not mapped to {member}; nothing was changed"
+                        "key {label} is not mapped to {member}; nothing was changed", label = shown(label), member = shown(member)
                     )));
                 }
             }

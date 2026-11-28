@@ -289,3 +289,32 @@ fn klatch_item(to_room: &str) -> crate::domain::ReviewItem {
         to_room: to_room.into(),
     }
 }
+
+#[test]
+fn an_unknown_wire_act_is_named_capped_and_ascii() {
+    let g = gateway();
+    let hostile = format!(
+        "\u{1b}[31m\u{202e}\u{e0041}\n{}\u{1b}]0;x\u{7}\r",
+        "a".repeat(100 * 1024)
+    );
+    let f = call(&g, "ada", "role_act", json!({ "act": hostile }));
+    let text = format!("{f:?}");
+    let ServerFrame::Response { error: Some(e), .. } = &f[1] else {
+        panic!("not an error: {text:.200}")
+    };
+    assert_eq!(e.code, "unknown_act");
+    assert!(
+        e.message.is_ascii() && !e.message.chars().any(char::is_control),
+        "{:?}",
+        e.message
+    );
+    assert!(e.message.len() < 400, "{}", e.message.len());
+    let f = call(&g, "ada", "role_act", json!({ "act": "tele port" }));
+    let ServerFrame::Response { error: Some(e), .. } = &f[1] else {
+        panic!("not an error")
+    };
+    assert_eq!(
+        e.message,
+        "tele port is not an act a role can call over the wire"
+    );
+}

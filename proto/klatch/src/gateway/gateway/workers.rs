@@ -91,7 +91,8 @@ fn check_spec(spec: &CredentialSpec) -> Result<()> {
     } = *spec;
     if !valid_name(member) || crate::domain::is_reserved_name(member) {
         return Err(Error::Invalid(format!(
-            "not a usable worker name: {member}"
+            "not a usable worker name: {}",
+            shown(member)
         )));
     }
     check_lifetimes(ttl, max_life)?;
@@ -195,13 +196,19 @@ impl<S: Store> Gateway<S> {
     /// Revoke a worker's credential: its token stops working at once.
     pub fn admin_revoke_credential(&self, who: &Principal, member: &str) -> Result<()> {
         if !valid_name(member) {
-            return Err(Error::Invalid(format!("bad member name: {member}")));
+            return Err(Error::Invalid(format!(
+                "bad member name: {}",
+                shown(member)
+            )));
         }
         self.administer(who, ("revoke-credential", member), |now| {
             if self.store.revoke_credential(member, now)? {
                 Ok(String::new())
             } else {
-                Err(Error::NotFound(format!("{member} has no live credential")))
+                Err(Error::NotFound(format!(
+                    "{member} has no live credential",
+                    member = shown(member)
+                )))
             }
         })
     }

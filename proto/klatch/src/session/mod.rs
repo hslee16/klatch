@@ -479,8 +479,9 @@ fn member_fixed_refusal(field: &str) -> crate::domain::Error {
     crate::domain::Error::Refused {
         rule: "member-fixed".into(),
         reason: format!(
-            "this session's member is fixed by its ssh key; the request field `{field}` claims an identity and is refused; \
-             drop it, the member is whoever the key is mapped to"
+            "this session's member is fixed by its ssh key; the request field `{}` claims an identity and is refused; \
+             drop it, the member is whoever the key is mapped to",
+            crate::domain::shown(field)
         ),
     }
 }

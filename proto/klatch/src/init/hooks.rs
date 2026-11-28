@@ -8,12 +8,16 @@ pub const EVENTS: [&str; 3] = ["SessionStart", "UserPromptSubmit", "PostToolUse"
 /// A binary path a hook command can carry: absolute and free of anything a shell would act on.
 pub(super) fn check_bin_path(bin: &str) -> Result<(), String> {
     if !bin.starts_with('/') {
-        return Err(format!("the binary path must be absolute: {bin}"));
+        return Err(format!(
+            "the binary path must be absolute: {}",
+            klatch::domain::shown(bin)
+        ));
     }
     let unsafe_char = |c: char| matches!(c, '$' | '`' | '\'' | '"' | '\\') || c.is_control();
     if bin.chars().any(unsafe_char) {
         return Err(format!(
-            "the binary path has a character a hook command cannot carry safely (a shell variable, quote, backslash or control character): {bin}"
+            "the binary path has a character a hook command cannot carry safely (a shell variable, quote, backslash or control character): {}",
+            klatch::domain::shown(bin)
         ));
     }
     Ok(())
@@ -21,7 +25,10 @@ pub(super) fn check_bin_path(bin: &str) -> Result<(), String> {
 
 pub(super) fn check_event_name(event: &str) -> Result<(), String> {
     if event.is_empty() || !event.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return Err(format!("bad hook event name: {event}"));
+        return Err(format!(
+            "bad hook event name: {}",
+            klatch::domain::shown(event)
+        ));
     }
     Ok(())
 }
@@ -63,7 +70,10 @@ pub(crate) fn command_with(
     let mut cmd = format!("{} {mode} hook --event {event}", shell_path(bin));
     if let Some(room) = board {
         if !klatch::domain::valid_name(room) {
-            return Err(format!("bad board room name: {room:?}"));
+            return Err(format!(
+                "bad board room name: \"{}\"",
+                klatch::domain::shown(room)
+            ));
         }
         if event == "SessionStart" {
             cmd.push_str(&format!(" --board {room}"));
@@ -335,4 +345,49 @@ pub fn set_session_end(settings: &mut Value, bin: &str, on: bool) -> Result<(), 
         hooks.remove(EVENT);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refused_event_or_room_name_is_shown_capped_and_ascii() {
+        let hostile = format!("{}\u{1b}[31m\u{202e}\u{e0041}\n", "n".repeat(100 * 1024));
+        let e = check_event_name(&hostile).unwrap_err();
+        assert!(
+            e.is_ascii() && !e.chars().any(char::is_control) && e.len() < 200,
+            "{e:?}"
+        );
+        assert_eq!(
+            check_event_name("a b").unwrap_err(),
+            "bad hook event name: a b"
+        );
+        let e = hook_command("/bin/klatch", "SessionStart", Some(&hostile), false).unwrap_err();
+        assert!(
+            e.is_ascii() && !e.chars().any(char::is_control) && e.len() < 200,
+            "{e:?}"
+        );
+        assert_eq!(
+            hook_command("/bin/klatch", "SessionStart", Some("a b"), false).unwrap_err(),
+            "bad board room name: \"a b\""
+        );
+    }
+
+    #[test]
+    fn a_refused_binary_path_is_shown_capped_and_ascii() {
+        let hostile = format!("/{}\u{1b}[31m\u{202e}\u{e0041}\n", "n".repeat(100 * 1024));
+        let e = check_bin_path(&hostile).unwrap_err();
+        assert!(
+            e.is_ascii() && !e.chars().any(char::is_control) && e.len() < 400,
+            "{}",
+            e.len()
+        );
+        let e = check_bin_path(&"n".repeat(100 * 1024)).unwrap_err();
+        assert!(e.len() < 400, "{}", e.len());
+        assert_eq!(
+            check_bin_path("rel/x").unwrap_err(),
+            "the binary path must be absolute: rel/x"
+        );
+    }
 }

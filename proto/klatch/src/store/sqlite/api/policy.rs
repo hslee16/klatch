@@ -123,7 +123,8 @@ impl PolicyStore for SqliteStore {
     ) -> Result<()> {
         if !is_proof_key(key) {
             return Err(Error::Invalid(format!(
-                "{key} is not a key of the admin passphrase"
+                "{} is not a key of the admin passphrase",
+                audit_target(key)
             )));
         }
         self.write_policy(key, value, now)

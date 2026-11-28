@@ -24,8 +24,12 @@ impl LabelChain {
         match check_chain(&names) {
             Ok(()) => Ok(Self(names)),
             Err(ChainError::TooFew) => Err("a label chain needs at least two levels".into()),
-            Err(ChainError::BadName(i)) => Err(format!("bad label name: {}", names[i])),
-            Err(ChainError::Repeat(i)) => Err(format!("label {} appears twice", names[i])),
+            Err(ChainError::BadName(i)) => {
+                Err(format!("bad label name: {}", super::shown(&names[i])))
+            }
+            Err(ChainError::Repeat(i)) => {
+                Err(format!("label {} appears twice", super::shown(&names[i])))
+            }
         }
     }
 

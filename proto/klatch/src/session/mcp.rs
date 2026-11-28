@@ -166,7 +166,10 @@ impl<'a, B: Backend + ?Sized> McpServer<'a, B> {
             "ping" => Ok(json!({})),
             "tools/list" => Ok(json!({ "tools": tool_list() })),
             "tools/call" => self.tools_call(&params),
-            other => Err(rpc_error(METHOD_NOT_FOUND, format!("no method {other}"))),
+            other => Err(rpc_error(
+                METHOD_NOT_FOUND,
+                format!("no method {}", crate::domain::shown(other)),
+            )),
         }
     }
 
@@ -240,7 +243,12 @@ impl<'a, B: Backend + ?Sized> McpServer<'a, B> {
                 )
             }
             "klatch_wait" => self.wait(&parse(args)?)?,
-            other => return Err(rpc_error(INVALID_PARAMS, format!("no tool {other}"))),
+            other => {
+                return Err(rpc_error(
+                    INVALID_PARAMS,
+                    format!("no tool {}", crate::domain::shown(other)),
+                ));
+            }
         };
         Ok(tool_result(outcome))
     }
@@ -373,8 +381,12 @@ struct Polled {
 }
 
 fn parse<T: for<'de> Deserialize<'de>>(args: Value) -> Result<T, RpcError> {
-    serde_json::from_value(args)
-        .map_err(|e| rpc_error(INVALID_PARAMS, format!("bad arguments: {e}")))
+    serde_json::from_value(args).map_err(|e| {
+        rpc_error(
+            INVALID_PARAMS,
+            format!("bad arguments: {}", crate::domain::shown(e.to_string())),
+        )
+    })
 }
 
 fn put<T: serde::Serialize>(params: &mut Value, key: &str, value: Option<T>) {

@@ -343,3 +343,115 @@ fn a_link_without_a_name_or_uri_is_skipped_and_the_prompt_still_answers() {
     assert!(text.contains("librarian"), "{text}");
     assert_eq!(stop, "end_turn");
 }
+
+fn hostile() -> String {
+    format!(
+        "\u{1b}[31m\u{202e}\u{e0041}\n{}\u{1b}]0;x\u{7}\u{2066}\r",
+        "n".repeat(100 * 1024)
+    )
+}
+
+fn assert_bounded(text: &str, site: &str) {
+    assert!(
+        text.is_ascii() && !text.chars().any(char::is_control),
+        "{site}: {text:?}"
+    );
+    assert!(text.len() < 400, "{site}: {} bytes", text.len());
+}
+
+#[test]
+fn an_unknown_acp_method_is_named_capped_and_ascii() {
+    let h = hostile();
+    let call = json!({"jsonrpc":"2.0","id":1,"method":h,"params":{}});
+    let out = drive(
+        &gateway(),
+        "lib",
+        &[call, json!({"jsonrpc":"2.0","id":2,"method":"tele port"})],
+    );
+    assert_bounded(
+        out[0]["error"]["message"].as_str().unwrap(),
+        "acp no method",
+    );
+    assert_eq!(out[1]["error"]["message"], "no method tele port");
+}
+
+fn mcp(lines: &[Value]) -> Vec<Value> {
+    let g = gateway();
+    let p = who("lib");
+    let config = SessionConfig::default();
+    let session = Session::new(&g, &p, &config);
+    let input: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    let mut out = Vec::new();
+    super::mcp::McpServer::new(&session, String::new())
+        .serve(Cursor::new(input), &mut out)
+        .unwrap();
+    String::from_utf8(out)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+#[test]
+fn the_mcp_errors_that_repeat_the_caller_are_named_capped_and_ascii() {
+    let h = hostile();
+    let call = |id: u64, method: &str, params: Value| json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
+    let out = mcp(&[
+        call(1, &h, json!({})),
+        call(2, "tools/call", json!({"name": h, "arguments": {}})),
+        call(
+            3,
+            "tools/call",
+            json!({"name":"klatch_read","arguments":{"room":"r","peek":h}}),
+        ),
+        call(4, "tele port", json!({})),
+        call(5, "tools/call", json!({"name":"nope","arguments":{}})),
+    ]);
+    for (i, site) in ["mcp no method", "mcp no tool", "mcp bad arguments"]
+        .iter()
+        .enumerate()
+    {
+        assert_bounded(out[i]["error"]["message"].as_str().unwrap(), site);
+    }
+    assert_eq!(out[3]["error"]["message"], "no method tele port");
+    assert_eq!(out[4]["error"]["message"], "no tool nope");
+}
+
+/// The strings in a value, deep.
+fn strings(v: &Value, out: &mut Vec<String>) {
+    match v {
+        Value::String(s) => out.push(s.clone()),
+        Value::Array(a) => a.iter().for_each(|x| strings(x, out)),
+        Value::Object(o) => o.values().for_each(|x| strings(x, out)),
+        _ => {}
+    }
+}
+
+#[test]
+fn an_unknown_acp_query_word_is_capped_and_ascii() {
+    let h = hostile().replace(char::is_whitespace, "_");
+    let out = drive(&gateway(), "lib", &[new_session(), prompt(3, &h)]);
+    let mut all = Vec::new();
+    out.iter().for_each(|m| strings(m, &mut all));
+    let hit: Vec<_> = all.iter().filter(|s| s.contains("I do not know")).collect();
+    assert!(!hit.is_empty(), "{out:?}");
+    for s in hit {
+        // the reply may carry more lines (a hint); the echoed word is the quoted part
+        let word = s.split('"').nth(1).unwrap();
+        assert_bounded(word, "acp query word");
+        assert!(s.len() < 1000, "{}", s.len());
+        assert!(s.is_ascii(), "{s:?}");
+    }
+}
+
+#[test]
+fn a_release_that_finds_no_claim_names_a_hostile_path_capped_and_ascii() {
+    let g = gateway();
+    let me = who("bob");
+    g.join(&me, "lobby").unwrap();
+    // a claim path may hold bidi and tag characters (no control characters), up to 1024 bytes
+    let path = format!("/{}\u{202e}\u{e0041}x", "p".repeat(900));
+    let e = g.release(&me, "lobby", &path).unwrap_err();
+    assert!(e.to_string().contains("no claim"), "{e}");
+    assert_bounded(&e.to_string(), "release no claim");
+}

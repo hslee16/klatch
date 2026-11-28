@@ -133,7 +133,8 @@ fn parse_query(text: &str) -> Result<Query, String> {
             })
         }
         other => Err(format!(
-            "I do not know {other:?}, and I only look; I cannot do anything that changes a room"
+            "I do not know \"{}\", and I only look; I cannot do anything that changes a room",
+            crate::domain::shown(other)
         )),
     }
 }
@@ -214,7 +215,10 @@ impl<'a, B: Backend + ?Sized> AcpServer<'a, B> {
                 INVALID_PARAMS,
                 "no authentication method is advertised".to_string(),
             )),
-            other => Err((METHOD_NOT_FOUND, format!("no method {other}"))),
+            other => Err((
+                METHOD_NOT_FOUND,
+                format!("no method {}", crate::domain::shown(other)),
+            )),
         };
         out.push(match reply {
             Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),

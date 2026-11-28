@@ -69,13 +69,16 @@ impl fmt::Display for Error {
             } => {
                 write!(
                     f,
-                    "refused: {path} is claimed by {owner} for another {secs_left}s"
+                    "refused: {} is claimed by {} for another {secs_left}s",
+                    crate::domain::shown(path),
+                    crate::domain::shown(owner)
                 )?;
                 if *held_secs >= crate::domain::FIRST_MILESTONE_SECS {
                     write!(
                         f,
-                        " (held for {}; ask {owner} whether it is still needed)",
-                        crate::domain::parked::span(*held_secs)
+                        " (held for {}; ask {} whether it is still needed)",
+                        crate::domain::parked::span(*held_secs),
+                        crate::domain::shown(owner)
                     )?;
                 }
                 if *deadlock {
@@ -83,10 +86,11 @@ impl fmt::Display for Error {
                     let owner = cycle.first().unwrap_or(owner);
                     write!(
                         f,
-                        "; deadlock: {owner} is waiting, directly or through others, for a path you hold, and your attempt closed the cycle, so you yield: release the claims you hold in this room, wait, then try again"
+                        "; deadlock: {owner} is waiting, directly or through others, for a path you hold, and your attempt closed the cycle, so you yield: release the claims you hold in this room, wait, then try again",
+                        owner = crate::domain::shown(owner)
                     )?;
                     if !via.is_empty() && !cycle.is_empty() {
-                        write!(f, " (the cycle: {owner} waits")?;
+                        write!(f, " (the cycle: {} waits", crate::domain::shown(owner))?;
                         let rest = &cycle[1..];
                         if !rest.is_empty() {
                             let shown = rest.len().min(MAX_CYCLE_NAMES);
@@ -95,7 +99,7 @@ impl fmt::Display for Error {
                                 write!(f, " and {} more", rest.len() - shown)?;
                             }
                         }
-                        write!(f, " for your path {via})")?;
+                        write!(f, " for your path {})", crate::domain::shown(via))?;
                     }
                 }
                 Ok(())

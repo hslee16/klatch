@@ -44,7 +44,7 @@ impl<S: Store> Gateway<S> {
         let reserved = |why: &str| {
             Err(Error::Refused {
                 rule: "run-unknown".into(),
-                reason: format!("room {room} {why}"),
+                reason: format!("room {room} {why}", room = shown(room)),
             })
         };
         let Some((id, name)) = rest.split_once('.') else {
@@ -54,7 +54,7 @@ impl<S: Store> Gateway<S> {
             return reserved("is reserved: a run room is run.<id>.<name>");
         }
         if self.store.policy_get(&format!("run:{id}"))?.is_none() {
-            return reserved(&format!("belongs to run {id}, which is not open"));
+            return reserved(&format!("belongs to run {}, which is not open", shown(id)));
         }
         Ok(())
     }
@@ -63,13 +63,14 @@ impl<S: Store> Gateway<S> {
     pub fn admin_run_create(&self, who: &Principal, id: &str) -> Result<()> {
         if !valid_run_id(id) {
             return Err(Error::Invalid(format!(
-                "a run id is 1 to 32 characters of letters, digits, dash and underscore: {id:?}"
+                "a run id is 1 to 32 characters of letters, digits, dash and underscore: \"{}\"",
+                shown(id)
             )));
         }
         self.administer(who, ("run-create", id), |now| {
             let key = format!("run:{id}");
             if self.store.policy_get(&key)?.is_some() {
-                return Err(Error::Invalid(format!("run {id} is already open")));
+                return Err(Error::Invalid(format!("run {} is already open", shown(id))));
             }
             self.store.policy_set(&key, Some(&now.to_string()), now)?;
             Ok(String::new())
@@ -85,13 +86,13 @@ impl<S: Store> Gateway<S> {
         mut archive: Option<Archive>,
     ) -> Result<DeletedRooms> {
         if !valid_run_id(id) {
-            return Err(Error::Invalid(format!("bad run id: {id:?}")));
+            return Err(Error::Invalid(format!("bad run id: \"{}\"", shown(id))));
         }
         let mut gone = DeletedRooms::default();
         self.administer(who, ("run-end", id), |now| {
             let key = format!("run:{id}");
             if self.store.policy_get(&key)?.is_none() {
-                return Err(Error::NotFound(format!("run {id} is not open")));
+                return Err(Error::NotFound(format!("run {} is not open", shown(id))));
             }
             let prefix = run_prefix(id);
             if let Some(archive) = archive.as_mut() {

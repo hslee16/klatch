@@ -38,19 +38,26 @@ impl<S: Store> Gateway<S> {
         self.authorize(who, &post_op(to))?;
         if !self.store.rooms_of(&who.member)?.iter().any(|r| r == to) {
             return Err(Error::Invalid(format!(
-                "you have not joined {to}: join it first (klatch join {to}), then ask again"
+                "you have not joined {to}: join it first (klatch join {to}), then ask again",
+                to = shown(to)
             )));
         }
         let probe = QueuedReview::pointer(from, seq);
         let Some(item) = load_item(&self.store, &probe)? else {
-            return Err(Error::Invalid(format!("no message {seq} in room {from}")));
+            return Err(Error::Invalid(format!(
+                "no message {seq} in room {from}",
+                from = shown(from)
+            )));
         };
         let label = self.message_label(from, seq)?;
         let to_label = self.room_label(to)?;
         let chain = self.chain()?;
         if chain.rank(&to_label) >= chain.rank(&label) {
             return Err(Error::Invalid(format!(
-                "room {to} is labelled {to_label}, not below the message ({label}): post it there directly"
+                "room {to} is labelled {to_label}, not below the message ({label}): post it there directly",
+                to_label = shown(to_label),
+                label = shown(label),
+                to = shown(to)
             )));
         }
         self.refuse_text(who, (to, "crossing"), &item.text)?;

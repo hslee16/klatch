@@ -173,7 +173,7 @@ fn refused(who: &Principal, what: &str) -> Error {
         rule: "facilitator".into(),
         reason: format!(
             "{} is a facilitator, which may only read, create a room, invite, post the invite pointer and send one need-info message to an asker; {what} is outside that",
-            who.member
+            shown(&who.member)
         ),
     }
 }

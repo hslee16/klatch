@@ -470,7 +470,7 @@ fn unknown_method(id: String, method: &str) -> Vec<ServerFrame> {
     vec![fail_with(
         id,
         "unknown_method",
-        format!("unknown method {method}"),
+        format!("unknown method {}", crate::domain::shown(method)),
     )]
 }
 

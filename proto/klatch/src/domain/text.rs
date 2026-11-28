@@ -109,6 +109,55 @@ pub fn overlaps(a: &str, b: &str) -> bool {
     pre(a, b) || pre(b, a)
 }
 
+/// The marker that ends a refusal audit target cut to `MAX_AUDIT_TARGET` (#1755).
+/// It is pure ASCII and starts with a bare backslash. `audit_target` writes every backslash of a key as the escape
+/// `\u{5c}`, and every other escape is `\u{..}` too, so an escaped body never contains a backslash that is not
+/// followed by `u{`: no key can end with the marker by itself and a cut target is never byte-identical to an uncut one.
+pub const TRUNCATED: &str = "\\...[truncated]";
+
+/// The most bytes a shown value holds, marker included.
+pub const MAX_AUDIT_TARGET: usize = 128;
+
+/// Whether a character is shown as an escape in an audit target: everything but printable ASCII (letters, digits,
+/// punctuation, the plain space), and the backslash itself (so a typed `\u{202e}` cannot pass for an escape). Real
+/// policy keys are ASCII, so any other character is junk that must not render like a real key: invisible format
+/// characters, fillers, tags, variation selectors, combining marks, other spaces, private-use, unassigned and
+/// noncharacter code points are all escaped, not picked from a list.
+fn needs_escape(c: char) -> bool {
+    !(c.is_ascii_graphic() || c == ' ') || c == '\\'
+}
+
+/// A caller-supplied value as it may appear in text a person or a model reads: error text, a refusal, an audit target
+/// (#1755, #1763, #1768). Every character that is not printable ASCII, and the backslash, is written as a `\u{..}`
+/// escape, and what is longer than `MAX_AUDIT_TARGET` bytes is cut at a whole character or escape and ends with
+/// `TRUNCATED`. The result is pure ASCII with no control character, so no name can steer a terminal, hide text with a
+/// bidi or tag character, or flood a reader. A plain name of printable ASCII without a backslash (letters, digits,
+/// punctuation, space) up to the cap comes back unchanged. This is the one helper for it: `store::area::audit_target` is the same function.
+pub fn shown(value: impl AsRef<str>) -> String {
+    let nk = value.as_ref();
+    let room = MAX_AUDIT_TARGET - TRUNCATED.len();
+    let mut out = String::new();
+    // the length of `out` at the last piece boundary that still leaves room for the marker
+    let mut cut = 0;
+    for c in nk.chars() {
+        if needs_escape(c) {
+            out.push_str(&format!("\\u{{{:x}}}", c as u32));
+        } else {
+            out.push(c);
+        }
+        if out.len() <= room {
+            cut = out.len();
+        }
+        if out.len() > MAX_AUDIT_TARGET {
+            // the rest is not looked at, so a 100 KB key costs no more than a short one
+            out.truncate(cut);
+            out.push_str(TRUNCATED);
+            return out;
+        }
+    }
+    out
+}
+
 /// Every string of 0 to 3 pieces drawn from `pieces` (multi-byte characters included).
 #[cfg(test)]
 pub(crate) fn short_strings(pieces: &[&str]) -> Vec<String> {
@@ -126,6 +175,46 @@ pub(crate) fn short_strings(pieces: &[&str]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shown_leaves_a_plain_name_alone_and_escapes_the_rest() {
+        for plain in [
+            "",
+            "alice",
+            "a-b_c.d",
+            "bad name",
+            "x:y/z*",
+            &"n".repeat(128),
+        ] {
+            assert_eq!(super::shown(plain), plain);
+        }
+        assert_eq!(super::shown("a\u{1b}[31m"), "a\\u{1b}[31m");
+        assert_eq!(super::shown("a\u{202e}b\u{e0041}"), "a\\u{202e}b\\u{e0041}");
+        assert_eq!(super::shown("a\nb\r\t\0"), "a\\u{a}b\\u{d}\\u{9}\\u{0}");
+        assert_eq!(super::shown("\u{e9}\u{ff41}"), "\\u{e9}\\u{ff41}");
+        assert_eq!(super::shown("a\\b"), "a\\u{5c}b");
+    }
+
+    #[test]
+    fn shown_is_capped_pure_ascii_whatever_the_input() {
+        let hostile = format!("{}\u{1b}[31m\u{202e}\u{e0041}\r\n", "n".repeat(100 * 1024));
+        let t = super::shown(&hostile);
+        assert!(t.is_ascii() && !t.chars().any(char::is_control));
+        assert_eq!(t.len(), super::MAX_AUDIT_TARGET);
+        assert!(t.ends_with(super::TRUNCATED));
+        // exactly at the cap is not cut; one over is
+        assert_eq!(super::shown("a".repeat(128)).len(), 128);
+        assert!(super::shown("a".repeat(129)).ends_with(super::TRUNCATED));
+        // a cut never splits an escape, even when the cap falls inside one
+        for pad in 0..40 {
+            let t = super::shown(format!("{}{}", "a".repeat(pad + 90), "\u{202e}".repeat(20)));
+            assert!(t.len() <= super::MAX_AUDIT_TARGET, "{t}");
+            assert!(
+                !t.trim_end_matches(super::TRUNCATED).ends_with("\\u{20"),
+                "{t}"
+            );
+        }
+    }
+
     use super::*;
 
     /// The old character-based form of `valid_name` and `valid_kind`, kept as the reference the byte form must match

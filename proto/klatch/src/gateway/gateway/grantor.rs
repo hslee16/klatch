@@ -93,7 +93,10 @@ impl<S: Store> Gateway<S> {
         check_member(who)?;
         check_room(room)?;
         if !valid_name(member) {
-            return Err(Error::Invalid(format!("bad member name: {member}")));
+            return Err(Error::Invalid(format!(
+                "bad member name: {}",
+                shown(member)
+            )));
         }
         self.authorize(
             who,
@@ -153,7 +156,8 @@ impl<S: Store> Gateway<S> {
                 "grantor",
                 format!(
                     "{} is not the grantor of room {room}; the person at the terminal names one (klatch admin grantor)",
-                    who.member
+                    shown(&who.member),
+                    room = shown(room)
                 ),
             ));
         }
@@ -166,7 +170,10 @@ impl<S: Store> Gateway<S> {
         if label == chain.highest() {
             return Err(refuse(
                 "top-level",
-                format!("{label} is the top level; no one is granted it"),
+                format!(
+                    "{label} is the top level; no one is granted it",
+                    label = shown(label)
+                ),
             ));
         }
         self.check_grantable(label)?;
@@ -174,14 +181,23 @@ impl<S: Store> Gateway<S> {
         if !chain.dominates(&room_label, label) {
             return Err(refuse(
                 "room-label",
-                format!("room {room} is labelled {room_label}; a grant there cannot be {label}"),
+                format!(
+                    "room {room} is labelled {room_label}; a grant there cannot be {label}",
+                    room = shown(room),
+                    label = shown(label),
+                    room_label = shown(room_label)
+                ),
             ));
         }
         let own = self.clearance_of(&who.member)?;
         if !chain.dominates(&own, label) {
             return Err(refuse(
                 "own-clearance",
-                format!("you hold {own}; you cannot grant {label}"),
+                format!(
+                    "you hold {own}; you cannot grant {label}",
+                    label = shown(label),
+                    own = shown(own)
+                ),
             ));
         }
         // a room grant never hands out a label key (#896): the keys a process holds follow the global clearance, so a
@@ -192,7 +208,11 @@ impl<S: Store> Gateway<S> {
                 return Err(refuse(
                     "sealed-key",
                     format!(
-                        "room {room} is labelled {room_label}, which is sealed, and {member} holds {theirs} globally; a room grant never carries a label key, so {member} could not read it. Raise {member}'s clearance first (klatch admin clear {member} {room_label}), or leave this room ungranted"
+                        "room {room} is labelled {room_label}, which is sealed, and {member} holds {theirs} globally; a room grant never carries a label key, so {member} could not read it. Raise {member}'s clearance first (klatch admin clear {member} {room_label}), or leave this room ungranted",
+                        room = shown(room),
+                        member = shown(member),
+                        theirs = shown(theirs),
+                        room_label = shown(room_label)
                     ),
                 ));
             }
@@ -211,7 +231,10 @@ impl<S: Store> Gateway<S> {
     ) -> Result<()> {
         check_room(room)?;
         if !valid_name(member) {
-            return Err(Error::Invalid(format!("bad member name: {member}")));
+            return Err(Error::Invalid(format!(
+                "bad member name: {}",
+                shown(member)
+            )));
         }
         self.administer(who, ("grantor", &format!("{room}/{member}={on}")), |now| {
             let key = format!("{GRANTOR}{room}");
@@ -235,7 +258,10 @@ impl<S: Store> Gateway<S> {
     ) -> Result<()> {
         check_room(room)?;
         if !valid_name(member) {
-            return Err(Error::Invalid(format!("bad member name: {member}")));
+            return Err(Error::Invalid(format!(
+                "bad member name: {}",
+                shown(member)
+            )));
         }
         let shown = label.unwrap_or("none");
         self.administer(

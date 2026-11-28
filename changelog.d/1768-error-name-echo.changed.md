@@ -1,0 +1,1 @@
+- An error that repeats a name the caller typed (a bad member, room, rule, label, run id, anchor or key name, an unknown session, MCP or ACP method or tool, an MCP argument error) now shows it capped at 128 bytes and escaped to plain ASCII, like the refusal audit target, so a long or control-laden name cannot flood or steer a terminal (#1768).
