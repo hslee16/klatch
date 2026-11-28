@@ -20,6 +20,16 @@ pub(super) fn pending_after_tail(after: i64) -> String {
     format!("resolved IS NULL AND id>{after} ORDER BY id")
 }
 
+/// The tail of the read of crossings whose verdict is due to be applied: run by the release drain. Answered from
+/// `review_queue_unapplied` (#1780), so the resolved and applied history is never walked.
+pub(super) const UNAPPLIED_TAIL: &str =
+    "to_room<>'' AND verdict IN ('allow','redact') AND applied='' ORDER BY id";
+
+/// The crossings of one requester from one room whose news has not all been told: run by every board digest. Answered
+/// from `review_queue_untold` (#1780), which holds only rows still short of their final notice.
+pub(super) const NOTICE_SQL: &str = "SELECT id,room,seq,to_label,reason,ts,to_room,requester,COALESCE(verdict,''),COALESCE(detail,''),redacted,applied,told \
+     FROM review_queue WHERE room=?1 AND requester=?2 AND told<2 AND to_room<>'' ORDER BY id";
+
 /// The statement behind `review_rows` for a fixed `WHERE ... ORDER BY` tail.
 pub(super) fn review_select(tail: &str) -> String {
     format!(
@@ -172,28 +182,23 @@ impl SqliteStore {
         member: &str,
     ) -> Result<Vec<QueuedReview>> {
         self.immediate(|| {
-            let rows = self.rows(
-                "SELECT id,room,seq,to_label,reason,ts,to_room,requester,COALESCE(verdict,''),COALESCE(detail,''),redacted,applied,told \
-                 FROM review_queue WHERE room=?1 AND requester=?2 AND told<2 AND to_room<>'' ORDER BY id",
-                params![room, member],
-                |r| {
-                    let q = QueuedReview {
-                        id: r.get(0)?,
-                        room: r.get(1)?,
-                        seq: r.get(2)?,
-                        to_label: r.get(3)?,
-                        reason: r.get(4)?,
-                        ts: r.get(5)?,
-                        to_room: r.get(6)?,
-                        requester: r.get(7)?,
-                        verdict: r.get(8)?,
-                        detail: r.get(9)?,
-                        redacted: r.get(10)?,
-                        applied: r.get(11)?,
-                    };
-                    Ok((q, r.get::<_, i64>(12)?))
-                },
-            )?;
+            let rows = self.rows(NOTICE_SQL, params![room, member], |r| {
+                let q = QueuedReview {
+                    id: r.get(0)?,
+                    room: r.get(1)?,
+                    seq: r.get(2)?,
+                    to_label: r.get(3)?,
+                    reason: r.get(4)?,
+                    ts: r.get(5)?,
+                    to_room: r.get(6)?,
+                    requester: r.get(7)?,
+                    verdict: r.get(8)?,
+                    detail: r.get(9)?,
+                    redacted: r.get(10)?,
+                    applied: r.get(11)?,
+                };
+                Ok((q, r.get::<_, i64>(12)?))
+            })?;
             let mut out = Vec::new();
             for (q, told) in rows {
                 let stage = if q.verdict == "deny" || !q.applied.is_empty() {

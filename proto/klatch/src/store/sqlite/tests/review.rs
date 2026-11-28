@@ -1,10 +1,11 @@
 //! The review queue (#48): a post that needs review waits here until a judge returns a verdict.
 
 use super::super::review::{
-    PENDING_TAIL, WAITING_COUNT_SQL, WAITING_SAME_SQL, pending_after_tail, review_select,
+    NOTICE_SQL, PENDING_TAIL, UNAPPLIED_TAIL, WAITING_COUNT_SQL, WAITING_SAME_SQL,
+    pending_after_tail, review_select,
 };
 use super::*;
-use crate::store::NewReview;
+use crate::store::{NewReview, ReviewResolution};
 
 fn item<'a>(room: &'a str, seq: i64) -> NewReview<'a> {
     NewReview::new(room, seq, "public", "crosses to public")
@@ -95,13 +96,11 @@ fn concurrent_connections_of_one_requester_cannot_exceed_the_cap() {
     }
 }
 
-/// The query plan of `sql` with the given parameters, one line per step.
-fn plan_of(s: &SqliteStore, sql: &str, n_params: usize) -> String {
-    let mut stmt = s
-        .conn
-        .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
-        .unwrap();
-    let params: Vec<rusqlite::types::Value> = (0..n_params).map(|_| 1i64.into()).collect();
+use rusqlite::types::Value as Sql;
+
+/// The query plan of `sql` with the given parameters bound (text where the column is text), one line per step.
+fn plan_of(c: &Connection, sql: &str, params: Vec<Sql>) -> String {
+    let mut stmt = c.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
     let rows: Vec<String> = stmt
         .query_map(rusqlite::params_from_iter(params), |r| {
             r.get::<_, String>(3)
@@ -112,36 +111,95 @@ fn plan_of(s: &SqliteStore, sql: &str, n_params: usize) -> String {
     rows.join(" | ")
 }
 
+/// Whether the plan searches the index called exactly `name` (not another whose name starts with it).
+fn uses_index(plan: &str, name: &str) -> bool {
+    plan.split(" | ").any(|step| {
+        step.split("INDEX ")
+            .nth(1)
+            .and_then(|rest| rest.split([' ', '(']).next())
+            == Some(name)
+    })
+}
+
+fn text(s: &str) -> Sql {
+    Sql::Text(s.into())
+}
+
+/// The databases every plan test runs on: a fresh one, and ones migrated from the first version and from the version
+/// just before the current one, so an index that only a migration gets wrong (#1780) fails its plan test.
+fn plan_databases() -> Vec<(String, Connection)> {
+    use super::super::schema::{MIGRATIONS, SCHEMA, migrate};
+    let fresh = Connection::open_in_memory().unwrap();
+    fresh.execute_batch(SCHEMA).unwrap();
+    let mut all = vec![("fresh".to_string(), fresh)];
+    for from in [0, MIGRATIONS.len() - 1] {
+        let c = super::migration_property::database_at(from);
+        migrate(&c, from as i64).unwrap();
+        all.push((format!("migrated from version {from}"), c));
+    }
+    all
+}
+
 #[test]
 fn the_dedupe_and_cap_lookups_of_an_enqueue_search_an_index_and_never_scan_the_queue() {
-    let s = store();
-    for (what, sql, n) in [
-        ("dedupe", WAITING_SAME_SQL.to_string(), 5),
-        ("count", WAITING_COUNT_SQL.to_string(), 1),
-    ] {
-        let plan = plan_of(&s, &sql, n);
-        assert!(
-            plan.contains("review_queue_waiting_requester"),
-            "{what}: {plan}"
-        );
-        assert!(!plan.contains("SCAN"), "{what}: {plan}");
+    for (db, c) in plan_databases() {
+        let same = vec![
+            text("r"),
+            Sql::Integer(1),
+            text("public"),
+            text("alice"),
+            text("open"),
+        ];
+        for (what, sql, params) in [
+            ("dedupe", WAITING_SAME_SQL, same),
+            ("count", WAITING_COUNT_SQL, vec![text("alice")]),
+        ] {
+            let plan = plan_of(&c, sql, params);
+            assert!(
+                uses_index(&plan, "review_queue_waiting_requester"),
+                "{db}, {what}: {plan}"
+            );
+            assert!(!plan.contains("SCAN"), "{db}, {what}: {plan}");
+        }
     }
 }
 
 #[test]
 fn the_pages_of_the_waiting_queue_search_the_waiting_index_and_never_walk_resolved_items() {
-    let s = store();
-    for (what, tail) in [
-        ("first page", PENDING_TAIL.to_string()),
-        ("later page", pending_after_tail(7)),
-    ] {
-        let plan = plan_of(&s, &review_select(&tail), 1);
-        assert!(plan.contains("review_queue_waiting"), "{what}: {plan}");
-        assert!(plan.contains("USING INDEX"), "{what}: {plan}");
+    for (db, c) in plan_databases() {
+        for (what, tail) in [
+            ("first page", PENDING_TAIL.to_string()),
+            ("later page", pending_after_tail(7)),
+        ] {
+            let plan = plan_of(&c, &review_select(&tail), vec![Sql::Integer(10)]);
+            assert!(
+                uses_index(&plan, "review_queue_waiting"),
+                "{db}, {what}: {plan}"
+            );
+            assert!(
+                !plan.contains("TEMP B-TREE"),
+                "{db}, {what}: sorted from the index: {plan}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_release_drain_and_the_board_digest_read_the_queue_through_an_index() {
+    for (db, c) in plan_databases() {
+        let drain = plan_of(&c, &review_select(UNAPPLIED_TAIL), vec![Sql::Integer(10)]);
         assert!(
-            !plan.contains("TEMP B-TREE"),
-            "{what}: sorted from the index: {plan}"
+            uses_index(&drain, "review_queue_unapplied"),
+            "{db}, unapplied: {drain}"
         );
+        assert!(!drain.contains("TEMP B-TREE"), "{db}: {drain}");
+        let notices = plan_of(&c, NOTICE_SQL, vec![text("v"), text("alice")]);
+        assert!(
+            uses_index(&notices, "review_queue_untold"),
+            "{db}, notices: {notices}"
+        );
+        assert!(!notices.contains("SCAN"), "{db}, notices: {notices}");
+        assert!(!notices.contains("TEMP B-TREE"), "{db}: {notices}");
     }
 }
 
@@ -174,4 +232,84 @@ fn a_database_from_before_the_review_indexes_gains_them_and_keeps_its_queue() {
     assert_eq!(s.waiting_crossings_of("alice").unwrap(), 1);
     assert_eq!(s.pending_reviews(10).unwrap().len(), 1);
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_version_46_database_gains_the_drain_and_notice_indexes_and_keeps_its_queue() {
+    let path = temp_db("review-migrate-indexes-46");
+    {
+        let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+        let id = s
+            .enqueue_review(
+                &NewReview::new("v", 1, "public", "crossing").crossing("open", "alice"),
+                5,
+            )
+            .unwrap();
+        s.resolve_review(&ReviewResolution::new(id, "allow", ""), 6)
+            .unwrap();
+        s.conn
+            .execute_batch(
+                "DROP INDEX review_queue_unapplied; DROP INDEX review_queue_untold; PRAGMA user_version = 46;",
+            )
+            .unwrap();
+    }
+    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+    let n: i64 = s
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name IN ('review_queue_unapplied','review_queue_untold')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 2);
+    assert_eq!(s.unapplied_reviews(10).unwrap().len(), 1);
+    assert_eq!(s.crossing_notices("v", "alice").unwrap().len(), 1);
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn the_indexes_return_the_same_rows_as_the_predicates_they_serve() {
+    let s = store();
+    let q = |seq: i64, who: &str| {
+        s.enqueue_review(
+            &NewReview::new("v", seq, "public", "crossing").crossing("open", who),
+            5,
+        )
+        .unwrap()
+    };
+    let (a, b, c) = (q(1, "alice"), q(2, "alice"), q(3, "bob"));
+    s.resolve_review(&ReviewResolution::new(a, "allow", ""), 6)
+        .unwrap();
+    s.resolve_review(&ReviewResolution::new(b, "deny", "no"), 6)
+        .unwrap();
+    assert_eq!(
+        s.unapplied_reviews(10)
+            .unwrap()
+            .iter()
+            .map(|r| r.id)
+            .collect::<Vec<_>>(),
+        vec![a]
+    );
+    s.mark_review_applied(a, "released").unwrap();
+    assert!(s.unapplied_reviews(10).unwrap().is_empty());
+    let first: Vec<i64> = s
+        .crossing_notices("v", "alice")
+        .unwrap()
+        .iter()
+        .map(|r| r.id)
+        .collect();
+    assert_eq!(first, vec![a, b], "the outcome notices of alice");
+    assert!(
+        s.crossing_notices("v", "alice").unwrap().is_empty(),
+        "told once"
+    );
+    assert_eq!(
+        s.crossing_notices("v", "bob")
+            .unwrap()
+            .iter()
+            .map(|r| r.id)
+            .collect::<Vec<_>>(),
+        vec![c]
+    );
 }

@@ -40,6 +40,8 @@ pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAU
  CREATE TABLE review_queue(id INTEGER PRIMARY KEY AUTOINCREMENT, room TEXT NOT NULL, seq INTEGER NOT NULL, to_label TEXT NOT NULL, reason TEXT NOT NULL, ts INTEGER NOT NULL, verdict TEXT, detail TEXT, resolved INTEGER, to_room TEXT NOT NULL DEFAULT '', requester TEXT NOT NULL DEFAULT '', redacted TEXT NOT NULL DEFAULT '', applied TEXT NOT NULL DEFAULT '', told INTEGER NOT NULL DEFAULT 0);
  CREATE INDEX review_queue_waiting_requester ON review_queue(requester, room, seq) WHERE resolved IS NULL;
  CREATE INDEX review_queue_waiting ON review_queue(id) WHERE resolved IS NULL;
+ CREATE INDEX review_queue_unapplied ON review_queue(id) WHERE to_room<>'' AND verdict IN ('allow','redact') AND applied='';
+ CREATE INDEX review_queue_untold ON review_queue(requester, room, id) WHERE told<2 AND to_room<>'';
  CREATE TABLE member_parked(member TEXT PRIMARY KEY, why TEXT NOT NULL, since INTEGER NOT NULL, back_by INTEGER NOT NULL);
  CREATE TABLE member_mode(member TEXT PRIMARY KEY, mode TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE TABLE member_attrs(member TEXT PRIMARY KEY, member_id TEXT NOT NULL, repository TEXT NOT NULL, directory TEXT NOT NULL, ts INTEGER NOT NULL);
@@ -519,6 +521,7 @@ pub(super) const MIGRATIONS: &[Step] = &[
     migrate_v43,
     migrate_v44,
     migrate_v45,
+    migrate_v46,
 ];
 
 /// Version 37 to 38: the references an asker attaches to an ask (#1318), one row per ref in the order given. An ask with
@@ -645,6 +648,20 @@ pub(super) fn migrate_v45(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS review_queue_waiting_requester ON review_queue(requester, room, seq) WHERE resolved IS NULL;
          CREATE INDEX IF NOT EXISTS review_queue_waiting ON review_queue(id) WHERE resolved IS NULL;",
+    )
+    .map_err(be)
+}
+
+/// Version 46 to 47: two more partial indexes on the review queue (#1780). `review_queue_unapplied` holds the crossings
+/// whose allow or redact verdict is not applied yet, the release drain's read; `review_queue_untold` holds the crossings
+/// still short of their final notice, keyed by requester and room, the read of every board digest. Both reads filtered
+/// on columns the waiting indexes do not cover and scanned the whole table with its history; each index drops a row when
+/// it is applied or fully told, so it stays as small as the work that is left. Additive and idempotent: no column or row
+/// changes, and an old database gains them when opened.
+pub(super) fn migrate_v46(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS review_queue_unapplied ON review_queue(id) WHERE to_room<>'' AND verdict IN ('allow','redact') AND applied='';
+         CREATE INDEX IF NOT EXISTS review_queue_untold ON review_queue(requester, room, id) WHERE told<2 AND to_room<>'';",
     )
     .map_err(be)
 }
