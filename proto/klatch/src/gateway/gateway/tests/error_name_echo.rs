@@ -183,7 +183,8 @@ const NAMEISH: [&str; 14] = [
 /// (file suffix, name, why a raw echo there is safe). Each is a value that has already passed `valid_name`,
 /// `valid_label`, `check_room`, `check_path` or `known_label` (a closed, short alphabet) before the error is built, or
 /// a number.
-const ALLOWED: &[(&str, &str, &str)] = [
+#[rustfmt::skip]
+const ALLOWED: &[(&str, &str, &str)] = &[
     (
         "gateway/rooms.rs",
         "member",
@@ -248,6 +249,19 @@ const ALLOWED: &[(&str, &str, &str)] = [
         "member",
         "valid_name ran first (the no-live-credential error)",
     ),
+    ("board/receipt.rs", "room", "admit ran check_room first"),
+    ("gateway/dm.rs", "room", "check_room ran first"),
+    ("gateway/policy.rs", "room", "check_room ran first (the clearance and label refusals)"),
+    ("gateway/policy.rs", "room_label", "a label read from the store"),
+    ("gateway/reviewer.rs", "id", "a numeric queue id"),
+    ("gateway/room_require.rs", "room", "check_room ran first"),
+    ("gateway/rooms.rs", "room", "valid_name ran first (the invite errors)"),
+    ("gateway/rooms.rs", "label", "a label read from the store"),
+    ("gateway/runs.rs", "room", "a room read from the run's own rooms"),
+    ("gateway/scrub.rs", "room", "check_room ran first (the refusal text)"),
+    ("gateway/scrub.rs", "label", "a label read from the store"),
+    ("domain/error.rs", "owner", "a member read from a stored claim, valid_name when it was made"),
+    ("domain/error.rs", "path", "a claim path that passed check_path when it was made"),
 ];
 
 /// The identifiers a format string reads: `{ident}` and `{ident:?}` inline, and bare identifiers among the arguments.
