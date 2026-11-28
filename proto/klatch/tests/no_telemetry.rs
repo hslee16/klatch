@@ -568,6 +568,33 @@ fn every_network_pattern_is_flagged_in_a_throwaway_source() {
     }
 }
 
+/// The guard reads `build.rs`, `tests` and `fuzz` as well as `src` (#1783): `build.rs` runs on the machine of whoever
+/// installs the crate, and the others are code the project runs.
+#[test]
+fn the_guard_reads_build_rs_tests_and_fuzz_as_well_as_src() {
+    let rels: Vec<String> = all_sources().iter().map(|(p, _)| rel_of(p)).collect();
+    for want in [
+        "build.rs",
+        "tests/no_telemetry.rs",
+        "tests/net_scan/mod.rs",
+        "src/lib.rs",
+    ] {
+        assert!(
+            rels.iter().any(|r| r == want),
+            "{want} is not read: {} files",
+            rels.len()
+        );
+    }
+    assert!(
+        rels.iter().any(|r| r.starts_with("fuzz/")),
+        "fuzz is not read"
+    );
+    assert!(
+        rels.iter().any(|r| r.starts_with("tests/")),
+        "tests are not read"
+    );
+}
+
 /// Every way past the first version of the guard (#1783) is reported, in a file with no allowance.
 #[test]
 fn every_evasion_of_the_first_guard_is_flagged() {

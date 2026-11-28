@@ -743,6 +743,20 @@ fn the_network_allowance_covers_only_its_own_lines() {
     assert!(!net_problems("src/wire_http.rs", net).is_empty());
 }
 
+/// The guard reads `tests` as well as `src` (#1783).
+#[test]
+fn the_guard_reads_tests_as_well_as_src() {
+    let rels: Vec<String> = all_sources().into_iter().map(|(r, _)| r).collect();
+    for want in [
+        "src/daemon.rs",
+        "tests/no_network.rs",
+        "tests/daemon.rs",
+        "tests/scan_common/mod.rs",
+    ] {
+        assert!(rels.iter().any(|r| r == want), "{want} is not read");
+    }
+}
+
 /// Every way past the first version of the guards is reported in a file with no allowance.
 #[test]
 fn every_evasion_of_the_first_guard_is_flagged_here_too() {
