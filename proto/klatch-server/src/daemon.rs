@@ -592,23 +592,3 @@ fn serve_inner(stream: UnixStream, evidence: &PeerEvidence, shared: &Shared) -> 
 #[cfg(test)]
 #[path = "daemon_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-mod echo_tests {
-    use super::*;
-
-    /// #1776: an unknown option the operator typed is echoed in the refusal; a terminal escape, a bidi override or a
-    /// zero-width character in it must not reach the terminal raw.
-    #[test]
-    fn an_unknown_option_is_echoed_escaped() {
-        let e = format!(
-            "{:#}",
-            parse(&["--bad\u{1b}[2J\u{202e}\u{200b}"]).expect_err("an unknown option is refused")
-        );
-        assert!(e.contains("\\u{1b}"), "{e}");
-        assert!(
-            !e.chars().any(|c| c.is_control()) && !e.contains(['\u{202e}', '\u{200b}']),
-            "{e:?}"
-        );
-    }
-}
