@@ -298,12 +298,17 @@ fn a_directory_socket_or_device_handle_is_rejected_by_the_type_check_itself() {
     let t = TestDir::new("hooks-pointer-handles");
     let dir = fs::File::open(t.join("")).unwrap();
     assert_eq!(rejected_before_read(dir), None, "directory");
-    let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
+    // a socket handle made with socketpair(2) directly, so the source names no socket type the no_telemetry guard flags
+    let mut fds = [0 as libc::c_int; 2];
     assert_eq!(
-        rejected_before_read(fs::File::from(std::os::fd::OwnedFd::from(a))),
-        None,
-        "socket"
+        unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) },
+        0
     );
+    let (sock, _peer) = unsafe {
+        use std::os::fd::{FromRawFd, OwnedFd};
+        (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1]))
+    };
+    assert_eq!(rejected_before_read(fs::File::from(sock)), None, "socket");
     assert_eq!(
         rejected_before_read(fs::File::open("/dev/null").unwrap()),
         None,
