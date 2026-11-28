@@ -29,6 +29,12 @@ pub(super) fn project_root(cwd: &Path) -> PathBuf {
         .to_path_buf()
 }
 
+/// Whether two paths name the same directory (spelled the same, or the same after resolving links).
+pub(super) fn same_dir(a: &Path, b: &Path) -> bool {
+    a == b
+        || matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
+}
+
 /// `cwd` and each parent up to and including `root`.
 pub(super) fn dirs_up_to(cwd: &Path, root: &Path) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
@@ -44,8 +50,21 @@ pub(super) fn dirs_up_to(cwd: &Path, root: &Path) -> Vec<PathBuf> {
 /// What `file` holds, or None when that cannot be told with certainty: unreadable, too big, not a regular file,
 /// malformed, a link that leaves `within`, or (when `follow_dir` is false) a `.claude` directory that is itself a link.
 /// The file is opened once, without blocking, and every check after that is on the open handle, so a swap between a
-/// check and the read (a FIFO, a huge file) cannot hang or outgrow the cap.
+/// check and the read (a FIFO, a huge file) cannot hang or outgrow the cap. When the earlier look said "not a link" the
+/// open also refuses a link (`O_NOFOLLOW`), so a file swapped for a link in between is skipped, not followed.
 pub(super) fn look(file: &Path, within: &Path, follow_dir: bool) -> Option<Seen> {
+    look_with(file, within, follow_dir, || {}, read_capped)
+}
+
+/// `look` with two seams for tests: `between` runs after the link check and before the open (where a swap would
+/// happen), `read` turns the admitted open handle into text.
+pub(super) fn look_with(
+    file: &Path,
+    within: &Path,
+    follow_dir: bool,
+    between: impl FnOnce(),
+    read: impl FnOnce(std::fs::File) -> Option<String>,
+) -> Option<Seen> {
     if let (false, Some(dir)) = (follow_dir, file.parent()) {
         match std::fs::symlink_metadata(dir) {
             Ok(m) if m.file_type().is_symlink() => return None,
@@ -59,18 +78,29 @@ pub(super) fn look(file: &Path, within: &Path, follow_dir: bool) -> Option<Seen>
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some(Seen::Absent),
         Err(_) => return None,
     };
-    if meta.file_type().is_symlink() {
+    let is_link = meta.file_type().is_symlink();
+    if is_link {
         let target = std::fs::canonicalize(file).ok()?;
         if !target.starts_with(std::fs::canonicalize(within).ok()?) {
             return None;
         }
     }
-    let handle = open_nonblocking(file).ok()?;
+    between();
+    let handle = open_nonblocking(file, !is_link).ok()?;
+    seen_in(handle, read)
+}
+
+/// What an open handle holds: admitted only when it is a regular file of at most `MAX_BYTES`; anything else (a
+/// directory, a socket, a device) is rejected here, before a byte is read.
+pub(super) fn seen_in(
+    handle: std::fs::File,
+    read: impl FnOnce(std::fs::File) -> Option<String>,
+) -> Option<Seen> {
     let meta = handle.metadata().ok()?;
     if !meta.is_file() || meta.len() > MAX_BYTES {
         return None;
     }
-    let value: Value = serde_json::from_str(&read_capped(handle)?).ok()?;
+    let value: Value = serde_json::from_str(&read(handle)?).ok()?;
     Some(if has_klatch_hook(&value) {
         Seen::Hooks
     } else {
@@ -79,17 +109,21 @@ pub(super) fn look(file: &Path, within: &Path, follow_dir: bool) -> Option<Seen>
 }
 
 #[cfg(unix)]
-fn open_nonblocking(file: &Path) -> std::io::Result<std::fs::File> {
+pub(super) fn open_nonblocking(file: &Path, refuse_link: bool) -> std::io::Result<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
     // O_NONBLOCK so opening a FIFO with no writer returns at once instead of waiting for one
+    let mut flags = libc::O_NONBLOCK | libc::O_CLOEXEC;
+    if refuse_link {
+        flags |= libc::O_NOFOLLOW;
+    }
     std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .custom_flags(flags)
         .open(file)
 }
 
 #[cfg(not(unix))]
-fn open_nonblocking(file: &Path) -> std::io::Result<std::fs::File> {
+pub(super) fn open_nonblocking(file: &Path, _refuse_link: bool) -> std::io::Result<std::fs::File> {
     std::fs::File::open(file)
 }
 
