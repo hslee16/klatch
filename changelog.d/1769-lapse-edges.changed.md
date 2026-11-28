@@ -1,0 +1,1 @@
+- The claim store refuses an empty path (the gateway already did), documenting the invariant the batched lapse-sweep mark read relies on, and the sweep keeps one deadlock mark per holder; tests pin the i64 edges of the window arithmetic (#1769).
