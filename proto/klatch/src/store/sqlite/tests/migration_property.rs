@@ -47,7 +47,7 @@ fn columns(c: &Connection, table: &str) -> Vec<(String, String)> {
 }
 
 /// A database at schema version `version`, built by running the first `version` migrations over the prototype.
-fn database_at(version: usize) -> Connection {
+pub(super) fn database_at(version: usize) -> Connection {
     let c = Connection::open_in_memory().unwrap();
     c.execute_batch(PROTOTYPE).unwrap();
     for step in &MIGRATIONS[..version] {
@@ -200,4 +200,53 @@ fn a_database_of_any_older_version_migrates_with_generated_data_intact(tc: hegel
     let rows = tc.draw(gs::integers::<usize>().max_value(6));
     let seed = tc.draw(gs::integers::<u64>());
     migrates_with_data_intact(version, rows, seed);
+}
+
+/// Every index, trigger and view of a database as (type, name, table, normalised sql). Tables are compared by columns
+/// above, because `ALTER TABLE ADD COLUMN` rewrites a table's text without changing what it is. Automatic indexes have
+/// no sql and follow from the table's keys, so they are left out. The sql is lower-cased with its whitespace collapsed
+/// and `IF NOT EXISTS` dropped, since a migration says it and the fresh schema does not; nothing else is normalised, so a
+/// different column list, a UNIQUE, or a different partial `WHERE` is a difference.
+pub(super) fn objects_of(c: &Connection) -> BTreeSet<(String, String, String, String)> {
+    let mut st = c
+        .prepare("SELECT type, name, tbl_name, sql FROM sqlite_master WHERE type IN ('index','trigger','view') AND sql IS NOT NULL")
+        .unwrap();
+    st.query_map([], |r| {
+        let sql: String = r.get(3)?;
+        let sql = sql
+            .to_lowercase()
+            .replace(" if not exists", "")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        Ok((r.get(0)?, r.get(1)?, r.get(2)?, sql))
+    })
+    .unwrap()
+    .collect::<std::result::Result<_, _>>()
+    .unwrap()
+}
+
+/// What an older database may differ from a fresh one in, and why. Empty: any difference in an index, trigger or view
+/// is a defect of a migration (or of `SCHEMA`), because a step that makes an index must make the same one a fresh
+/// database has (#1780).
+const ALLOWED_OBJECT_DIFFERENCES: [&str; 0] = [];
+
+#[test]
+fn every_older_version_migrates_to_the_same_indexes_triggers_and_views_as_a_fresh_database() {
+    let fresh = Connection::open_in_memory().unwrap();
+    fresh.execute_batch(SCHEMA).unwrap();
+    let want = objects_of(&fresh);
+    for version in 0..MIGRATIONS.len() {
+        let c = database_at(version);
+        migrate(&c, version as i64).unwrap();
+        let got = objects_of(&c);
+        let differ: Vec<_> = want
+            .symmetric_difference(&got)
+            .filter(|o| !ALLOWED_OBJECT_DIFFERENCES.contains(&o.1.as_str()))
+            .collect();
+        assert!(
+            differ.is_empty(),
+            "a database migrated from version {version} has different indexes, triggers or views than a fresh one: {differ:#?}"
+        );
+    }
 }

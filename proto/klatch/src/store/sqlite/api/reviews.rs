@@ -1,6 +1,7 @@
 //! The SQLite side of the `ReviewStore` area.
 
 use super::super::SqliteStore;
+use super::super::review::UNAPPLIED_TAIL;
 use crate::domain::Result;
 use crate::store::{NewReview, QueuedReview};
 use crate::store::{ReviewResolution, ReviewStore};
@@ -40,10 +41,7 @@ impl ReviewStore for SqliteStore {
     }
 
     fn unapplied_reviews(&self, limit: usize) -> Result<Vec<QueuedReview>> {
-        self.review_rows(
-            "to_room<>'' AND verdict IN ('allow','redact') AND applied='' ORDER BY id",
-            limit,
-        )
+        self.review_rows(UNAPPLIED_TAIL, limit)
     }
 
     fn mark_review_applied(&self, id: i64, outcome: &str) -> Result<()> {
