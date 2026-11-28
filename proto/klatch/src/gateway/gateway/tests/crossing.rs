@@ -659,3 +659,78 @@ fn a_verdict_releases_into_the_target_of_its_own_item_and_no_other_room() {
     assert!(sees(&g, "open").is_empty(), "a deny released something");
     assert_eq!(sees(&g, "other").len(), 1);
 }
+
+#[test]
+fn a_reviewer_is_shown_the_target_room_so_items_with_the_same_text_can_be_told_apart() {
+    let (g, _) = world();
+    g.join(&alice(), "open2").unwrap();
+    let first = g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    let second = g.request_crossing(&alice(), "vault", 1, "open2").unwrap();
+    let a = g.review_next(&rev()).unwrap().unwrap();
+    assert_eq!((a.id, a.to_room.as_str()), (first, "open"));
+    g.review_verdict(&rev(), a.id, &Verdict::Deny("no".into()))
+        .unwrap();
+    let b = g.review_next(&rev()).unwrap().unwrap();
+    assert_eq!((b.id, b.to_room.as_str()), (second, "open2"));
+    assert_eq!(a.text, b.text, "the same text, told apart by the room");
+}
+
+#[test]
+fn an_item_whose_target_room_the_reviewer_cannot_read_is_skipped_and_the_room_name_is_not_shown() {
+    let (g, _) = world();
+    g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    // the source stays readable to rev (internal); the target is relabelled above rev's clearance after the request
+    g.store
+        .policy_set("label:vault", Some("internal"), 101)
+        .unwrap();
+    g.store
+        .policy_set("label:open", Some("private"), 102)
+        .unwrap();
+    g.admin_set_clearance(&admin(), "rev", "internal").unwrap();
+    assert!(
+        g.review_next(&rev()).unwrap().is_none(),
+        "an unreadable target is skipped like an unreadable source"
+    );
+    let id = g.store.pending_reviews(1).unwrap()[0].id;
+    // the refusal must be the very error a missing id gets: no room name, no label, nothing to walk ids for
+    let hidden = g.review_verdict(&rev(), id, &Verdict::Allow).unwrap_err();
+    let missing = g
+        .review_verdict(&rev(), id + 1000, &Verdict::Allow)
+        .unwrap_err();
+    let (hidden, missing) = (format!("{hidden:?}"), format!("{missing:?}"));
+    assert_eq!(
+        hidden,
+        missing.replace(&(id + 1000).to_string(), &id.to_string()),
+        "a hidden target answers as a missing item"
+    );
+    assert!(hidden.contains("no waiting review"), "{hidden}");
+    for leak in ["open", "private", "internal", "clearance"] {
+        assert!(!hidden.contains(leak), "{leak} leaked: {hidden}");
+    }
+    g.admin_set_clearance(&admin(), "rev", "private").unwrap();
+    assert_eq!(g.review_next(&rev()).unwrap().unwrap().to_room, "open");
+}
+
+#[test]
+fn a_hidden_source_room_is_refused_as_a_missing_item_too() {
+    let (g, _) = world();
+    g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    g.admin_set_clearance(&admin(), "rev", "public").unwrap();
+    let id = g.store.pending_reviews(1).unwrap()[0].id;
+    let hidden = format!(
+        "{:?}",
+        g.review_verdict(&rev(), id, &Verdict::Allow).unwrap_err()
+    );
+    let missing = format!(
+        "{:?}",
+        g.review_verdict(&rev(), id + 1000, &Verdict::Allow)
+            .unwrap_err()
+    );
+    assert_eq!(
+        hidden,
+        missing.replace(&(id + 1000).to_string(), &id.to_string())
+    );
+    for leak in ["vault", "private", "clearance"] {
+        assert!(!hidden.contains(leak), "{leak} leaked: {hidden}");
+    }
+}

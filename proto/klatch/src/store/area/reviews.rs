@@ -17,8 +17,16 @@ pub trait ReviewStore {
     /// Queue a crossing unless its requester already has `cap` waiting; `None` when the cap stopped it (#1736). A
     /// message already waiting for the label returns its id whatever the cap, since it adds nothing. A store with a real
     /// queue counts and inserts in one transaction, so two processes of one member cannot both take the last place; this
-    /// default counts and then queues and is not atomic.
+    /// default looks for a waiting duplicate (same message, label, requester and target room), counts and then queues,
+    /// and is not atomic.
     fn enqueue_review_capped(&self, item: &NewReview, now: i64, cap: usize) -> Result<Option<i64>> {
+        let waiting = self.pending_reviews(usize::MAX >> 1)?;
+        if let Some(same) = waiting.iter().find(|r| {
+            (r.room.as_str(), r.seq, r.to_label.as_str()) == (item.room, item.seq, item.to_label)
+                && (r.requester.as_str(), r.to_room.as_str()) == (item.requester, item.to_room)
+        }) {
+            return Ok(Some(same.id));
+        }
         if self.waiting_crossings_of(item.requester)? >= cap {
             return Ok(None);
         }

@@ -83,6 +83,8 @@ pub struct ReviewItem {
     pub room: String,
     pub seq: u64,
     pub to_label: String,
+    /// The room a verdict releases the message into; empty for a plain item.
+    pub to_room: String,
     pub reason: String,
     pub text: String,
 }

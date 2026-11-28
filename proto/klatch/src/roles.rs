@@ -159,19 +159,28 @@ fn refusals(t: &dyn Transport, limit: usize) -> Result<()> {
     Ok(())
 }
 
+/// The line above a review item's text. The target room appears only for a crossing, after the label, flat.
+fn review_header(i: &klatch::domain::ReviewItem) -> String {
+    let into = match i.to_room.is_empty() {
+        true => String::new(),
+        false => format!("\tinto room {}", flat(&i.to_room)),
+    };
+    format!(
+        "review {}\troom {}\tseq {}\tto {}{into}\t{}",
+        i.id,
+        flat(&i.room),
+        i.seq,
+        flat(&i.to_label),
+        flat(&i.reason)
+    )
+}
+
 pub(crate) fn review(t: &dyn Transport, cmd: ReviewCmd) -> Result<()> {
     match cmd {
         ReviewCmd::Next => match t.review_next()? {
             None => println!("no review waiting"),
             Some(i) => {
-                println!(
-                    "review {}\troom {}\tseq {}\tto {}\t{}",
-                    i.id,
-                    flat(&i.room),
-                    i.seq,
-                    flat(&i.to_label),
-                    flat(&i.reason)
-                );
+                println!("{}", review_header(&i));
                 println!("{}", i.text);
             }
         },

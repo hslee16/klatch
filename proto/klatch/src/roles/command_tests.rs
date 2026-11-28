@@ -256,3 +256,28 @@ fn the_audit_listing_leaves_out_the_forwarded_note_and_says_how_many_it_hid() {
 fn run_close(t: &Direct<SqliteStore>) {
     act(t, ActCmd::Close { room: "r".into() }).unwrap();
 }
+
+#[test]
+fn the_review_header_names_the_target_room_only_when_there_is_one() {
+    let mut i = klatch::domain::ReviewItem {
+        id: 3,
+        room: "vault".into(),
+        seq: 1,
+        to_label: "public".into(),
+        from_label: String::new(),
+        reason: "crossing".into(),
+        text: "t".into(),
+        to_room: "open".into(),
+    };
+    assert_eq!(
+        review_header(&i),
+        "review 3\troom vault\tseq 1\tto public\tinto room open\tcrossing"
+    );
+    i.to_room.clear();
+    assert_eq!(
+        review_header(&i),
+        "review 3\troom vault\tseq 1\tto public\tcrossing"
+    );
+    i.to_room = "bad\nroom\tx".into();
+    assert!(!review_header(&i).contains("bad\nroom"), "one line, flat");
+}

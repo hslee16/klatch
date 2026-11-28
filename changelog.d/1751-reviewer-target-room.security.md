@@ -1,0 +1,2 @@
+- A reviewer now sees the room a verdict releases a crossing into (`to_room` on `review_next`, `into room X` in `klatch review next`), so several items of one message are told apart; the requester stays hidden, and an item whose target room the reviewer cannot read is skipped and refused like an unreadable source (#1751).
+- The same message can wait once per requester and target room, and the judge and the reviewer may rule differently on each; SECURITY.md says so (#1751).
