@@ -1,0 +1,1 @@
+- The sweep of lapsed claims matches deadlock marks to lapses in linear time (grouped by room and member) instead of lapses times marks, and its lease-end arithmetic saturates; the 33000-room test is ignored by default and 1501 rooms cover the chunk boundary (#1761).
