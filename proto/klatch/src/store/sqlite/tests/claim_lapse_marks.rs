@@ -496,8 +496,7 @@ fn the_store_refuses_a_passive_claim_with_an_empty_path() {
     let s = store();
     let err = s
         .do_passive_claim(&ClaimRequest::new(("r", "bob"), "", 100, ""), NOW)
-        .err()
-        .expect("refused");
+        .expect_err("refused");
     assert!(matches!(err, crate::domain::Error::Invalid(_)), "{err:?}");
 }
 
