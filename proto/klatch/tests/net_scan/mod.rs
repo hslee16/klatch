@@ -1471,7 +1471,7 @@ pub fn declared_with_attr(src: &str, name: &str, attr: &str) -> bool {
         .into_iter()
         .filter(|d| d.name == name)
         .collect();
-    decls.len() == 1 && decls[0].attrs.iter().any(|a| *a == want)
+    decls.len() == 1 && decls[0].attrs.contains(&want)
 }
 
 /// The `#[path = "file"] mod name;` declarations of the source: the target as written and the attributes before it.
