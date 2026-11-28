@@ -313,3 +313,121 @@ fn the_indexes_return_the_same_rows_as_the_predicates_they_serve() {
         vec![c]
     );
 }
+
+/// The rows of `sql` with the given parameters, each as printable values.
+fn rows_of(c: &Connection, sql: &str, params: Vec<Sql>) -> Vec<Vec<String>> {
+    let mut stmt = c.prepare(sql).unwrap();
+    let n = stmt.column_count();
+    stmt.query_map(rusqlite::params_from_iter(params), |r| {
+        (0..n)
+            .map(|i| r.get::<_, Sql>(i).map(|v| format!("{v:?}")))
+            .collect()
+    })
+    .unwrap()
+    .map(|r| r.unwrap())
+    .collect()
+}
+
+/// Every indexed read of the queue gives the rows a table scan gives, after any mix of enqueues, verdicts, applications
+/// and notices (#1785). `NOT INDEXED` forbids the planner every index, so the comparison is the indexed answer against
+/// the predicate's own meaning. The plan tests show an index is used; this shows that using it changes no answer.
+#[hegel::test]
+fn the_indexed_reads_of_the_queue_agree_with_a_scan_after_any_sequence_of_operations(
+    tc: hegel::TestCase,
+) {
+    use hegel::generators as gs;
+    let pick =
+        |tc: &hegel::TestCase, n: u8| tc.draw(gs::integers::<u8>().max_value(n - 1)) as usize;
+    let s = store();
+    let (who, rooms, labels) = (
+        ["alice", "bob", "carol"],
+        ["open", "other"],
+        ["public", "internal"],
+    );
+    let unindexed =
+        |sql: &str| sql.replacen("FROM review_queue", "FROM review_queue NOT INDEXED", 1);
+    // the scan side really is a scan, or the comparison compares an index with itself
+    let scan = plan_of(&s.conn, &unindexed(NOTICE_SQL), vec![text("v"), text("a")]);
+    assert!(
+        scan.contains("SCAN review_queue") && !scan.contains("INDEX review_queue_"),
+        "{scan}"
+    );
+    let mut top = 0i64;
+    for step in 0..tc.draw(gs::integers::<u8>().max_value(30)) {
+        let now = 10 + step as i64;
+        match pick(&tc, 6) {
+            0 | 1 => {
+                let (seq, label) = (1 + pick(&tc, 4) as i64, labels[pick(&tc, 2)]);
+                let item = NewReview::new(["v", "w"][pick(&tc, 2)], seq, label, "r");
+                let item = if pick(&tc, 4) == 0 {
+                    item
+                } else {
+                    item.crossing(rooms[pick(&tc, 2)], who[pick(&tc, 3)])
+                };
+                top = top.max(s.enqueue_review(&item, now).unwrap());
+            }
+            2 => {
+                let verdict = ["allow", "redact", "deny"][pick(&tc, 3)];
+                s.resolve_review(
+                    &ReviewResolution::new(1 + pick(&tc, 12) as i64, verdict, ""),
+                    now,
+                )
+                .unwrap();
+            }
+            3 => s
+                .mark_review_applied(
+                    1 + pick(&tc, 12) as i64,
+                    ["released", "blocked"][pick(&tc, 2)],
+                )
+                .unwrap(),
+            4 => {
+                s.crossing_notices(["v", "w"][pick(&tc, 2)], who[pick(&tc, 3)])
+                    .unwrap();
+            }
+            _ => {
+                let item = NewReview::new("v", 1 + pick(&tc, 4) as i64, "public", "r")
+                    .crossing("open", who[pick(&tc, 3)]);
+                s.enqueue_review_capped(&item, now, 1 + pick(&tc, 3))
+                    .unwrap();
+            }
+        }
+        let c = &s.conn;
+        let mut reads: Vec<(String, Vec<Sql>)> = vec![
+            (review_select(PENDING_TAIL), vec![Sql::Integer(100)]),
+            (
+                review_select(&pending_after_tail(top / 2)),
+                vec![Sql::Integer(100)],
+            ),
+            (review_select(UNAPPLIED_TAIL), vec![Sql::Integer(100)]),
+        ];
+        for w in who {
+            reads.push((WAITING_COUNT_SQL.into(), vec![text(w)]));
+            for room in ["v", "w"] {
+                reads.push((NOTICE_SQL.into(), vec![text(room), text(w)]));
+                for seq in 1..=4 {
+                    for label in labels {
+                        for to in rooms {
+                            reads.push((
+                                WAITING_SAME_SQL.into(),
+                                vec![
+                                    text(room),
+                                    Sql::Integer(seq),
+                                    text(label),
+                                    text(w),
+                                    text(to),
+                                ],
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        for (sql, params) in reads {
+            assert_eq!(
+                rows_of(c, &sql, params.clone()),
+                rows_of(c, &unindexed(&sql), params),
+                "an indexed read gave other rows than a scan: {sql}"
+            );
+        }
+    }
+}

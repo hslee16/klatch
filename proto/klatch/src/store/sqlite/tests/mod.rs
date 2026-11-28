@@ -40,6 +40,7 @@ mod plaintext;
 mod read_only_probes;
 mod review;
 mod runs;
+mod schema_equality;
 mod shown;
 mod stats;
 mod stats_events;
