@@ -9,6 +9,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -18,6 +19,7 @@ import klatch_client as kc
 HERE = os.path.dirname(os.path.abspath(__file__))
 BIN = os.environ.get("KLATCH_BIN") or os.path.join(HERE, "..", "..", "proto", "target", "debug", "klatch")
 FIXTURES = os.path.join(HERE, "..", "..", "proto", "klatch", "fixtures", "protocol")
+ADMIN_HELPER = os.path.join(HERE, "..", "testing", "klatch_admin.py")
 SERVER_BIN = os.environ.get("KLATCH_SERVER_BIN") or os.path.join(HERE, "..", "..", "proto", "target", "debug", "klatch-server")
 
 
@@ -447,6 +449,69 @@ class Conformance(unittest.TestCase):
         a = self.store.client("alice")
         a.post("r", "x")
         self.assertEqual(a.close(), 0)
+
+
+@unittest.skipUnless(os.name == "posix", "the admin passphrase is typed on a pseudo-terminal")
+class ReviewerOverARealServer(unittest.TestCase):
+    """`review_next` against the real gateway (#1773): a reviewer is made by the admin acts typed on a pty (the way the Rust
+    helpers do it, `clients/testing/klatch_admin.py`), a crossing is queued, and the client parses what the server sends.
+    The store is a throwaway KLATCH_HOME with its own key directory; nothing here reads the live store or the Keychain."""
+
+    def setUp(self):
+        self.store = Store()
+        self.addCleanup(self.store.close)
+
+    def admin(self, *args):
+        # a child process, not a call: the helper forks a pty, which a process with reader threads must not do
+        done = subprocess.run([sys.executable, ADMIN_HELPER, BIN, self.store.home, *args], capture_output=True, text=True, timeout=180)
+        self.assertEqual(done.returncode, 0, f"klatch admin {args} failed:\n{done.stdout}{done.stderr}")
+
+    def env(self, name):
+        env = dict(os.environ, KLATCH_HOME=self.store.home, KLATCH_KEY_DIR=os.path.join(self.store.home, "keys"), KLATCH_NAME=name)
+        for k in ("KLATCH_IDENTITY_FILE", "KLATCH_DISCOVER"):
+            env.pop(k, None)
+        return env
+
+    def waiting_crossing(self):
+        """vault is private (alice and the reviewer rev are cleared), open is public, and alice asked for message `seq` of
+        vault to be copied into open. Returns the seq."""
+        alice = self.store.client("alice")
+        alice.post("vault", "hello")
+        alice.post("open", "hello")
+        for act in (("label", "vault", "private"), ("clear", "alice", "private"), ("clear", "rev", "private"), ("reviewer", "rev")):
+            self.admin(*act)
+        seq = alice.post("vault", "the plan is blue")["seq"]
+        done = subprocess.run([BIN, "cross", "vault", str(seq), "--to", "open"], env=self.env("alice"), capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        return seq
+
+    def test_review_next_returns_the_item_with_its_target_room_and_its_current_label(self):
+        seq = self.waiting_crossing()
+        rev = self.store.client("rev")
+        item = rev.review_next()
+        self.assertEqual((item["room"], item["seq"], item["text"]), ("vault", seq, "the plan is blue"))
+        self.assertEqual((item["to_room"], item["to_label"]), ("open", "public"))
+        # the target is relabelled after the request was queued: the reviewer sees the label a release will use (#1767)
+        self.admin("label", "open", "internal")
+        item = rev.review_next()
+        self.assertEqual((item["to_room"], item["to_label"]), ("open", "internal"))
+
+    def test_an_item_whose_target_the_reviewer_cannot_read_is_not_returned_and_its_verdict_answers_as_a_missing_item(self):
+        self.waiting_crossing()
+        rev = self.store.client("rev")
+        item = rev.review_next()
+        # the source stays readable to rev (internal); the target is relabelled above rev's clearance
+        for act in (("label", "vault", "internal"), ("label", "open", "private"), ("clear", "rev", "internal")):
+            self.admin(*act)
+        self.assertIsNone(rev.review_next())
+        with self.assertRaises(kc.ApiError) as hidden:
+            rev.review_verdict(item["id"], "allow")
+        with self.assertRaises(kc.ApiError) as missing:
+            rev.review_verdict(item["id"] + 1000, "allow")
+        self.assertEqual(hidden.exception.code, missing.exception.code)
+        self.assertEqual(hidden.exception.message, missing.exception.message.replace(str(item["id"] + 1000), str(item["id"])))
+        for leak in ("open", "private", "internal", "clearance"):
+            self.assertNotIn(leak, hidden.exception.message)
 
 
 @unittest.skipUnless(os.path.exists(SERVER_BIN), "klatch-server is not built (cargo build -p klatch-server)")
