@@ -133,7 +133,8 @@ fn needs_escape(c: char) -> bool {
 /// `TRUNCATED`. The result is pure ASCII with no control character, so no name can steer a terminal, hide text with a
 /// bidi or tag character, or flood a reader. A plain name of printable ASCII without a backslash (letters, digits,
 /// punctuation, space) up to the cap comes back unchanged. This is the one helper for it: `store::area::audit_target` is the same function.
-pub fn shown(nk: &str) -> String {
+pub fn shown(value: impl AsRef<str>) -> String {
+    let nk = value.as_ref();
     let room = MAX_AUDIT_TARGET - TRUNCATED.len();
     let mut out = String::new();
     // the length of `out` at the last piece boundary that still leaves room for the marker

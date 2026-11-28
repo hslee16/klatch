@@ -30,9 +30,12 @@ impl<S: Store> Gateway<S> {
             Some((key, _)) => {
                 let name = key.trim_start_matches(PREFIX);
                 Err(Error::Refused {
-                    rule: format!("scrub:{name}"),
+                    rule: format!("scrub:{name}", name = shown(name)),
                     reason: format!(
-                        "the text matches the private-term rule {name}, which keeps it out of room {room} (labelled {label}); {NEXT_STEP}remove or reword the part that matches the rule {name}, then post again"
+                        "the text matches the private-term rule {name}, which keeps it out of room {room} (labelled {label}); {NEXT_STEP}remove or reword the part that matches the rule {name}, then post again",
+                        room = shown(room),
+                        label = shown(label),
+                        name = shown(name)
                     ),
                 })
             }
@@ -81,7 +84,10 @@ impl<S: Store> Gateway<S> {
         self.administer(who, ("scrub-remove", name), |now| {
             let key = format!("{PREFIX}{name}");
             if self.store.policy_get(&key)?.is_none() {
-                return Err(Error::NotFound(format!("no scrub rule {name}")));
+                return Err(Error::NotFound(format!(
+                    "no scrub rule {name}",
+                    name = shown(name)
+                )));
             }
             self.store.policy_set(&key, None, now)?;
             Ok(String::new())

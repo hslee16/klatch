@@ -205,7 +205,10 @@ impl<S: Store> Gateway<S> {
             if self.store.revoke_credential(member, now)? {
                 Ok(String::new())
             } else {
-                Err(Error::NotFound(format!("{member} has no live credential")))
+                Err(Error::NotFound(format!(
+                    "{member} has no live credential",
+                    member = shown(member)
+                )))
             }
         })
     }

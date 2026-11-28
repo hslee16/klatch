@@ -28,7 +28,7 @@ impl<S: Store> Gateway<S> {
                     rule: REFUSE_RULE.into(),
                     reason: format!(
                         "room {room} has a harness requirement this build cannot read ({}), so no one can join; {NEXT_STEP}ask the admin to run room-require again",
-                        crate::domain::shown(&why.to_string())
+                        crate::domain::shown(&why.to_string()), room = shown(room)
                     ),
                 }),
         }

@@ -274,7 +274,7 @@ impl<S: Store> Gateway<S> {
         match role {
             Some(Role::Librarian) if !op.is_query() => Err(Error::Refused {
                 rule: "read-only".into(),
-                reason: format!("{} is a librarian, which may only look", who.member),
+                reason: format!("{} is a librarian, which may only look", shown(&who.member)),
             }),
             Some(Role::Admin) => self.check_admin_scope(who, op),
             _ => Ok(()),
@@ -371,7 +371,10 @@ fn admin_agent_refusal(action: &str) -> Option<(&'static str, &'static str)> {
 /// A reviewer may only review and only a reviewer may review; None when the operation is fine for the role.
 fn reviewer_refusal(role: Option<Role>, who: &Principal, op: &Operation) -> Option<Error> {
     let reason = match (role == Some(Role::Reviewer), op.is_review()) {
-        (true, false) => format!("{} is a reviewer, which may only review", who.member),
+        (true, false) => format!(
+            "{} is a reviewer, which may only review",
+            shown(&who.member)
+        ),
         (false, true) => format!("{} is not a reviewer", who.member),
         _ => return None,
     };
@@ -396,7 +399,8 @@ fn merge_claim_refusal(role: Option<Role>, who: &Principal, op: &Operation) -> O
         reason: format!(
             "{} may not take merge:main, which only an integrator or the human may; ask the human to run \
              `klatch admin integrator {}`",
-            who.member, who.member
+            shown(&who.member),
+            shown(&who.member)
         ),
     })
 }

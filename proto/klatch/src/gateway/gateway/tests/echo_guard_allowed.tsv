@@ -1,0 +1,49 @@
+# file<TAB>format string (Debug form)<TAB>argument<TAB>reason. See echo_guard.rs for what an entry may hold.
+gateway/claude_judge.rs	"bad model name {:?}"	config.model	operator configuration or the output of the judge child process, not a wire caller
+gateway/claude_judge.rs	"claude exited with status {code}: {why}"	code	operator configuration or the output of the judge child process, not a wire caller
+gateway/claude_judge.rs	"claude exited with status {code}: {why}"	why	operator configuration or the output of the judge child process, not a wire caller
+gateway/claude_judge.rs	"claude reported an error ({sub})"	sub	operator configuration or the output of the judge child process, not a wire caller
+gateway/claude_judge.rs	"the confidence band must be between 0 and 1, not {band}"	band	operator configuration or the output of the judge child process, not a wire caller
+gateway/claude_judge.rs	"timed out after {} s"	timeout.as_secs()	operator configuration or the output of the judge child process, not a wire caller
+gateway/claude_judge.rs	"unknown ceiling label {:?}"	config.ceiling	operator configuration or the output of the judge child process, not a wire caller
+gateway/guard.rs	"{action} edits a floor; floors are set by the person at a terminal (klatch admin), never by an agent"	action	the action is a fixed operation name of the code (Operation::name), never typed by a caller
+gateway/gateway/policy.rs	"unknown label {}; the levels are {}"	chain.to_text()	the label chain: every name passed valid_name in LabelChain::new before it was stored
+gateway/gateway/tripwire.rs	"no randomness for a canary: {e}"	e	the error of the operating system random source, no caller text
+gateway/gateway/budget.rs	"message too large: {} bytes, at most {MAX_POST_BYTES}; put the detail in a file and post where it is"	body.len()	a byte count
+gateway/gateway/budget.rs	"same as your message #{} posted {}s ago; say something new or do not repeat it"	crate::domain::secs_between(now,m.ts)	a number of seconds
+gateway/gateway/budget.rs	"same as your message #{} posted {}s ago; say something new or do not repeat it"	m.seq	a message sequence number
+gateway/gateway/budget.rs	"too many posts: at most {MAX_POSTS_PER_WINDOW} posts in {BURST_WINDOW_SECS} seconds in one room; wait {}s"	(BURST_WINDOW_SECS-(now-oldest_in_window)).max(0)	a number of seconds
+gateway/gateway/rate.rs	"{} has posted {limit} posts in {secs} seconds, the most allowed in all rooms together; wait {}s"	(oldest+secs-now).max(0)	a number of seconds
+gateway/gateway/checks.rs	"the text looks like it contains {kind}; {NEXT_STEP}remove the secret and say where it is kept instead, then post again"	kind	the kind of credential found, a fixed word of the code (credential_kind)
+gateway/gateway/room_settings.rs	"the {action} is {min} to {max} seconds, or off for the default"	action	a literal of the code, the name of the setting being changed
+gateway/gateway/rooms.rs	"bad {what} name: {}"	what	a literal of the code at each call (member, room, or the act refused)
+gateway/gateway/rooms.rs	"{} may not {what}; the person at the terminal grants that (klatch admin grant-rooms). \\\n                 For a need of two members, `klatch dm NAME TEXT` is free"	what	a literal of the code at each call (member, room, or the act refused)
+gateway/gateway/facilitator.rs	"{} is a facilitator, which may only read, create a room, invite, post the invite pointer and send one need-info message to an asker; {what} is outside that"	what	the name of the refused operation, a fixed word of the code
+gateway/gateway/workers.rs	"no random source: {e}"	e	the error of the operating system random source, no caller text
+gateway/gateway/lease.rs	"the {action} is 1 to {max} seconds, or off for the default"	action	a literal of the code, the name of the setting being changed
+gateway/gateway/runs.rs	"room {room} {why}"	why	a literal of the code at each call of the closure
+gateway/gateway/reviewer.rs	"no waiting review {id}"	id	a numeric queue id (i64)
+gateway/gateway/github_anchor.rs	"not a GitHub pull request or issue: {why}"	why	a literal of the code at every call of bad()
+session/acp.rs	"{verb} takes only a room name"	verb	the first word of the prompt, lowercased, only when it already matched a known verb (read, who, claims, history)
+keys/macos.rs	"keychain item {name} is not a {KEY_LEN}-byte key"	name	the operator at a terminal or the process environment, never a wire caller (local key store, item 7 of the review)
+keys/macos.rs	"keychain: no answer in {} s; macOS is probably waiting for a password dialog. Answer it with Always \\\n                 Allow, or run klatch from the build that stored the key (see UNINSTALL.md)"	READ_LIMIT.as_secs()	the operator at a terminal or the process environment, never a wire caller (local key store, item 7 of the review)
+keys/macos.rs	"keychain: {e}"	e	the operator at a terminal or the process environment, never a wire caller (local key store, item 7 of the review)
+keys/bundle.rs	"{} is readable by other users (mode {:o}); a key bundle must be chmod 600"	meta.mode()&0	the operator at a terminal or the process environment, never a wire caller (local key store, item 7 of the review)
+keys/bundle.rs	"{} is readable by other users (mode {:o}); a key bundle must be chmod 600"	path.display()	the operator at a terminal or the process environment, never a wire caller (local key store, item 7 of the review)
+keys/linux.rs	"secret service item {name} is not a {KEY_LEN}-byte key"	name	the operator at a terminal or the process environment, never a wire caller (local key store, item 7 of the review)
+keys/linux.rs	"secret-tool could not store the key: {}"	said(&out)	the operator at a terminal or the process environment, never a wire caller (local key store, item 7 of the review)
+keys/linux.rs	"secret-tool: {m}"	m	the operator at a terminal or the process environment, never a wire caller (local key store, item 7 of the review)
+keys/linux.rs	"{program} did not answer within {} seconds; the keyring may be waiting for a dialog"	program	the operator at a terminal or the process environment, never a wire caller (local key store, item 7 of the review)
+keys/linux.rs	"{program} did not answer within {} seconds; the keyring may be waiting for a dialog"	self.limit.as_secs().max(0)	the operator at a terminal or the process environment, never a wire caller (local key store, item 7 of the review)
+keys/file.rs	"{} is not a {KEY_LEN}-byte key"	path.display()	the operator at a terminal or the process environment, never a wire caller (local key store, item 7 of the review)
+keys/file.rs	"{} is readable by other users (mode {:o}); fix it with chmod 600"	meta.mode()&0	the operator at a terminal or the process environment, never a wire caller (local key store, item 7 of the review)
+keys/file.rs	"{} is readable by other users (mode {:o}); fix it with chmod 600"	path.display()	the operator at a terminal or the process environment, never a wire caller (local key store, item 7 of the review)
+keys/file.rs	"{}: {e}"	e	the operator at a terminal or the process environment, never a wire caller (local key store, item 7 of the review)
+keys/file.rs	"{}: {e}"	path.display()	the operator at a terminal or the process environment, never a wire caller (local key store, item 7 of the review)
+domain/error.rs	" (held for {}; ask {} whether it is still needed)"	crate::domain::parked::span(*held_secs)	a formatted duration
+domain/error.rs	" and {} more"	rest.len()-shown	a count
+domain/error.rs	" through {}"	rest[..shown].join(", ")	member names of a claim cycle, each valid_name when the member joined; capping the joined list would cut it
+domain/error.rs	"refused ({rule}): {reason}"	reason	the reason already built by the site that made the refusal; that site is checked by this guard
+domain/error.rs	"refused ({rule}): {reason}"	rule	the name of a rule, a literal of the code (or scrub:<rule name>, valid_name)
+domain/error.rs	"{m}"	m	the message already built by the site that made the error; that site is checked by this guard
+store/sqlite/api/policy.rs	"the policy key {shown} belongs to the admin passphrase and is changed only by `klatch admin` passphrase commands"	shown	the variable bound to audit_target(key) on the line before

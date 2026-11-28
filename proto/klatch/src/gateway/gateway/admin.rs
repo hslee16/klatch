@@ -109,7 +109,9 @@ impl<S: Store> Gateway<S> {
                 Ok(String::new())
             } else {
                 Err(Error::NotFound(format!(
-                    "{member} is not removed from {room}"
+                    "{member} is not removed from {room}",
+                    room = shown(room),
+                    member = shown(member)
                 )))
             }
         })

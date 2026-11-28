@@ -46,7 +46,10 @@ impl<S: Store> Gateway<S> {
         self.administer(who, ("canary-retire", room), |now| {
             let keys = self.canary_keys_of(room)?;
             if keys.is_empty() {
-                return Err(Error::Invalid(format!("room {room} has no canary")));
+                return Err(Error::Invalid(format!(
+                    "room {room} has no canary",
+                    room = shown(room)
+                )));
             }
             for key in keys {
                 self.store.policy_set(&key, None, now)?;
@@ -133,7 +136,8 @@ impl<S: Store> Gateway<S> {
             return Err(Error::Refused {
                 rule: "canary".into(),
                 reason: format!(
-                    "that text came from a room it must not leave; room {room} is paused until an admin reopens it; {NEXT_STEP}do not post it again; ask an admin to look and reopen room {room}"
+                    "that text came from a room it must not leave; room {room} is paused until an admin reopens it; {NEXT_STEP}do not post it again; ask an admin to look and reopen room {room}",
+                    room = shown(room)
                 ),
             });
         }

@@ -59,7 +59,10 @@ impl<S: Store> Gateway<S> {
         Err(Error::Refused {
             rule: "clearance".into(),
             reason: format!(
-                "room {room} is labelled {label}, above your clearance {held}; {NEXT_STEP}ask the admin to raise your clearance or to relabel the room"
+                "room {room} is labelled {label}, above your clearance {held}; {NEXT_STEP}ask the admin to raise your clearance or to relabel the room",
+                room = shown(room),
+                held = shown(held),
+                label = shown(label)
             ),
         })
     }
@@ -82,7 +85,10 @@ impl<S: Store> Gateway<S> {
         let e = Error::Refused {
             rule: "label".into(),
             reason: format!(
-                "a {label} message cannot go into room {room}, which is labelled {room_label}; {NEXT_STEP}post it to a room labelled {label} or higher; to release a message already posted, run `klatch cross SOURCE SEQ --to {room}`"
+                "a {label} message cannot go into room {room}, which is labelled {room_label}; {NEXT_STEP}post it to a room labelled {label} or higher; to release a message already posted, run `klatch cross SOURCE SEQ --to {room}`",
+                room = shown(room),
+                label = shown(label),
+                room_label = shown(room_label)
             ),
         };
         self.note_refusal(who, (room, "post"), &e);
@@ -170,7 +176,8 @@ impl<S: Store> Gateway<S> {
         known_label(&chain, label)?;
         if label == chain.lowest() {
             return Err(Error::Invalid(format!(
-                "{label} is the lowest label and everyone holds it, so it cannot be sealed"
+                "{label} is the lowest label and everyone holds it, so it cannot be sealed",
+                label = shown(label)
             )));
         }
         Ok(())
@@ -212,7 +219,10 @@ impl<S: Store> Gateway<S> {
         if !chain.dominates(&cap, label) {
             return Err(Error::Refused {
                 rule: "agent-cap".into(),
-                reason: format!("no agent may hold {label}: the agent cap is {cap}"),
+                reason: format!(
+                    "no agent may hold {label}: the agent cap is {cap}",
+                    label = shown(label)
+                ),
             });
         }
         Ok(())
@@ -242,7 +252,8 @@ impl<S: Store> Gateway<S> {
         known_label(&chain, label)?;
         if label == chain.highest() {
             return Err(Error::Invalid(format!(
-                "the agent cap must be below {label}, the top level"
+                "the agent cap must be below {label}, the top level",
+                label = shown(label)
             )));
         }
         self.administer_policy(who, ("cap", label), ("cap", Some(label)))

@@ -13,7 +13,8 @@ impl<S: Store> Gateway<S> {
         seq: i64,
     ) -> Result<crate::domain::Receipts> {
         self.admit(who, room, Operation::Who { room: room.into() })?;
-        let not_found = || Error::NotFound(format!("no message #{seq} in {room}"));
+        let not_found =
+            || Error::NotFound(format!("no message #{seq} in {room}", room = shown(room)));
         if seq < 1 {
             return Err(not_found());
         }

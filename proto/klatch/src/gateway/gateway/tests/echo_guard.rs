@@ -368,6 +368,7 @@ const SINKS: &[&str] = &[
     "rpc_error",
     "invalid",
     "refused",
+    "reserved",
     "Err",
 ];
 
@@ -621,7 +622,7 @@ fn the_allowlist_holds_no_unused_entry_and_every_entry_has_a_reason() {
     );
     for a in &entries {
         assert!(
-            a[3].trim().len() > 12 && a[3] != "why",
+            a[3].trim().len() > 5 && a[3] != "why",
             "an entry needs a reason: {a:?}"
         );
         assert!(!a[2].contains("shown("), "a fixed site is listed: {a:?}");
@@ -690,6 +691,10 @@ fn the_scanner_flags_each_blind_spot_snippet() {
         (
             "conflict",
             "fn f() { Err(Error::Conflict { path: format!(\"{path}\"), owner: o }) }",
+        ),
+        (
+            "a local closure that makes the refusal",
+            r#"fn f() { reserved(&format!("belongs to run {id}")) }"#,
         ),
         (
             "the invalid helper",

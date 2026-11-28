@@ -36,7 +36,7 @@ impl<S: Store> Gateway<S> {
                     let e = Error::Refused {
                         rule: "ssh-key-mapped".into(),
                         reason: format!(
-                            "key {label} is already mapped to {other}; unmap it first with `klatch admin ssh-key {label} {other} --off`"
+                            "key {label} is already mapped to {other}; unmap it first with `klatch admin ssh-key {label} {other} --off`", label = shown(label), other = shown(other)
                         ),
                     };
                     self.note_refusal(who, ("*", "admin:ssh-key"), &e);
@@ -46,7 +46,7 @@ impl<S: Store> Gateway<S> {
                 (false, Some(h)) if h == member => self.store.policy_set(&key, None, now)?,
                 (false, _) => {
                     return Err(Error::Invalid(format!(
-                        "key {label} is not mapped to {member}; nothing was changed"
+                        "key {label} is not mapped to {member}; nothing was changed", label = shown(label), member = shown(member)
                     )));
                 }
             }

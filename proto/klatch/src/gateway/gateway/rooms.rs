@@ -69,7 +69,7 @@ impl<S: Store> Gateway<S> {
             reason: format!(
                 "{} may not {what}; the person at the terminal grants that (klatch admin grant-rooms). \
                  For a need of two members, `klatch dm NAME TEXT` is free",
-                who.member
+                shown(&who.member)
             ),
         })
     }
@@ -114,7 +114,10 @@ impl<S: Store> Gateway<S> {
         let e = Error::Refused {
             rule: "clearance".into(),
             reason: format!(
-                "room {room} is labelled {label}, above {member}'s clearance; no invite is posted"
+                "room {room} is labelled {label}, above {member}'s clearance; no invite is posted",
+                room = shown(room),
+                label = shown(label),
+                member = shown(member)
             ),
         };
         Err(e)
@@ -141,7 +144,9 @@ impl<S: Store> Gateway<S> {
             .inspect_err(|e| self.note_refusal(who, (room, "invite"), e))?;
         if !self.who(who, via)?.iter().any(|m| m.name == member) {
             return Err(Error::Invalid(format!(
-                "{member} is not in room {via}, so there is nowhere to reach them; name a room you share with --via"
+                "{member} is not in room {via}, so there is nowhere to reach them; name a room you share with --via",
+                via = shown(via),
+                member = shown(member)
             )));
         }
         self.post(who, via, &invite_text(&who.member, member, room))?;

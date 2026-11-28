@@ -85,7 +85,7 @@ impl SqliteStore {
             if live.is_some_and(|held| is_live(held, now)) {
                 return Err(Error::Invalid(format!(
                     "{} already holds a live credential; revoke it first or wait for it to expire",
-                    c.member
+                    crate::domain::shown(&c.member)
                 )));
             }
             // with a cap the first expiry is the idle timeout or the cap, whichever is nearer; without one, the ttl

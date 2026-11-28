@@ -37,7 +37,10 @@ impl<S: Store> Gateway<S> {
             Some((a, b)) if who.member == a || who.member == b => Ok(()),
             Some(_) => Err(Error::Refused {
                 rule: "dm-members".into(),
-                reason: format!("room {room} is a direct message between two other members"),
+                reason: format!(
+                    "room {room} is a direct message between two other members",
+                    room = shown(room)
+                ),
             }),
             None if room.starts_with(DM_PREFIX) => Err(Error::Refused {
                 rule: "dm-reserved".into(),

@@ -23,6 +23,10 @@ struct Sites(Vec<String>);
 impl Sites {
     /// The error of `r` must be bounded pure ASCII without a control character.
     fn check(&mut self, r: Result<impl std::fmt::Debug>, site: &str) {
+        self.check_within(r, site, 600);
+    }
+
+    fn check_within(&mut self, r: Result<impl std::fmt::Debug>, site: &str, max: usize) {
         let Err(e) = r else {
             self.0.push(format!("{site}: no error"));
             return;
@@ -41,7 +45,7 @@ impl Sites {
             ));
         } else if text.chars().any(|c| c.is_control()) {
             self.0.push(format!("{site}: a control character: {shown}"));
-        } else if text.len() >= 600 {
+        } else if text.len() >= max {
             self.0
                 .push(format!("{site}: {} bytes: {shown}", text.len()));
         }
@@ -169,5 +173,35 @@ fn a_label_chain_error_is_bounded_and_ascii() {
     assert_eq!(
         crate::domain::LabelChain::new(&["a", "b c"]).unwrap_err(),
         "bad label name: b c"
+    );
+}
+
+#[test]
+fn a_claim_conflict_names_a_hostile_path_and_members_capped_and_ascii() {
+    let h = hostile_text();
+    let conflict = Error::Conflict {
+        path: h.clone(),
+        owner: h.clone(),
+        secs_left: 5,
+        held_secs: 4000,
+        deadlock: true,
+        cycle: vec![h.clone(), "bob".into()],
+        via: h.clone(),
+    };
+    let mut sites = Sites::default();
+    sites.check_within(Err::<(), _>(conflict), "claim conflict", 1200);
+    sites.finish();
+    let plain = Error::Conflict {
+        path: "src/a".into(),
+        owner: "bob".into(),
+        secs_left: 5,
+        held_secs: 0,
+        deadlock: false,
+        cycle: vec![],
+        via: String::new(),
+    };
+    assert_eq!(
+        plain.to_string(),
+        "refused: src/a is claimed by bob for another 5s"
     );
 }
