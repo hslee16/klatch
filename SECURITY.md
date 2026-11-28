@@ -310,7 +310,7 @@ item shows no target room. The requester's name is not shown to the reviewer or 
 a verdict crosses to, not the person who asked, and a name would invite a ruling based on who asked (the human's
 `klatch admin review-queue` lists both). The target room must pass the same clearance check as the source: an item
 whose target room the reviewer cannot read is skipped like one whose text it cannot read, its room name is never shown,
-and a verdict on it is refused. No judge prompt includes the target room.
+and a verdict on it, like one on an item whose source room it cannot read, gets exactly the error a missing id gets (`no waiting review N`), never a clearance refusal, which would carry the room's name and label to a reviewer walking the sequential ids. No judge prompt includes the target room.
 
 **What the default judge does.** The default is the local rules judge (`klatch judge run`; no model, no network, no
 cost, no new dependency). It has these checks, in this order, and the first to match decides. (1) The credential scanner:

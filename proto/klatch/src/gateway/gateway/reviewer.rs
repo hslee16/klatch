@@ -58,7 +58,8 @@ impl<S: Store> Gateway<S> {
     /// Whether the reviewer may be told where an item would be released: a plain item has no target room, and a
     /// crossing's target must pass the same clearance check as the source. An item whose target the reviewer cannot
     /// read is treated like one whose text it cannot read (skipped, its room name never shown), so the target room
-    /// is no side channel to a room above the reviewer's clearance (#1751).
+    /// is no side channel to a room above the reviewer's clearance (#1751). A verdict on such an item answers as a missing
+    /// id, never with a clearance refusal, whose text names the room and its label (#1760).
     fn may_see_target(&self, who: &Principal, q: &QueuedReview) -> bool {
         q.to_room.is_empty() || self.check_clearance(who, &q.to_room).is_ok()
     }
@@ -71,13 +72,15 @@ impl<S: Store> Gateway<S> {
             return Err(Error::Invalid("a verdict is allow, redact or deny".into()));
         }
         let waiting = self.store.pending_reviews(usize::MAX >> 1)?;
-        let Some(q) = waiting.into_iter().find(|q| q.id == id) else {
+        // an item in a room the reviewer cannot read, source or target, answers exactly as a missing id does: a
+        // clearance refusal would carry the room's name and label, and review ids are sequential (#1760)
+        let q = waiting
+            .into_iter()
+            .find(|q| q.id == id)
+            .filter(|q| self.check_clearance(who, &q.room).is_ok() && self.may_see_target(who, q));
+        let Some(q) = q else {
             return Err(Error::Invalid(format!("no waiting review {id}")));
         };
-        self.check_clearance(who, &q.room)?;
-        if !self.may_see_target(who, &q) {
-            return Err(self.check_clearance(who, &q.to_room).unwrap_err());
-        }
         let why = match verdict {
             Verdict::Deny(why) => why.as_str(),
             _ => "",

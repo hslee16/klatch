@@ -266,3 +266,26 @@ fn the_target_room_a_reviewer_reads_is_plain_characters_and_capped() {
     assert_eq!(plain_room("a b\nc/\u{202e}d"), "abcd");
     assert_eq!(plain_room(&"x".repeat(100)).len(), 40);
 }
+
+#[test]
+fn the_wire_item_carries_the_target_room_through_plain_room_only() {
+    use super::role_methods::item_json;
+    let item = klatch_item("a b\u{202e}/open");
+    let v = item_json(&item);
+    assert_eq!(v["to_room"], "abopen".to_string());
+    let capped = item_json(&klatch_item(&"y".repeat(100)));
+    assert_eq!(capped["to_room"].as_str().unwrap().len(), 40);
+}
+
+fn klatch_item(to_room: &str) -> crate::domain::ReviewItem {
+    crate::domain::ReviewItem {
+        id: 1,
+        room: "r".into(),
+        seq: 1,
+        to_label: "public".into(),
+        from_label: String::new(),
+        reason: "crossing".into(),
+        text: "t".into(),
+        to_room: to_room.into(),
+    }
+}

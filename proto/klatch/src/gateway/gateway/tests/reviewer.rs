@@ -135,7 +135,7 @@ fn a_reviewer_is_held_to_clearance() {
         "above its clearance"
     );
     let id = g.store.pending_reviews(1).unwrap()[0].id;
-    assert!(is_refused(g.review_verdict(&rev(), id, &Verdict::Allow)));
+    assert!(is_invalid(g.review_verdict(&rev(), id, &Verdict::Allow)));
     g.admin_set_clearance(&admin(), "rev", "private").unwrap();
     assert!(g.review_next(&rev()).unwrap().is_some());
 }

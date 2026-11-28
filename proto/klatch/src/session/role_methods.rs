@@ -158,7 +158,7 @@ pub(super) fn plain_room(room: &str) -> String {
         .collect()
 }
 
-fn item_json(i: &ReviewItem) -> Value {
+pub(super) fn item_json(i: &ReviewItem) -> Value {
     json!({"id": i.id, "room": i.room, "seq": i.seq, "to_label": i.to_label,
            "to_room": plain_room(&i.to_room), "reason": i.reason, "text": i.text})
 }
