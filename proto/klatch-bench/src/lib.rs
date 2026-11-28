@@ -303,8 +303,10 @@ fn build_args(profile: &str, dir: &std::path::Path) -> Vec<String> {
     cargo_build_args(&["-p", "klatch", "--features", "test-clock"], profile, dir)
 }
 
-/// The cargo arguments that build klatch as the workspace does (default features, no test clock) into the workspace's
-/// own target directory, so a workspace build that already made it leaves cargo nothing to do (#1353).
+/// The cargo arguments that build klatch with its default features and no test clock into the workspace's own target
+/// directory. Run only when the workspace's binary is missing or older than klatch's sources (see
+/// `workspace_binary_is_fresh`): a workspace build compiles klatch with the features its other crates ask for, a `-p
+/// klatch` build with the defaults, and the second relinks `target/debug/klatch` under any test that spawns it (#1789).
 fn plain_build_args(profile: &str, target: &std::path::Path) -> Vec<String> {
     cargo_build_args(&["-p", "klatch"], profile, target)
 }
@@ -480,10 +482,12 @@ pub fn find_binary() -> Result<std::path::PathBuf, String> {
     BINARY.get_or_init(build_binary).clone()
 }
 
-/// The klatch binary as the workspace builds it (no test clock), as a private copy (see `find_binary`), for tests that
-/// do not move klatch's clock. It shares the workspace target directory, so after a workspace build (as `cargo test
-/// --workspace` and nextest make) this builds nothing: the test-clock binary of `find_binary` is a second compile of
-/// klatch into its own directory, about ten seconds of CPU on every fresh run, that such a test has no use for (#1353).
+/// The klatch binary of the workspace's own build (default features, no test clock), as a private copy (see
+/// `find_binary`), for tests that do not move klatch's clock. After a workspace build (`cargo test --workspace`, nextest)
+/// the binary is there and newer than klatch's sources, and then cargo is not run at all: before #1789 it ran a `cargo
+/// build -p klatch` whose features differed from the workspace's and relinked `target/debug/klatch` while other tests
+/// spawned it (ENOENT), and #1353's second compile of klatch is avoided too. Only a missing or stale binary (this crate's
+/// tests run alone, or klatch edited since) is built, as before. The binary must not be a test-clock build.
 pub fn find_plain_binary() -> Result<std::path::PathBuf, String> {
     static BINARY: std::sync::OnceLock<Result<std::path::PathBuf, String>> =
         std::sync::OnceLock::new();
@@ -506,13 +510,79 @@ fn build_server_binary() -> Result<std::path::PathBuf, String> {
     obtain_binary(&dir, &built, || run_cargo(args, &built))
 }
 
+/// The inputs of klatch's binary: its sources, its manifest, its build script and the workspace lock file.
+fn klatch_inputs() -> Vec<std::path::PathBuf> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut files = vec![
+        root.join("klatch/Cargo.toml"),
+        root.join("klatch/build.rs"),
+        root.join("Cargo.lock"),
+    ];
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(read) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in read.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    walk(&root.join("klatch/src"), &mut files);
+    files
+}
+
+/// Whether the workspace's klatch binary exists and is at least as new as every one of `inputs` (a missing input is
+/// ignored). A stale or absent binary is built; a fresh one is used as it stands (#1789).
+fn workspace_binary_is_fresh(bin: &std::path::Path, inputs: &[std::path::PathBuf]) -> bool {
+    let Ok(built) = std::fs::metadata(bin).and_then(|m| m.modified()) else {
+        return false;
+    };
+    inputs.iter().all(|i| {
+        std::fs::metadata(i)
+            .and_then(|m| m.modified())
+            .map(|t| t <= built)
+            .unwrap_or(true)
+    })
+}
+
+/// The error for a binary whose `--version` says it is a test-clock build, `None` for a plain one.
+fn test_clock_complaint(bin: &std::path::Path, version: &str) -> Option<String> {
+    version.contains("test-clock").then(|| {
+        format!(
+            "{} is a test-clock build ({version}), not the plain binary: a build of klatch with --features test-clock \
+             last wrote it; build the workspace again",
+            bin.display()
+        )
+    })
+}
+
 fn build_plain_binary() -> Result<std::path::PathBuf, String> {
     let layout = BuildLayout::of_running_bench()?;
-    // Only the copies and the lock live here; the build itself is the workspace's, in `target`.
+    // Only the copies and the lock live here; the binary is the workspace's, in `target/<profile>`.
     let dir = layout.target.join("bench-bin-plain");
     let built = layout.profile.join(exe_name("klatch"));
     let args = plain_build_args(&layout.name, &layout.target);
-    obtain_binary(&dir, &built, || run_cargo(args, &built))
+    let inputs = klatch_inputs();
+    let bin = obtain_binary(&dir, &built, || {
+        if workspace_binary_is_fresh(&built, &inputs) {
+            Ok(())
+        } else {
+            run_cargo(args, &built)
+        }
+    })?;
+    let version = std::process::Command::new(&bin)
+        .arg("--version")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .map_err(|e| e.to_string())?;
+    match test_clock_complaint(&bin, &version) {
+        Some(e) => Err(e),
+        None => Ok(bin),
+    }
 }
 
 fn build_binary() -> Result<std::path::PathBuf, String> {
@@ -1068,15 +1138,118 @@ mod build_args_tests {
     use std::path::Path;
 
     #[test]
-    fn the_plain_build_is_the_workspaces_own_so_a_workspace_build_leaves_it_nothing_to_do() {
+    fn the_plain_build_is_default_features_in_the_workspace_target_run_only_when_the_binary_is_stale()
+     {
         let dbg = plain_build_args("debug", Path::new("/t"));
         let has = |args: &[String], a: &str| args.iter().any(|x| x == a);
         let flags = ["test-clock", "--features", "--release"].map(|f| has(&dbg, f));
         assert_eq!(flags, [false; 3], "{dbg:?}");
-        // the workspace target directory, not the private `bench-bin` one
         assert_eq!(dbg.last().map(String::as_str), Some("/t"));
         let rel = plain_build_args("release", Path::new("/t"));
         assert!(rel.contains(&"--release".to_string()), "{rel:?}");
+    }
+
+    /// A throwaway directory with a binary and some inputs whose times are set by hand.
+    fn timed_files(
+        tag: &str,
+        bin_age: u64,
+        inputs_age: &[u64],
+    ) -> (std::path::PathBuf, Vec<std::path::PathBuf>) {
+        let dir = crate::test_dir::TestDir::new(tag);
+        std::fs::create_dir_all(&dir).unwrap();
+        let now = std::time::SystemTime::now();
+        let set = |p: &std::path::Path, age: u64| {
+            std::fs::write(p, "x").unwrap();
+            let f = std::fs::OpenOptions::new().write(true).open(p).unwrap();
+            f.set_modified(now - std::time::Duration::from_secs(age))
+                .unwrap();
+        };
+        let bin = dir.join("klatch");
+        set(&bin, bin_age);
+        let inputs: Vec<std::path::PathBuf> = inputs_age
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                let p = dir.join(format!("in{i}.rs"));
+                set(&p, *a);
+                p
+            })
+            .collect();
+        std::mem::forget(dir);
+        (bin, inputs)
+    }
+
+    /// The workspace's binary is used as it stands when it exists and no input of it is newer; cargo is run otherwise
+    /// (#1789: a cargo run here relinked the binary under the running tests).
+    #[test]
+    fn the_workspace_binary_is_fresh_only_when_it_exists_and_no_input_is_newer() {
+        // inputs older than the binary: fresh
+        let (bin, inputs) = timed_files("1789-fresh", 10, &[100, 50, 20]);
+        assert!(super::workspace_binary_is_fresh(&bin, &inputs));
+        // one input newer than the binary: stale
+        let (bin, inputs) = timed_files("1789-stale", 10, &[100, 5, 20]);
+        assert!(!super::workspace_binary_is_fresh(&bin, &inputs));
+        // no binary: stale
+        let (bin, inputs) = timed_files("1789-absent", 10, &[100]);
+        std::fs::remove_file(&bin).unwrap();
+        assert!(!super::workspace_binary_is_fresh(&bin, &inputs));
+        // a missing input does not make it stale; no inputs at all is fresh
+        let (bin, mut inputs) = timed_files("1789-missing", 10, &[100]);
+        inputs.push(bin.with_file_name("nowhere.rs"));
+        assert!(super::workspace_binary_is_fresh(&bin, &inputs));
+        // the real inputs are found: klatch's sources, its manifest and the lock file
+        let real = super::klatch_inputs();
+        assert!(real.len() > 100, "{} inputs", real.len());
+        assert!(
+            real.iter().any(|p| p.ends_with("klatch/src/lib.rs")),
+            "no lib.rs"
+        );
+        assert!(real.iter().any(|p| p.ends_with("Cargo.lock")));
+    }
+
+    /// The plain binary must not be a test-clock build, whatever built it last.
+    #[test]
+    fn a_test_clock_binary_is_refused_as_the_plain_one() {
+        let bin = Path::new("/w/target/debug/klatch");
+        assert!(super::test_clock_complaint(bin, "klatch 0.2.0 (abc, test-clock)").is_some());
+        assert!(super::test_clock_complaint(bin, "klatch 0.2.0 (abc)").is_none());
+    }
+
+    /// Getting the plain binary must not touch the workspace's own `target/debug/klatch` (#1789): the workspace test
+    /// build leaves a feature-unified klatch there, other tests spawn it by `CARGO_BIN_EXE_klatch` while this runs, and a
+    /// cargo build that relinks it makes their spawn fail with ENOENT. Deterministic: after a workspace build a `cargo
+    /// build -p klatch` differs from it and relinks the file (the old plain build did exactly that), so the file's
+    /// identity, time and size must be the same after.
+    #[cfg(unix)]
+    #[test]
+    fn building_the_plain_binary_leaves_the_workspace_binary_alone() {
+        use std::os::unix::fs::MetadataExt;
+        let layout = super::BuildLayout::of_running_bench().unwrap();
+        let ws = layout.profile.join(super::exe_name("klatch"));
+        let Ok(before) = std::fs::metadata(&ws) else {
+            eprintln!(
+                "skipped: {} is not built (only this crate's tests were built)",
+                ws.display()
+            );
+            return;
+        };
+        if !super::workspace_binary_is_fresh(&ws, &super::klatch_inputs()) {
+            eprintln!(
+                "skipped: {} is older than klatch's sources, so it is rebuilt by design",
+                ws.display()
+            );
+            return;
+        }
+        let id = |m: &std::fs::Metadata| (m.ino(), m.mtime(), m.mtime_nsec(), m.len());
+        let plain = super::build_plain_binary().expect("the plain klatch binary");
+        let after = std::fs::metadata(&ws).expect("the workspace binary is still there");
+        assert_eq!(
+            id(&after),
+            id(&before),
+            "getting {} replaced {}: a test that spawns it meanwhile gets ENOENT (#1789)",
+            plain.display(),
+            ws.display()
+        );
     }
 
     #[test]
