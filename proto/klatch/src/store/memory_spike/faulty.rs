@@ -27,6 +27,9 @@ enum Fault {
     DenyIsDueToApply,
     NoticesRepeat,
     FlagIsDropped,
+    CountIgnoresTheRequester,
+    CountKeepsResolved,
+    PagesRepeatTheCursor,
     StatusIgnoresTheRoom,
     LastParentWins,
     HookRunsAreNotCounted,
@@ -298,6 +301,30 @@ impl ReviewStore for Faulty {
             .collect())
     }
 
+    fn pending_reviews_after(&self, after: i64, limit: usize) -> Result<Vec<QueuedReview>> {
+        Ok(self
+            .pending_reviews(usize::MAX >> 1)?
+            .into_iter()
+            .filter(|r| {
+                r.id > after || (self.fault == Fault::PagesRepeatTheCursor && r.id == after)
+            })
+            .take(limit)
+            .collect())
+    }
+
+    fn waiting_crossings_of(&self, requester: &str) -> Result<usize> {
+        Ok(self
+            .queue
+            .borrow()
+            .iter()
+            .filter(|r| {
+                !r.to_room.is_empty()
+                    && (r.verdict.is_empty() || self.fault == Fault::CountKeepsResolved)
+                    && (r.requester == requester || self.fault == Fault::CountIgnoresTheRequester)
+            })
+            .count())
+    }
+
     fn resolve_review(&self, r: &ReviewResolution, _now: i64) -> Result<bool> {
         let mut q = self.queue.borrow_mut();
         let Some(item) = q.iter_mut().find(|x| x.id == r.id) else {
@@ -430,6 +457,12 @@ fn cases() -> Vec<(&'static str, Check, Fault)> {
         ("crossing keeps requester", c::reviews::a_crossing_item_keeps_its_target_requester_and_outcome::<Faulty>, CrossingLosesItsRequester),
         ("deny is never due", c::reviews::a_deny_or_a_plain_item_is_never_due_to_be_applied::<Faulty>, DenyIsDueToApply),
         ("notices told once", c::reviews::a_crossing_is_told_to_its_requester_once_while_waiting_and_once_for_its_outcome::<Faulty>, NoticesRepeat),
+        ("pages walk by cursor", c::reviews::pending_pages_by_cursor_and_waiting_crossings_are_counted_per_requester::<Faulty>, PagesRepeatTheCursor),
+        ("count is per requester", c::reviews::pending_pages_by_cursor_and_waiting_crossings_are_counted_per_requester::<Faulty>, CountIgnoresTheRequester),
+        ("count is of waiting items", c::reviews::pending_pages_by_cursor_and_waiting_crossings_are_counted_per_requester::<Faulty>, CountKeepsResolved),
+        ("cap counts the requester only", c::reviews::a_capped_enqueue_stops_at_the_requesters_cap_and_returns_a_waiting_duplicate::<Faulty>, CountIgnoresTheRequester),
+        ("cap counts waiting items only", c::reviews::a_capped_enqueue_stops_at_the_requesters_cap_and_returns_a_waiting_duplicate::<Faulty>, CountKeepsResolved),
+        ("capped dedupe is the whole crossing", c::reviews::a_capped_enqueue_never_hands_a_requester_another_requesters_item::<Faulty>, DedupeIgnoresRequesterAndRoom),
         ("flag kept", c::reviews::a_flag_is_kept_on_a_waiting_item_and_a_verdict_replaces_it::<Faulty>, FlagIsDropped),
     ]
 }
@@ -462,13 +495,20 @@ fn every_new_conformance_test_fails_on_the_store_broken_in_the_way_it_guards() {
 fn the_feature_probe_runs_the_review_conformance_tests_and_catches_a_broken_declaration() {
     FAULT.with(|f| f.set(Fault::None));
     c::features::probe(Feature::Reviews, Faulty::new);
-    FAULT.with(|f| f.set(Fault::SecondVerdictWins));
-    let ran = catch_unwind(|| c::features::probe(Feature::Reviews, Faulty::new));
-    FAULT.with(|f| f.set(Fault::None));
-    assert!(
-        ran.is_err(),
-        "a broken review queue went unnoticed by the probe"
-    );
+    for fault in [
+        Fault::SecondVerdictWins,
+        Fault::PagesRepeatTheCursor,
+        Fault::CountIgnoresTheRequester,
+        Fault::CountKeepsResolved,
+    ] {
+        FAULT.with(|f| f.set(fault));
+        let ran = catch_unwind(|| c::features::probe(Feature::Reviews, Faulty::new));
+        FAULT.with(|f| f.set(Fault::None));
+        assert!(
+            ran.is_err(),
+            "a broken review queue ({fault:?}) went unnoticed by the probe"
+        );
+    }
 }
 
 #[test]

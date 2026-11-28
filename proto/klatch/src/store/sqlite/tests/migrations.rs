@@ -854,7 +854,7 @@ fn a_version_42_database_gains_the_machine_status_counts_and_keeps_its_data() {
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     assert_eq!(version(&s), SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 45);
+    assert_eq!(SCHEMA_VERSION, 46);
     let columns: String = s
         .conn
         .query_row(
@@ -894,7 +894,7 @@ fn a_version_43_database_gains_the_ask_routing_tables_and_keeps_its_data() {
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     assert_eq!(version(&s), SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 45);
+    assert_eq!(SCHEMA_VERSION, 46);
     for table in ["ask_routes", "ask_route_events"] {
         let n: i64 = s
             .conn
@@ -927,7 +927,7 @@ fn a_version_44_database_gains_the_claim_lapses_table_empty_and_keeps_its_data()
     }
     let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
     assert_eq!(version(&s), SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 45);
+    assert_eq!(SCHEMA_VERSION, 46);
     let n: i64 = s
         .conn
         .query_row("SELECT COUNT(*) FROM claim_lapses", [], |r| r.get(0))

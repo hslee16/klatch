@@ -1,5 +1,8 @@
 //! The review queue (#48): a post that needs review waits here until a judge returns a verdict.
 
+use super::super::review::{
+    PENDING_TAIL, WAITING_COUNT_SQL, WAITING_SAME_SQL, pending_after_tail, review_select,
+};
 use super::*;
 use crate::store::NewReview;
 
@@ -90,4 +93,85 @@ fn concurrent_connections_of_one_requester_cannot_exceed_the_cap() {
         );
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
+}
+
+/// The query plan of `sql` with the given parameters, one line per step.
+fn plan_of(s: &SqliteStore, sql: &str, n_params: usize) -> String {
+    let mut stmt = s
+        .conn
+        .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+        .unwrap();
+    let params: Vec<rusqlite::types::Value> = (0..n_params).map(|_| 1i64.into()).collect();
+    let rows: Vec<String> = stmt
+        .query_map(rusqlite::params_from_iter(params), |r| {
+            r.get::<_, String>(3)
+        })
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    rows.join(" | ")
+}
+
+#[test]
+fn the_dedupe_and_cap_lookups_of_an_enqueue_search_an_index_and_never_scan_the_queue() {
+    let s = store();
+    for (what, sql, n) in [
+        ("dedupe", WAITING_SAME_SQL.to_string(), 5),
+        ("count", WAITING_COUNT_SQL.to_string(), 1),
+    ] {
+        let plan = plan_of(&s, &sql, n);
+        assert!(
+            plan.contains("review_queue_waiting_requester"),
+            "{what}: {plan}"
+        );
+        assert!(!plan.contains("SCAN"), "{what}: {plan}");
+    }
+}
+
+#[test]
+fn the_pages_of_the_waiting_queue_search_the_waiting_index_and_never_walk_resolved_items() {
+    let s = store();
+    for (what, tail) in [
+        ("first page", PENDING_TAIL.to_string()),
+        ("later page", pending_after_tail(7)),
+    ] {
+        let plan = plan_of(&s, &review_select(&tail), 1);
+        assert!(plan.contains("review_queue_waiting"), "{what}: {plan}");
+        assert!(plan.contains("USING INDEX"), "{what}: {plan}");
+        assert!(
+            !plan.contains("TEMP B-TREE"),
+            "{what}: sorted from the index: {plan}"
+        );
+    }
+}
+
+#[test]
+fn a_database_from_before_the_review_indexes_gains_them_and_keeps_its_queue() {
+    let path = temp_db("review-migrate-indexes");
+    {
+        let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+        s.enqueue_review(
+            &NewReview::new("v", 1, "public", "crossing").crossing("open", "alice"),
+            5,
+        )
+        .unwrap();
+        s.conn
+            .execute_batch(
+                "DROP INDEX review_queue_waiting_requester; DROP INDEX review_queue_waiting; PRAGMA user_version = 45;",
+            )
+            .unwrap();
+    }
+    let s = SqliteStore::open(&path, &crate::store::insecure_test_key()).unwrap();
+    let n: i64 = s
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name IN ('review_queue_waiting_requester','review_queue_waiting')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 2);
+    assert_eq!(s.waiting_crossings_of("alice").unwrap(), 1);
+    assert_eq!(s.pending_reviews(10).unwrap().len(), 1);
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
