@@ -303,7 +303,9 @@ fn every_invisible_or_non_ascii_character_is_escaped() {
 fn a_key_ending_with_the_marker_is_not_the_cut_form_of_a_longer_key() {
     use crate::store::area::{MAX_AUDIT_TARGET, TRUNCATED, audit_target};
     // while the escaped literal fits, it is stored uncut and must not look cut
-    for n in 0..=(MAX_AUDIT_TARGET - 8 - 11) {
+    for n in 0..=(MAX_AUDIT_TARGET - r"\u{5c}...[truncated]".len()) {
+        // the marker is pure ASCII and starts with a bare backslash
+        assert!(TRUNCATED.is_ascii() && TRUNCATED.starts_with('\\'));
         let literal = format!("{}{TRUNCATED}", "a".repeat(n));
         let t = audit_target(&literal);
         let cut = audit_target(&format!("{}{}", "a".repeat(MAX_AUDIT_TARGET * 2), "b"));
@@ -328,28 +330,118 @@ fn the_cap_is_128_bytes_exactly() {
 
 #[test]
 fn a_cut_never_ends_inside_an_escape_or_a_character() {
-    use crate::store::area::{TRUNCATED, audit_target};
-    for pad in 100..140 {
-        for ch in ["\u{202e}", "\u{1f600}", "\u{e9}", "\0", "\\"] {
-            let k = format!("{}{}", "a".repeat(pad), ch.repeat(30));
-            let t = audit_target(&k);
-            let body = t.strip_suffix(TRUNCATED).unwrap_or(&t);
-            // every `\u{` in the body is closed, and every backslash starts a whole escape
-            let mut rest = body;
-            while let Some(i) = rest.find('\\') {
-                let tail = &rest[i + 1..];
-                if let Some(esc) = tail.strip_prefix("u{") {
-                    let close = esc
-                        .find('}')
-                        .unwrap_or_else(|| panic!("partial escape in {t:?}"));
-                    assert!(esc[..close].chars().all(|c| c.is_ascii_hexdigit()), "{t:?}");
-                    rest = &esc[close + 1..];
+    use crate::store::area::{MAX_AUDIT_TARGET, TRUNCATED, audit_target};
+    // a plain reference: escape the whole key, then keep the longest prefix of whole pieces that fits with the marker
+    fn reference(k: &str) -> String {
+        let pieces: Vec<String> = k
+            .chars()
+            .map(|c| {
+                if c.is_ascii_graphic() && c != '\\' || c == ' ' {
+                    c.to_string()
                 } else {
-                    panic!("bare backslash in {t:?}");
+                    format!("\\u{{{:x}}}", c as u32)
+                }
+            })
+            .collect();
+        let whole: String = pieces.concat();
+        if whole.len() <= MAX_AUDIT_TARGET {
+            return whole;
+        }
+        let mut out = String::new();
+        for p in &pieces {
+            if out.len() + p.len() + TRUNCATED.len() > MAX_AUDIT_TARGET {
+                break;
+            }
+            out.push_str(p);
+        }
+        out + TRUNCATED
+    }
+    for pad in 90..140 {
+        for ch in ["\u{202e}", "\u{1f600}", "\u{e9}", "\0", "\\", "a"] {
+            for tail in [1, 2, 3, 30] {
+                let k = format!("{}{}", "a".repeat(pad), ch.repeat(tail));
+                let t = audit_target(&k);
+                assert_eq!(t, reference(&k), "pad {pad} {ch:?} x{tail}");
+                assert!(t.is_ascii());
+                let body = t.strip_suffix(TRUNCATED).unwrap_or(&t);
+                // every `\u{` in the body is closed, and every backslash starts a whole escape
+                let mut rest = body;
+                while let Some(i) = rest.find('\\') {
+                    let tail = &rest[i + 1..];
+                    if let Some(esc) = tail.strip_prefix("u{") {
+                        let close = esc
+                            .find('}')
+                            .unwrap_or_else(|| panic!("partial escape in {t:?}"));
+                        assert!(esc[..close].chars().all(|c| c.is_ascii_hexdigit()), "{t:?}");
+                        rest = &esc[close + 1..];
+                    } else {
+                        panic!("bare backslash in {t:?}");
+                    }
                 }
             }
         }
     }
+}
+
+#[test]
+fn a_cut_target_is_pure_ascii() {
+    use crate::store::area::audit_target;
+    for k in [
+        "x".repeat(300),
+        format!("a{}", "\u{202e}".repeat(100)),
+        format!("a{}", "\u{e0041}".repeat(100)),
+    ] {
+        let t = audit_target(&k);
+        assert!(t.chars().all(|c| c.is_ascii_graphic() || c == ' '), "{t:?}");
+    }
+}
+
+// #1763: the text a refused caller reads is capped and escaped like the audit target.
+
+fn refusal_text(k: &str) -> String {
+    let s = SqliteStore::open_in_memory().unwrap();
+    match s.policy_set(k, Some("v"), 100) {
+        Err(e) => format!("{e}"),
+        Ok(()) => panic!("{k:?} was not refused"),
+    }
+}
+
+#[test]
+fn the_refusal_text_of_a_huge_key_is_bounded_and_ascii() {
+    let t = refusal_text(&format!("admin-passphrase-{}", "x".repeat(100 * 1024)));
+    assert!(t.len() < 512, "{} bytes", t.len());
+    assert!(t.is_ascii());
+    assert!(t.contains(crate::store::area::TRUNCATED), "{t}");
+}
+
+#[test]
+fn the_refusal_text_escapes_control_bidi_and_tag_characters() {
+    for c in [
+        '\u{1b}',
+        '\n',
+        '\u{202e}',
+        '\u{2066}',
+        '\u{e0041}',
+        '\u{e0001}',
+        '\u{200b}',
+    ] {
+        let t = refusal_text(&format!("admin-passphrase{c}x"));
+        assert!(
+            t.chars().all(|c| c.is_ascii_graphic() || c == ' '),
+            "{c:?} {t:?}"
+        );
+        assert!(t.contains(&format!("\\u{{{:x}}}", c as u32)), "{c:?} {t:?}");
+    }
+}
+
+#[test]
+fn the_refusal_text_of_a_plain_key_is_unchanged() {
+    assert_eq!(
+        refusal_text("admin-passphrase-hash"),
+        "refused (admin-passphrase-rows): the policy key admin-passphrase-hash belongs to the admin passphrase and is changed only by `klatch admin` passphrase commands"
+    );
+    // the key is shown as typed (case kept), not the normalized form
+    assert!(refusal_text("Admin-Unlock-Secs").contains("key Admin-Unlock-Secs belongs"));
 }
 
 #[test]

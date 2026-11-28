@@ -33,9 +33,10 @@ pub fn normalize_key(key: &str) -> String {
 }
 
 /// The marker that ends a refusal audit target cut to `MAX_AUDIT_TARGET` (#1755).
-/// It starts with U+2026, a character `audit_target` always escapes, so no key can end with the marker by itself and
-/// a cut target is never byte-identical to an uncut one.
-pub const TRUNCATED: &str = "\u{2026}[truncated]";
+/// It is pure ASCII and starts with a bare backslash. `audit_target` writes every backslash of a key as the escape
+/// `\u{5c}`, and every other escape is `\u{..}` too, so an escaped body never contains a backslash that is not
+/// followed by `u{`: no key can end with the marker by itself and a cut target is never byte-identical to an uncut one.
+pub const TRUNCATED: &str = "\\...[truncated]";
 
 /// The most bytes a refusal audit target holds, marker included.
 pub const MAX_AUDIT_TARGET: usize = 128;
@@ -49,7 +50,8 @@ fn needs_escape(c: char) -> bool {
     !(c.is_ascii_graphic() || c == ' ') || c == '\\'
 }
 
-/// The form of a normalized key that is stored and shown in the refusal audit (#1755): every character that is not
+/// The form of a normalized key that is stored and shown in the refusal audit (#1755), and of the key in the text of
+/// the refusal error (#1763): every character that is not
 /// printable ASCII is written as a `\u{..}` escape, and what is longer than `MAX_AUDIT_TARGET` bytes is cut at a
 /// whole character or escape and ends with `TRUNCATED`. Matching, the family test and the throttle's key use
 /// `normalize_key`, never this; the throttle compares rows by this form, so keys equal up to the cut share one row a
