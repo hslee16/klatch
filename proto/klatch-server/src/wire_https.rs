@@ -533,9 +533,7 @@ mod echo_tests {
     fn an_unknown_option_is_echoed_escaped() {
         let e = format!(
             "{:#}",
-            parse(&["--bad\u{1b}[2J\u{202e}\u{200b}"])
-                .err()
-                .expect("an unknown option is refused")
+            parse(&["--bad\u{1b}[2J\u{202e}\u{200b}"]).expect_err("an unknown option is refused")
         );
         assert!(e.contains("\\u{1b}"), "{e}");
         assert!(

@@ -125,11 +125,11 @@ mod tests {
     fn a_refused_argument_is_echoed_escaped() {
         let h = "\u{1b}[2J\u{202e}\u{200b}\n";
         for a in [format!("{h}x"), format!("lobby:{h}x")] {
-            let e = room_filters(&[a.clone()], &Filter::default()).unwrap_err();
+            let e = room_filters(std::slice::from_ref(&a), &Filter::default()).unwrap_err();
             assert_escaped(&e, &a);
         }
         for a in [format!("dm:{h}x"), format!("dm:{h}x:only=a")] {
-            let e = resolve_dm_targets(&[a.clone()], "me").unwrap_err();
+            let e = resolve_dm_targets(std::slice::from_ref(&a), "me").unwrap_err();
             assert_escaped(&e, &a);
         }
         let e = resolve_dm_targets(&["dm:me".to_string()], "me").unwrap_err();
