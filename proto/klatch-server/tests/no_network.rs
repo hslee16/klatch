@@ -1121,6 +1121,11 @@ fn a_connect_or_a_bind_through_any_alias_name_is_judged_like_the_original() {
             "use crate::loopback::Stream as S;\ntype T = S;\nfn f() { T::connect(a); }\n",
         ),
         (
+            "a use rename of a use rename",
+            "src/wire_http.rs",
+            "use crate::loopback::Stream as S;\nuse self::S as T;\nfn f() { T::connect(a); }\n",
+        ),
+        (
             "a type alias of TcpStream",
             "src/wire_http.rs",
             "type C = std::net::TcpStream;\nfn f() { C::connect(a); }\n",
