@@ -30,6 +30,7 @@ fn review() -> ReviewItem {
         from_label: "public".into(),
         reason: "crossing".into(),
         text: "hello".into(),
+        to_room: String::new(),
     }
 }
 

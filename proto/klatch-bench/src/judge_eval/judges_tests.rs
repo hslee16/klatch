@@ -10,6 +10,7 @@ fn review(text: &str, to: &str) -> ReviewItem {
         from_label: "private".into(),
         reason: "crossing".into(),
         text: text.into(),
+        to_room: String::new(),
     }
 }
 

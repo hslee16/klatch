@@ -45,6 +45,7 @@ fn review(label: &str, text: &str) -> ReviewItem {
         from_label: label.into(),
         reason: "crossing".into(),
         text: text.into(),
+        to_room: String::new(),
     }
 }
 
