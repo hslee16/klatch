@@ -294,6 +294,8 @@ fn no_http_or_networking_crate_is_in_the_dependency_tree() {
         "attohttpc",
         "surf",
         "minreq",
+        "nix",
+        "rustix",
         "tiny_http",
         "axum",
         "warp",
@@ -558,4 +560,239 @@ fn the_documents_state_the_servers_own_claim() {
         let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(text.contains(claim), "{doc} does not state: {claim}");
     }
+}
+
+// ---- OS-level network calls (#1781, #1783): the same scanner as the klatch crate's guard --------------------------------
+
+/// What the scan may keep in this crate: an exact file and an exact line, and why. Nothing else is allowed. The daemon
+/// listens on a Unix socket and the loopback listener on a loopback TCP port by design, so the Rust types that do that
+/// are governed by the rules above (`SOCKETS`, `DAEMON_NAMES`); what is allowed here is the `libc` and module-path use
+/// the type rules cannot see.
+struct NetAllowance {
+    file: &'static str,
+    line: &'static str,
+    /// How many times the line occurs in the file (the Linux and the macOS branch may share one).
+    count: usize,
+    reason: &'static str,
+}
+
+const PEER: &str = "the daemon asks the kernel who is at the other end of a connection it accepted on its own Unix socket \
+                    (SO_PEERCRED on Linux, getpeereid and LOCAL_PEERPID on macOS), so it can refuse a peer of another uid \
+                    before it reads a byte; the call sends and connects nothing, and the line is part of that one function";
+
+#[rustfmt::skip]
+const NET_ALLOWED: &[NetAllowance] = &[
+    NetAllowance { file: "src/daemon.rs", line: "let a: libc::sockaddr_un = unsafe { std::mem::zeroed() };", count: 1, reason: "a zeroed sockaddr_un read only for the length of its sun_path array (the longest socket path); no socket is made and nothing is called" },
+    NetAllowance { file: "src/daemon_peer.rs", line: "let mut c: libc::ucred = unsafe { std::mem::zeroed() };", count: 1, reason: PEER },
+    NetAllowance { file: "src/daemon_peer.rs", line: "let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;", count: 1, reason: PEER },
+    NetAllowance { file: "src/daemon_peer.rs", line: "libc::getsockopt(", count: 2, reason: PEER },
+    NetAllowance { file: "src/daemon_peer.rs", line: "libc::SOL_SOCKET,", count: 1, reason: PEER },
+    NetAllowance { file: "src/daemon_peer.rs", line: "libc::SO_PEERCRED,", count: 1, reason: PEER },
+    NetAllowance { file: "src/daemon_peer.rs", line: "(&mut c as *mut libc::ucred).cast(),", count: 1, reason: PEER },
+    NetAllowance { file: "src/daemon_peer.rs", line: "if unsafe { libc::getpeereid(fd, &mut uid, &mut gid) } != 0 {", count: 1, reason: PEER },
+    NetAllowance { file: "src/daemon_peer.rs", line: "let mut len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;", count: 1, reason: PEER },
+    NetAllowance { file: "src/loopback.rs", line: "if libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) != 0 {", count: 1, reason: "connected_pair: two connected local sockets inside the process, the connection type the TLS listener hands the HTTP handlers while it carries the other end's bytes through TLS; unnamed, no address, nothing listens and nothing leaves the process" },
+    NetAllowance { file: "tests/client_socket.rs", line: "if said && std::os::unix::net::UnixStream::connect(self.sock()).is_ok() {", count: 1, reason: "an integration test of the Rust client's socket connect (#1095): it probes the path of the daemon it started in its own temporary directory; a local Unix socket, a test crate" },
+    NetAllowance { file: "tests/daemon.rs", line: "use std::os::unix::net::UnixStream;", count: 1, reason: "an integration test of the daemon: it connects to the daemon it started on a Unix socket in its own temporary directory; a test crate" },
+    NetAllowance { file: "tests/daemon.rs", line: "drop(std::os::unix::net::UnixListener::bind(dir.sock()).unwrap());", count: 1, reason: "the daemon test that leaves a dead socket file behind: it binds and drops a Unix listener in its own temporary directory to make the stale file the daemon must replace" },
+    NetAllowance { file: "tests/daemon.rs", line: "let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();", count: 1, reason: "a daemon test that needs a peer which hangs up: a Unix listener in its own temporary directory that accepts one connection and closes it, to test the client against it" },
+];
+
+fn net_allowance_for(rel: &str, raw_line: &str) -> Option<&'static NetAllowance> {
+    NET_ALLOWED
+        .iter()
+        .find(|a| a.file == rel && a.line == raw_line.trim())
+}
+
+/// Files only tests may hold, with the one file that declares each (`#[cfg(test)] #[path = "..."] mod ..;`).
+const TEST_ONLY_FILES: &[(&str, &str)] = &[("src/daemon.rs", "src/daemon_tests.rs")];
+
+/// The test-only files a `#[path]` or `include!` must not pull into another file.
+fn protected_test_files() -> Vec<&'static str> {
+    TEST_CLIENT
+        .iter()
+        .copied()
+        .chain(TEST_ONLY_FILES.iter().map(|(_, f)| *f))
+        .collect()
+}
+
+/// Whether `text` has `#[path = "target"]` directly under `#[cfg(test)]`.
+fn declared_under_cfg_test(text: &str, target: &str) -> bool {
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    let want = format!("#[path = \"{target}\"]");
+    lines
+        .windows(2)
+        .any(|w| w[0] == "#[cfg(test)]" && w[1] == want)
+}
+
+/// The OS-level network findings of one file that no allowance covers. `std::os::unix::net` is the daemon's own and is
+/// only allowed in the daemon files (`DAEMON_ONLY`); everything else needs an exact entry.
+fn net_problems(rel: &str, text: &str) -> Vec<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    // a `#[path]` or `include!` that reaches a file that only tests may hold, except the one declaration by its parent
+    let paths = net_scan::path_targets(text)
+        .into_iter()
+        .filter_map(|(line, target)| {
+            let resolved = net_scan::resolve_relative(rel, &target);
+            let legit = TEST_ONLY_FILES.iter().any(|(parent, file)| {
+                *parent == rel && *file == resolved && declared_under_cfg_test(text, &target)
+            });
+            (protected_test_files().contains(&resolved.as_str()) && !legit)
+                .then(|| format!("{rel}:{line}: a #[path] or include! of {resolved}"))
+        });
+    net_scan::findings(text)
+        .into_iter()
+        .filter(|f| !(f.what == "std::os::unix::net" && is_in(rel, DAEMON_ONLY)))
+        .filter_map(|f| {
+            let raw = lines.get(f.line.wrapping_sub(1)).copied().unwrap_or("");
+            net_allowance_for(rel, raw)
+                .is_none()
+                .then(|| format!("{rel}:{}: {}: {}", f.line, f.what, raw.trim()))
+        })
+        .chain(paths)
+        .collect()
+}
+
+#[test]
+fn the_source_and_tests_make_no_os_level_network_call_but_the_allowed_ones() {
+    let problems: Vec<String> = all_sources()
+        .iter()
+        .flat_map(|(rel, text)| net_problems(rel, text))
+        .collect();
+    assert!(
+        problems.is_empty(),
+        "an OS-level network call or name (an exact NET_ALLOWED entry with a reason is the only way to keep one):\n{}",
+        problems.join("\n")
+    );
+}
+
+/// Every allowance names a file that exists, its line occurs there exactly `count` times, and it has a reason: a stale or
+/// widened entry fails.
+#[test]
+fn every_network_allowance_matches_its_real_lines() {
+    let sources = all_sources();
+    for a in NET_ALLOWED {
+        let (_, text) = sources
+            .iter()
+            .find(|(rel, _)| rel == a.file)
+            .unwrap_or_else(|| panic!("{} is allowed but does not exist", a.file));
+        let hits = text.lines().filter(|l| l.trim() == a.line).count();
+        assert_eq!(hits, a.count, "{}: the allowed line {:?}", a.file, a.line);
+        assert!(a.reason.len() > 40, "{}: a reason is needed", a.file);
+        assert!(
+            a.file.starts_with("src/") || a.file.starts_with("tests/"),
+            "{}",
+            a.file
+        );
+    }
+}
+
+/// The allowance is a list of exact lines of exact files; growing it is a deliberate act.
+#[test]
+fn the_network_allowance_covers_only_its_own_lines() {
+    assert_eq!(
+        NET_ALLOWED.len(),
+        14,
+        "a new allowance needs a review and this number changed"
+    );
+    for a in NET_ALLOWED {
+        assert!(
+            net_allowance_for(a.file, &format!("   {}  ", a.line)).is_some(),
+            "{}",
+            a.line
+        );
+        for other in [
+            "src/other.rs",
+            "tests/other.rs",
+            "src/daemon_peers.rs",
+            "x/src/daemon_peer.rs",
+        ] {
+            assert!(
+                net_allowance_for(other, a.line).is_none(),
+                "{other}: {}",
+                a.line
+            );
+        }
+        assert!(
+            net_allowance_for(a.file, &format!("{} libc::connect(1, 2, 3);", a.line)).is_none()
+        );
+        assert!(net_allowance_for(a.file, &format!("{}x", a.line)).is_none());
+    }
+    // a call of the family that is not on an allowed line is a problem, in the daemon files too
+    for rel in [
+        "src/daemon_peer.rs",
+        "src/loopback.rs",
+        "src/daemon.rs",
+        "tests/daemon.rs",
+    ] {
+        for call in [
+            "fn f() { unsafe { libc::connect(1, 2, 3) }; }",
+            "fn f() { unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) }; }",
+            "fn f() { unsafe { libc::bind(1, 2, 3) }; }",
+            "fn f() { unsafe { libc::listen(1, 2) }; }",
+            "fn f() { unsafe { libc::syscall(41) }; }",
+        ] {
+            assert!(!net_problems(rel, call).is_empty(), "{rel}: {call}");
+        }
+    }
+    // std::os::unix::net is the daemon's own: allowed in its files, a problem anywhere else without an exact entry
+    let net = "use std::os::unix::net::UnixListener;\n";
+    for rel in DAEMON_ONLY {
+        assert!(net_problems(rel, net).is_empty(), "{rel}");
+    }
+    assert!(!net_problems("src/wire_http.rs", net).is_empty());
+}
+
+/// Every way past the first version of the guards is reported in a file with no allowance.
+#[test]
+fn every_evasion_of_the_first_guard_is_flagged_here_too() {
+    for (what, file, src) in net_scan::evasions() {
+        assert!(
+            !net_problems(file, &src).is_empty(),
+            "not flagged: {what}:\n{src}"
+        );
+    }
+}
+
+/// A `#[path]` or `include!` that reaches a file only tests may hold is reported.
+#[test]
+fn a_path_or_include_of_a_test_only_file_is_flagged_here_too() {
+    let protected = protected_test_files();
+    assert!(protected.len() >= 2, "{protected:?}");
+    for target in protected {
+        for (what, file, src) in net_scan::path_evasions(target) {
+            assert!(
+                !net_problems(&file, &src).is_empty(),
+                "not flagged: {what} of {target}:\n{src}"
+            );
+        }
+    }
+}
+
+/// Words in strings and comments, and libc names that make no network use, are not reported.
+#[test]
+fn comments_strings_and_ordinary_libc_use_are_not_flagged_here() {
+    for (what, src) in net_scan::clean_sources() {
+        assert!(
+            net_problems("src/some/new_file.rs", &src).is_empty(),
+            "flagged: {what}"
+        );
+    }
+}
+
+/// The old line scans read the source with its comments removed by the tokenizer: a `//` in a string no longer hides the
+/// rest of its line from them (#1783).
+#[test]
+fn the_line_scans_see_past_a_double_slash_in_a_string() {
+    let text = net_scan::strip_comments("let u = \"https://x\"; let l = TcpListener::bind(a);\n");
+    let problems: Vec<String> = text
+        .lines()
+        .flat_map(|l| line_problems("src/some/new_file.rs", code_of(l), "at"))
+        .collect();
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.contains("TcpListener") || p.contains("listener")),
+        "{problems:?}"
+    );
 }

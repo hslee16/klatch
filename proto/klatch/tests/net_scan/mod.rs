@@ -451,6 +451,7 @@ pub const LIBC_NET_CALLS: &[&str] = &[
     "gethostbyaddr",
     "getsockname",
     "getpeername",
+    "getpeereid",
     "setsockopt",
     "getsockopt",
     "shutdown",
@@ -961,26 +962,6 @@ pub fn evasions() -> Vec<(&'static str, &'static str, String)> {
             new,
             s("fn f() { let h = unsafe { libc::dlopen(p, 1) }; }\n"),
         ),
-        (
-            "a #[path] to the test fixture",
-            "src/harness/hooks_pointer.rs",
-            s("#[path = \"hooks_pointer/tests.rs\"]\nmod shipped_copy;\n"),
-        ),
-        (
-            "a #[path] with .. to the test fixture",
-            "src/other/x.rs",
-            s("#[path = \"../harness/hooks_pointer/tests.rs\"] mod shipped_copy;\n"),
-        ),
-        (
-            "an include! of the test fixture",
-            "src/harness/mod.rs",
-            s("include!(\"hooks_pointer/tests.rs\");\n"),
-        ),
-        (
-            "a #[path] to a test-only spawner",
-            "src/admin/x.rs",
-            s("#[path = \"command_tests.rs\"]\nmod shipped_runner;\n"),
-        ),
     ];
     for call in LIBC_NET_CALLS {
         v.push((
@@ -1046,6 +1027,31 @@ pub fn evasions() -> Vec<(&'static str, &'static str, String)> {
         v.push(("every resolver", new, format!("fn f() {{ x.{r}(); }}\n")));
     }
     v
+}
+
+/// Throwaway sources that pull the protected file `target` (a path relative to the crate, like `src/a/tests.rs`) into
+/// another file with `#[path]` or `include!`: from its own directory, and from a sibling directory with `..`.
+pub fn path_evasions(target: &str) -> Vec<(&'static str, String, String)> {
+    let (dir, name) = target.rsplit_once('/').unwrap();
+    let root = target.split('/').next().unwrap();
+    let below = &target[root.len() + 1..];
+    vec![
+        (
+            "a #[path] to a protected file from its own directory",
+            format!("{dir}/zz_includer.rs"),
+            format!("#[path = \"{name}\"]\nmod shipped_copy;\n"),
+        ),
+        (
+            "a #[path] with .. to a protected file",
+            format!("{root}/zz_other/zz_includer.rs"),
+            format!("#[path = \"../{below}\"] mod shipped_copy;\n"),
+        ),
+        (
+            "an include! of a protected file",
+            format!("{dir}/zz_includer.rs"),
+            format!("include!(\"{name}\");\n"),
+        ),
+    ]
 }
 
 /// Sources the guards must not report: the same words as strings and comments, and libc names that make no network use.

@@ -578,6 +578,20 @@ fn every_evasion_of_the_first_guard_is_flagged() {
     }
 }
 
+/// A `#[path]` or `include!` that reaches a protected test-only file is reported, whichever file does it.
+#[test]
+fn a_path_or_include_of_a_protected_test_only_file_is_flagged() {
+    let never = |_: &str| None;
+    let protected = protected_files();
+    assert!(protected.len() >= 8, "{protected:?}");
+    for target in protected {
+        for (what, file, src) in net_scan::path_evasions(target) {
+            let found = net_problems(&file, &src, &never);
+            assert!(!found.is_empty(), "not flagged: {what} of {target}:\n{src}");
+        }
+    }
+}
+
 /// Words in strings and comments, and libc names that make no network use, are not reported.
 #[test]
 fn comments_strings_and_ordinary_libc_use_are_not_flagged() {

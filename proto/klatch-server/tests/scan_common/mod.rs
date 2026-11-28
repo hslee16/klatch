@@ -5,6 +5,11 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// The source scanner shared with the `klatch` crate's guard (`klatch/tests/net_scan/mod.rs`): a tokenizer, so a `//` in a
+/// string hides nothing (#1783). Included by path: a test helper, not a dependency.
+#[path = "../../../klatch/tests/net_scan/mod.rs"]
+pub mod net_scan;
+
 pub fn rust_sources() -> Vec<(String, String)> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         for e in std::fs::read_dir(dir).unwrap().flatten() {
@@ -30,14 +35,52 @@ pub fn rust_sources() -> Vec<(String, String)> {
                 .unwrap()
                 .display()
                 .to_string();
+            (
+                rel,
+                net_scan::strip_comments(&std::fs::read_to_string(&p).unwrap()),
+            )
+        })
+        .collect()
+}
+
+/// Every Rust file this crate builds or runs: `src` and `tests` (there is no build script), as `(path relative to the
+/// crate, text with the comments removed)`.
+pub fn all_sources() -> Vec<(String, String)> {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(read) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in read.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    for d in ["src", "tests"] {
+        walk(&root.join(d), &mut files);
+    }
+    if root.join("build.rs").is_file() {
+        files.push(root.join("build.rs"));
+    }
+    files.sort();
+    files
+        .into_iter()
+        .map(|p| {
+            let rel = p.strip_prefix(root).unwrap().display().to_string();
             (rel, std::fs::read_to_string(&p).unwrap())
         })
         .collect()
 }
 
-/// The code of a line: what is left of it before a `//` comment, and not the text of a string.
+/// The code of a line of `rust_sources()`: the line itself, because the comments are already gone (a split at `//` would
+/// also cut a line at the `//` of a URL in a string, #1783).
 pub fn code_of(line: &str) -> &str {
-    line.split("//").next().unwrap_or("")
+    line
 }
 
 /// The first words of the lines `cargo tree` prints for these arguments (offline, no prefix): crate names.
