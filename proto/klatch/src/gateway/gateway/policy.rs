@@ -221,7 +221,8 @@ impl<S: Store> Gateway<S> {
                 rule: "agent-cap".into(),
                 reason: format!(
                     "no agent may hold {label}: the agent cap is {cap}",
-                    label = shown(label)
+                    label = shown(label),
+                    cap = shown(&cap)
                 ),
             });
         }

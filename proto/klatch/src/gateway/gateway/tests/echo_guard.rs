@@ -254,6 +254,11 @@ fn split_args(t: &[Tok]) -> Vec<&[Tok]> {
 /// Whether the expression is exactly one call of `shown`: the identifier `shown` (alone or as the last path segment)
 /// and then a parenthesis that closes at the very end. `xshown(..)` and `shown(a).b` are not.
 fn is_shown_call(e: &[Tok]) -> bool {
+    let e = if e.first() == Some(&Tok::P('&')) {
+        &e[1..]
+    } else {
+        e
+    };
     let Some(open) = e.iter().position(|x| *x == Tok::P('(')) else {
         return false;
     };
@@ -303,27 +308,22 @@ fn is_plain(e: &[Tok]) -> bool {
 const NUMBERS: &[&str] = &[
     "seq",
     "ttl",
-    "n",
     "secs",
     "secs_left",
     "held_secs",
-    "min",
-    "max",
     "limit",
     "count",
     "len",
-    "next",
     "age",
-    "left",
     "now",
-    "ask",
-    "cap",
 ];
 
 /// One raw echo found: where, the format string and the argument.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Echo {
     pub file: String,
+    /// The function the echo is in: an allowlist entry holds for that site only.
+    pub func: String,
     pub template: String,
     pub arg: String,
 }
@@ -375,28 +375,220 @@ const SINKS: &[&str] = &[
 /// The raw echoes in the source of one file.
 pub(super) fn raw_echoes(file: &str, src: &str) -> Vec<Echo> {
     let t = without_test_items(&tokenize(src));
+    let id = |k: usize| match t.get(k) {
+        Some(Tok::Id(s)) => Some(s.as_str()),
+        _ => None,
+    };
+    let p = |k: usize, c: char| t.get(k) == Some(&Tok::P(c));
     let in_error_file = file.ends_with("domain/error.rs");
+
+    // functions: (name, body span, whether the return type is text or an error)
+    let mut fns: Vec<(String, usize, usize, bool)> = Vec::new();
+    for k in 0..t.len() {
+        if id(k) == Some("fn")
+            && let Some(name) = id(k + 1)
+        {
+            // the parameters, then the return type up to the body
+            let Some(open) = (k + 2..t.len()).find(|&j| p(j, '(')) else {
+                continue;
+            };
+            let close = close_of(&t, open);
+            let mut j = close + 1;
+            let mut texty = false;
+            while j < t.len() && !p(j, '{') && !p(j, ';') {
+                if matches!(id(j), Some("String" | "Error")) {
+                    texty = true;
+                }
+                j += 1;
+            }
+            if p(j, '{') {
+                fns.push((name.to_string(), j, close_of(&t, j), texty));
+            }
+        }
+    }
+    // the parameter names of each function (by body start) and closure (by statement start)
+    let mut params_of: Vec<(usize, usize, Vec<String>)> = Vec::new();
+    for k in 0..t.len() {
+        if id(k) == Some("fn") && id(k + 1).is_some() {
+            let Some(open) = (k + 2..t.len()).find(|&j| p(j, '(')) else {
+                continue;
+            };
+            let close = close_of(&t, open);
+            let mut names: Vec<String> = (open + 1..close)
+                .filter(|&j| p(j + 1, ':') && !p(j + 2, ':'))
+                .filter_map(|j| id(j).map(str::to_string))
+                .collect();
+            // a tuple pattern `(a, b): (T, U)`
+            for j in open + 1..close {
+                if p(j, '(') && p(close_of(&t, j) + 1, ':') {
+                    names
+                        .extend((j + 1..close_of(&t, j)).filter_map(|m| id(m).map(str::to_string)));
+                }
+            }
+            let mut j = close + 1;
+            while j < t.len() && !p(j, '{') && !p(j, ';') {
+                j += 1;
+            }
+            if p(j, '{') {
+                params_of.push((j, close_of(&t, j), names));
+            }
+        }
+        // a closure: `|a, b: T|`
+        if p(k, '|')
+            && (p(k + 1, '|') || id(k + 1).is_some())
+            && (p(k.wrapping_sub(1), '=') || id(k.wrapping_sub(1)) == Some("move"))
+            && let Some(close) = (k + 1..t.len()).find(|&j| p(j, '|'))
+        {
+            let names: Vec<String> = (k + 1..close)
+                .filter(|&j| p(j + 1, ':') || p(j + 1, ',') || j + 1 == close)
+                .filter_map(|j| id(j).map(str::to_string))
+                .collect();
+            // the closure body is the rest of its let statement
+            let end = (close..t.len()).find(|&j| p(j, ';')).unwrap_or(t.len() - 1);
+            params_of.push((close, end, names));
+        }
+    }
+    // let statements: (name, start, end), and the ones that bind a closure
+    let mut lets: Vec<(String, usize, usize, bool)> = Vec::new();
+    for k in 0..t.len() {
+        if id(k) != Some("let") {
+            continue;
+        }
+        let mut j = k + 1;
+        if id(j) == Some("mut") {
+            j += 1;
+        }
+        let Some(name) = id(j) else { continue };
+        let mut depth = 0i32;
+        let mut end = t.len() - 1;
+        for (m, tok) in t.iter().enumerate().skip(k) {
+            match tok {
+                Tok::P('(' | '[' | '{') => depth += 1,
+                Tok::P(')' | ']' | '}') => {
+                    depth -= 1;
+                    if depth < 0 {
+                        end = m;
+                        break;
+                    }
+                }
+                Tok::P(';') if depth == 0 => {
+                    end = m;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        // `= |..|` or `= move |..|`, with an optional `: type` after the name
+        let eq = (j + 1..end).find(|&m| p(m, '='));
+        let closure =
+            eq.is_some_and(|e| p(e + 1, '|') || (id(e + 1) == Some("move") && p(e + 2, '|')));
+        lets.push((name.to_string(), k, end, closure));
+    }
+
+    // the names that make an error text: the constructors, and the helpers whose own parameter reaches one of them
+    // (`fn refuse(why: String) -> Error { Error::Invalid(why) }`), to a fixed point
+    let params_in = |a: usize, b: usize| -> Vec<&String> {
+        params_of
+            .iter()
+            .filter(|(s, _, _)| a <= *s && *s <= b)
+            .flat_map(|(_, _, ps)| ps.iter())
+            .collect()
+    };
+    let flows = |a: usize, b: usize, names: &[String]| -> bool {
+        let params = params_in(a, b);
+        if params.is_empty() {
+            return false;
+        }
+        (a..b).any(|k| {
+            let call = match id(k) {
+                Some(n)
+                    if p(k + 1, '(')
+                        && id(k.wrapping_sub(1)) != Some("fn")
+                        && n != "Err"
+                        && names.iter().any(|x| x == n) =>
+                {
+                    Some((k + 1, close_of(&t, k + 1)))
+                }
+                Some("Refused" | "Conflict") if p(k + 1, '{') => Some((k + 1, close_of(&t, k + 1))),
+                Some("bail" | "anyhow") if p(k + 1, '!') => Some((k + 2, close_of(&t, k + 2))),
+                _ => None,
+            };
+            call.is_some_and(|(s, e)| {
+                (s..e).any(|j| matches!(id(j), Some(x) if params.iter().any(|q| q.as_str() == x)))
+            })
+        })
+    };
+    let mut names: Vec<String> = SINKS.iter().map(|s| s.to_string()).collect();
+    loop {
+        let mut grew = false;
+        for (name, a, b) in fns
+            .iter()
+            .map(|f| (&f.0, f.1, f.2))
+            .chain(lets.iter().filter(|l| l.3).map(|l| (&l.0, l.1, l.2)))
+        {
+            if !names.contains(name) && flows(a, b, &names) {
+                names.push(name.clone());
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
     // spans (token ranges) of the sink calls
     let mut sink_spans: Vec<(usize, usize)> = Vec::new();
     for k in 0..t.len() {
-        let Tok::Id(name) = &t[k] else { continue };
-        if SINKS.contains(&name.as_str()) && t.get(k + 1) == Some(&Tok::P('(')) {
+        let Some(name) = id(k) else { continue };
+        if p(k + 1, '(') && names.iter().any(|x| x == name) && id(k.wrapping_sub(1)) != Some("fn") {
             sink_spans.push((k + 1, close_of(&t, k + 1)));
         }
         // the reason of a refusal, and the text fields of a conflict
-        if name == "Refused" && t.get(k + 1) == Some(&Tok::P('{')) {
+        if name == "Refused" && p(k + 1, '{') {
             let end = close_of(&t, k + 1);
-            for piece in split_args(&t[k + 2..end]) {
-                if piece.first() == Some(&Tok::Id("reason".into())) {
-                    sink_spans.push((k + 1, end));
-                }
+            if split_args(&t[k + 2..end])
+                .iter()
+                .any(|piece| piece.first() == Some(&Tok::Id("reason".into())))
+            {
+                sink_spans.push((k + 1, end));
             }
         }
-        if name == "Conflict" && t.get(k + 1) == Some(&Tok::P('{')) {
+        if name == "Conflict" && p(k + 1, '{') {
             sink_spans.push((k + 1, close_of(&t, k + 1)));
         }
     }
-    // a name that a sink reads: `let msg = format!(..)` is then part of a sink
+    // a function that returns the text of an error, when a sink calls it, is part of the sink; to a fixed point
+    let mut body_spans: Vec<(usize, usize)> = Vec::new();
+    loop {
+        let mut grew = false;
+        for (name, a, b, texty) in &fns {
+            if !*texty || body_spans.contains(&(*a, *b)) || names.contains(name) {
+                continue;
+            }
+            let called = sink_spans.iter().chain(body_spans.iter()).any(|&(s, e)| {
+                (s..e)
+                    .any(|k| id(k) == Some(name.as_str()) && p(k + 1, '(') && !(*a <= k && k <= *b))
+            });
+            if called {
+                body_spans.push((*a, *b));
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    // a Display impl is text a person reads
+    let mut display_spans: Vec<(usize, usize)> = Vec::new();
+    for k in 0..t.len() {
+        if id(k) == Some("impl")
+            && let Some(open) = (k..t.len()).find(|&j| p(j, '{') || p(j, ';'))
+            && p(open, '{')
+            && (k..open).any(|j| id(j) == Some("Display"))
+        {
+            display_spans.push((open, close_of(&t, open)));
+        }
+    }
+    // a name that a sink reads: `let msg = format!(..)` (typed or filled by a match) is then part of a sink
     let mut read_by_sinks: Vec<&str> = Vec::new();
     for &(a, b) in &sink_spans {
         for x in &t[a..b] {
@@ -405,27 +597,58 @@ pub(super) fn raw_echoes(file: &str, src: &str) -> Vec<Echo> {
             }
         }
     }
+    // a value that is a parameter of the helper it is in: the helper is a sink, so its callers are checked instead
+    let is_param_of_sink_helper = |k: usize, arg: &[Tok]| -> bool {
+        let Some(Tok::Id(root)) = arg.first() else {
+            return false;
+        };
+        let enclosing_sink = fns
+            .iter()
+            .filter(|f| f.1 <= k && k <= f.2 && names.contains(&f.0))
+            .map(|f| f.1)
+            .chain(
+                lets.iter()
+                    .filter(|l| l.3 && l.1 <= k && k <= l.2 && names.contains(&l.0))
+                    .map(|l| l.1),
+            );
+        enclosing_sink.into_iter().any(|start| {
+            params_of
+                .iter()
+                .any(|(a, b, ps)| *a >= start && *a <= k && k <= *b && ps.contains(root))
+        })
+    };
+    let func_at = |k: usize| -> String {
+        fns.iter()
+            .filter(|f| f.1 <= k && k <= f.2)
+            .min_by_key(|f| f.2 - f.1)
+            .map(|f| f.0.clone())
+            .unwrap_or_default()
+    };
     let mut found = Vec::new();
     let mut seen_format = Vec::new();
     for k in 0..t.len() {
-        let is_macro = matches!(&t[k], Tok::Id(m) if m == "format" || m == "write" || m == "writeln")
-            && t.get(k + 1) == Some(&Tok::P('!'));
-        let open = k + 2;
-        if !is_macro || t.get(open) != Some(&Tok::P('(')) {
+        let m = id(k).filter(|m| matches!(*m, "format" | "write" | "writeln" | "bail" | "anyhow"));
+        let Some(m) = m else { continue };
+        if !p(k + 1, '!') || !(p(k + 2, '(') || p(k + 2, '[') || p(k + 2, '{')) {
             continue;
         }
+        let open = k + 2;
         let end = close_of(&t, open);
+        let in_range = |spans: &[(usize, usize)]| spans.iter().any(|&(a, b)| a < k && k < b);
         let in_sink = in_error_file
-            || sink_spans.iter().any(|&(a, b)| a < k && k < b)
-            || (k >= 3
-                && t[k - 1] == Tok::P('=')
-                && matches!(&t[k - 2], Tok::Id(v) if read_by_sinks.contains(&v.as_str())));
+            || matches!(m, "bail" | "anyhow")
+            || in_range(&sink_spans)
+            || in_range(&body_spans)
+            || in_range(&display_spans)
+            || lets
+                .iter()
+                .any(|(n, a, b, _)| *a < k && k < *b && read_by_sinks.contains(&n.as_str()));
         if !in_sink {
             continue;
         }
         let args = split_args(&t[open + 1..end]);
         // write!(f, "..", args): the first piece is the writer
-        let first = usize::from(matches!(&t[k], Tok::Id(m) if m == "write" || m == "writeln"));
+        let first = usize::from(matches!(m, "write" | "writeln"));
         let Some(Tok::Str(template)) = args.get(first).and_then(|a| a.first()) else {
             continue;
         };
@@ -466,38 +689,98 @@ pub(super) fn raw_echoes(file: &str, src: &str) -> Vec<Echo> {
             }
             found.push(Echo {
                 file: file.to_string(),
+                func: func_at(k),
                 template: template.clone(),
                 arg: text_of(&arg),
             });
         }
         seen_format.push((k, end));
     }
-    // a bare expression that is not a format: a concatenation or a call that builds text
+    let covered = |k: usize| seen_format.iter().any(|&(s, e)| s <= k && k <= e);
+    // push_str of a value into a message that a sink reads
+    for k in 2..t.len() {
+        if id(k) == Some("push_str") && p(k + 1, '(') && p(k - 1, '.') {
+            let Some(recv) = id(k - 2) else { continue };
+            if !read_by_sinks.contains(&recv) {
+                continue;
+            }
+            let arg = &t[k + 2..close_of(&t, k + 1)];
+            if !is_shown_call(arg) && !is_plain(arg) && !covered(k) {
+                found.push(Echo {
+                    file: file.to_string(),
+                    func: func_at(k),
+                    template: "<push_str>".into(),
+                    arg: text_of(arg),
+                });
+            }
+        }
+    }
     for &(a, b) in &sink_spans {
         let inner = &t[a + 1..b];
-        let covered = |k: usize| seen_format.iter().any(|&(s, e)| s <= k && k <= e);
-        // only a sink whose whole argument is such an expression: `+` outside any format!
+        // a concatenation: `+` outside any format!
         let plus = (a + 1..b).any(|k| t[k] == Tok::P('+') && !covered(k));
         if plus && !inner.is_empty() {
             found.push(Echo {
                 file: file.to_string(),
+                func: func_at(a),
                 template: "<concatenation>".into(),
                 arg: text_of(inner),
             });
         }
+        // an argument that is a value turned into text with no format!: `x.to_string()`, `x.clone()`, `x.into()`
+        for piece in split_args(inner) {
+            // a struct field `name: value`: only the text fields are read, the rule name is a literal of the code
+            let (field, piece) = match (piece.first(), piece.get(1)) {
+                (Some(Tok::Id(f)), Some(Tok::P(':'))) if piece.get(2) != Some(&Tok::P(':')) => {
+                    (Some(f.as_str()), &piece[2..])
+                }
+                _ => (None, piece),
+            };
+            if matches!(field, Some("rule" | "secs_left" | "held_secs" | "deadlock")) {
+                continue;
+            }
+            let rooted = matches!(piece.first(), Some(Tok::Id(r)) if !matches!(r.as_str(), "String" | "format" | "shown" | "audit_target"));
+            // a conversion at the top level of the argument, not inside a call it contains
+            let mut depth = 0i32;
+            let mut converts = false;
+            for (m, tok) in piece.iter().enumerate() {
+                match tok {
+                    Tok::P('(' | '[' | '{') => depth += 1,
+                    Tok::P(')' | ']' | '}') => depth -= 1,
+                    Tok::P('.') if depth == 0 => {
+                        converts |= matches!(piece.get(m + 1), Some(Tok::Id(f)) if matches!(f.as_str(), "to_string" | "clone" | "into" | "to_owned" | "to_vec"));
+                    }
+                    _ => {}
+                }
+            }
+            if rooted
+                && converts
+                && !is_shown_call(piece)
+                && !is_plain(piece)
+                && !piece.contains(&Tok::Id("format".into()))
+                && !is_param_of_sink_helper(a, piece)
+            {
+                found.push(Echo {
+                    file: file.to_string(),
+                    func: func_at(a),
+                    template: "<expression>".into(),
+                    arg: text_of(piece),
+                });
+            }
+        }
     }
-    found.sort_by(|x, y| (&x.template, &x.arg).cmp(&(&y.template, &y.arg)));
+    found.sort_by(|x, y| (&x.func, &x.template, &x.arg).cmp(&(&y.func, &y.template, &y.arg)));
     found.dedup();
     found
 }
 
-/// The sites where a raw echo is safe, one per line: `file<TAB>format string (Debug form)<TAB>argument<TAB>reason`.
+/// The sites where a raw echo is safe, one per line: `file<TAB>function<TAB>format string (Debug form)<TAB>argument<TAB>reason`.
 /// The file is relative to `src`. An entry holds only a value that is validated before the error is built (and says
 /// by what), a number, or text that is not a caller's; nothing that was fixed is listed, and an entry that matches no
 /// echo fails the test, so the list cannot rot.
 const ALLOWED_TSV: &str = include_str!("echo_guard_allowed.tsv");
 
-fn allowed_entries() -> Vec<[&'static str; 4]> {
+fn allowed_entries() -> Vec<[&'static str; 5]> {
     ALLOWED_TSV
         .lines()
         .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
@@ -505,10 +788,10 @@ fn allowed_entries() -> Vec<[&'static str; 4]> {
             let f: Vec<&str> = l.split('\t').collect();
             assert_eq!(
                 f.len(),
-                4,
-                "a line of echo_guard_allowed.tsv needs four tab-separated fields: {l}"
+                5,
+                "a line of echo_guard_allowed.tsv needs five tab-separated fields: {l}"
             );
-            [f[0], f[1], f[2], f[3]]
+            [f[0], f[1], f[2], f[3], f[4]]
         })
         .collect()
 }
@@ -518,8 +801,8 @@ fn rel(file: &str) -> &str {
     file.split("/src/").nth(1).unwrap_or(file)
 }
 
-fn matches_entry(e: &Echo, a: &[&str; 4]) -> bool {
-    rel(&e.file) == a[0] && format!("{:?}", e.template) == a[1] && e.arg == a[2]
+fn matches_entry(e: &Echo, a: &[&str; 5]) -> bool {
+    rel(&e.file) == a[0] && e.func == a[1] && format!("{:?}", e.template) == a[2] && e.arg == a[3]
 }
 
 fn allowed(e: &Echo) -> bool {
@@ -549,7 +832,7 @@ fn source_files(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 /// The directories the guard reads (relative to `src`).
-const SCANNED: &[&str] = &["gateway", "session", "keys", "init"];
+const SCANNED: &[&str] = &["gateway", "session", "keys", "init", "commands"];
 
 /// Single files read as well: the error text of the domain and the store sites that echo a caller.
 const SCANNED_FILES: &[&str] = &[
@@ -585,7 +868,15 @@ fn no_error_repeats_a_raw_caller_value() {
     }
     let report: Vec<String> = found
         .iter()
-        .map(|e| format!("{}\t{:?}\t{}\twhy", rel(&e.file), e.template, e.arg))
+        .map(|e| {
+            format!(
+                "{}\t{}\t{:?}\t{}\twhy",
+                rel(&e.file),
+                e.func,
+                e.template,
+                e.arg
+            )
+        })
         .collect();
     assert!(
         found.is_empty(),
@@ -614,7 +905,7 @@ fn the_allowlist_holds_no_unused_entry_and_every_entry_has_a_reason() {
         .iter()
         .zip(&used)
         .filter(|(_, u)| !**u)
-        .map(|(a, _)| (a[0], a[2]))
+        .map(|(a, _)| (a[0], a[3]))
         .collect();
     assert!(
         unused.is_empty(),
@@ -622,10 +913,10 @@ fn the_allowlist_holds_no_unused_entry_and_every_entry_has_a_reason() {
     );
     for a in &entries {
         assert!(
-            a[3].trim().len() > 5 && a[3] != "why",
+            a[4].trim().len() > 5 && a[4] != "why",
             "an entry needs a reason: {a:?}"
         );
-        assert!(!a[2].contains("shown("), "a fixed site is listed: {a:?}");
+        assert!(!a[3].contains("shown("), "a fixed site is listed: {a:?}");
     }
 }
 
@@ -744,10 +1035,122 @@ fn the_scanner_flags_each_blind_spot_snippet() {
     for (what, src) in flagged {
         assert!(!echoes(src).is_empty(), "not flagged: {what}");
     }
+    // helpers, builders and other shapes (#1777): the named argument must be the one found
+    let more: &[(&str, &str, &str)] = &[
+        (
+            "a helper closure that makes the error",
+            "fn f() { let no = |why: String| Err(Error::Invalid(why)); return no(format!(\"{to} did not ask\")); }",
+            "to",
+        ),
+        (
+            "a helper function that makes the error",
+            "fn refuse(why: String) -> Error { Error::Refused { rule: \"r\".into(), reason: why } }\nfn g() { let _ = refuse(format!(\"room {room} is closed\")); }",
+            "room",
+        ),
+        (
+            "a helper through ok_or_else",
+            "fn refuse(why: String) -> Error { Error::Invalid(why) }\nfn g(x: Option<u8>) { let _ = x.ok_or_else(|| refuse(format!(\"room {room} gone\"))); }",
+            "room",
+        ),
+        (
+            "a typed let",
+            "fn f() { let msg: String = format!(\"bad {member}\"); Err(Error::Invalid(msg)) }",
+            "member",
+        ),
+        (
+            "a let filled by a match",
+            "fn f() { let reason = match x { A => format!(\"{} is not a reviewer\", who.member), B => String::new() }; Err(Error::Refused { rule: \"r\".into(), reason }) }",
+            "who.member",
+        ),
+        (
+            "push_str into a message",
+            "fn f() { let mut m = String::from(\"bad \"); m.push_str(member); Err(Error::Invalid(m)) }",
+            "member",
+        ),
+        (
+            "to_string with no format",
+            "fn f() { Err(Error::Invalid(member.to_string())) }",
+            "member.to_string()",
+        ),
+        (
+            "clone with no format",
+            "fn f() { Err(Error::Invalid(member.clone())) }",
+            "member.clone()",
+        ),
+        (
+            "bail",
+            "fn f() -> R { bail!(\"unknown scope {other:?}\") }",
+            "other",
+        ),
+        ("anyhow", "fn f() -> R { Err(anyhow!(\"bad {x}\")) }", "x"),
+        (
+            "format with brackets",
+            "fn f() { Err(Error::Invalid(format![\"bad {member}\"])) }",
+            "member",
+        ),
+        (
+            "a Display impl outside error.rs",
+            "impl fmt::Display for Thing { fn fmt(&self, f: &mut F) -> R { write!(f, \"thing {name}\") } }",
+            "name",
+        ),
+        (
+            "a function that returns the text",
+            "fn reason(who: &str) -> String { format!(\"{who} is not\") }\nfn g() { Err(Error::Invalid(reason(x))) }",
+            "who",
+        ),
+        (
+            "cap is not a number",
+            "fn f() { Err(Error::Invalid(format!(\"agent cap {cap}\"))) }",
+            "cap",
+        ),
+        (
+            "next is not a number",
+            "fn f() { Err(Error::Invalid(format!(\"then {next}\"))) }",
+            "next",
+        ),
+        (
+            "n is not a number",
+            "fn f() { Err(Error::Invalid(format!(\"ref {n}\"))) }",
+            "n",
+        ),
+    ];
+    for (what, src, arg) in more {
+        assert!(
+            echoes(src).iter().any(|e| e.arg == *arg),
+            "not flagged: {what}: {:?}",
+            echoes(src)
+        );
+    }
+    for (what, src) in [
+        (
+            "a literal to_string",
+            "fn f() { Err(Error::Invalid(\"bad\".to_string())) }",
+        ),
+        (
+            "String::from",
+            "fn f() { Err(Error::Invalid(String::from(\"bad\"))) }",
+        ),
+        ("a literal bail", "fn f() -> R { bail!(\"no\") }"),
+        (
+            "a shown bail",
+            "fn f() -> R { bail!(\"bad {}\", shown(x)) }",
+        ),
+        (
+            "a shown push_str",
+            "fn f() { let mut m = String::new(); m.push_str(&shown(member)); Err(Error::Invalid(m)) }",
+        ),
+        (
+            "a helper called with shown",
+            "fn refuse(why: String) -> Error { Error::Invalid(why) }\nfn g() { let _ = refuse(format!(\"room {}\", shown(room))); }",
+        ),
+    ] {
+        assert!(echoes(src).is_empty(), "flagged: {what}: {:?}", echoes(src));
+    }
     // Display of an error: every write! in domain/error.rs
     let display = r#"impl Display for Error { fn fmt(&self, f: &mut F) -> R { write!(f, "refused: {path}") } }"#;
     assert!(!raw_echoes("x/domain/error.rs", display).is_empty());
-    assert!(raw_echoes("x/domain/other.rs", display).is_empty());
+    // a Display impl is read in every file, not only in domain/error.rs
+    assert!(!raw_echoes("x/domain/other.rs", display).is_empty());
 }
 
 #[test]
@@ -835,4 +1238,47 @@ fn code_after_the_test_module_in_gateway_rs_is_still_read() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gateway/gateway.rs");
     let t = without_test_items(&tokenize(&std::fs::read_to_string(root).unwrap()));
     assert!(t.contains(&Tok::Id("check_ask_shape".into())));
+}
+
+#[test]
+fn an_allowlist_entry_holds_for_its_own_site_only() {
+    let entry = [
+        "f.rs",
+        "a",
+        "\"template {x}\"",
+        "x",
+        "a reason that is long enough",
+    ];
+    let echo = |file: &str, func: &str, template: &str, arg: &str| Echo {
+        file: file.into(),
+        func: func.into(),
+        template: template.into(),
+        arg: arg.into(),
+    };
+    assert!(matches_entry(
+        &echo("p/src/f.rs", "a", "template {x}", "x"),
+        &entry
+    ));
+    // the same file, format string and argument in another function is a new site
+    assert!(!matches_entry(
+        &echo("p/src/f.rs", "b", "template {x}", "x"),
+        &entry
+    ));
+    assert!(!matches_entry(
+        &echo("p/src/g.rs", "a", "template {x}", "x"),
+        &entry
+    ));
+    assert!(!matches_entry(
+        &echo("p/src/f.rs", "a", "template {y}", "x"),
+        &entry
+    ));
+    assert!(!matches_entry(
+        &echo("p/src/f.rs", "a", "template {x}", "y"),
+        &entry
+    ));
+    // and through the scanner: one raw echo in a function is not covered by an entry for another function
+    let two = "fn a() { Err(Error::Invalid(format!(\"template {x}\"))) }\nfn b() { Err(Error::Invalid(format!(\"template {x}\"))) }";
+    let found = raw_echoes("p/src/f.rs", two);
+    assert_eq!(found.len(), 2);
+    assert_eq!(found.iter().filter(|e| matches_entry(e, &entry)).count(), 1);
 }

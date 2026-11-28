@@ -316,7 +316,7 @@ mod tests {
 
     #[test]
     fn a_refused_name_is_shown_capped_and_ascii() {
-        let hostile = format!("{}\u{1b}[31m\u{202e}\u{e0041}\n", "n".repeat(100 * 1024));
+        let hostile = format!("\u{1b}[31m\u{202e}\u{e0041}\n{}", "n".repeat(100 * 1024));
         let e = MemoryKeys::default().get(&hostile).unwrap_err();
         let Error::Bad(text) = e else {
             panic!("not Bad")

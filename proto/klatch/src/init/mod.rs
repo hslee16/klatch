@@ -143,7 +143,10 @@ impl Io<'_> {
             "" | "project" => Ok(Scope::Project),
             "user" => Ok(Scope::User),
             "both" => Ok(Scope::Both),
-            other => bail!("unknown scope {other:?}: say project, user or both"),
+            other => bail!(
+                "unknown scope \"{}\": say project, user or both",
+                klatch::domain::shown(other)
+            ),
         }
     }
 

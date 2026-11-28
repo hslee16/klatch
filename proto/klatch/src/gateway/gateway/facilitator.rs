@@ -86,7 +86,8 @@ impl<S: Store> Gateway<S> {
         };
         if ask.sender != to {
             return no(format!(
-                "{to} did not ask #{n}; only the asker may be asked"
+                "{to} did not ask #{n}; only the asker may be asked",
+                to = shown(to)
             ));
         }
         // the prefix query sees a need-info at any depth of the room, not only in its oldest 5000 messages (#980)
@@ -173,7 +174,8 @@ fn refused(who: &Principal, what: &str) -> Error {
         rule: "facilitator".into(),
         reason: format!(
             "{} is a facilitator, which may only read, create a room, invite, post the invite pointer and send one need-info message to an asker; {what} is outside that",
-            shown(&who.member)
+            shown(&who.member),
+            what = shown(what)
         ),
     }
 }

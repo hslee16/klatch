@@ -205,3 +205,27 @@ fn a_claim_conflict_names_a_hostile_path_and_members_capped_and_ascii() {
         "refused: src/a is claimed by bob for another 5s"
     );
 }
+
+#[test]
+fn the_admin_refusals_and_the_not_removed_error_keep_their_text() {
+    let g = open();
+    let a = admin();
+    g.join(&alice(), "r").unwrap();
+    g.admin_close_room(&a, "r", true).unwrap();
+    assert_eq!(
+        g.post(&alice(), "r", "x").unwrap_err().to_string(),
+        "refused (admin-close): room r is closed by the admin; it is read-only"
+    );
+    g.admin_close_room(&a, "r", false).unwrap();
+    g.admin_remove_member(&a, "r", "alice").unwrap();
+    assert_eq!(
+        g.post(&alice(), "r", "x").unwrap_err().to_string(),
+        "refused (admin-block): you were removed from room r by the admin"
+    );
+    assert_eq!(
+        g.admin_allow_member(&a, "r", "bob")
+            .unwrap_err()
+            .to_string(),
+        "bob is not removed from r"
+    );
+}
