@@ -609,10 +609,10 @@ pub fn findings(src: &str) -> Vec<Finding> {
         if roots.contains(first) && !(p.import && p.segs.len() == 1 && !p.glob) {
             if p.glob && p.segs.len() == 1 {
                 add(p.line, "a glob import of libc".to_string());
-            } else if let Some(name) = p.segs.get(1) {
-                if let Some(kind) = dangerous_libc_name(name) {
-                    add(p.line, format!("libc::{name}, {kind}"));
-                }
+            } else if let Some(name) = p.segs.get(1)
+                && let Some(kind) = dangerous_libc_name(name)
+            {
+                add(p.line, format!("libc::{name}, {kind}"));
             }
         }
         for module in NET_MODULES {
@@ -677,15 +677,19 @@ pub fn path_targets(src: &str) -> Vec<(usize, String)> {
             }) => Some(s.clone()),
             _ => None,
         };
-        if id(&t, k) == Some("path") && is_p(&t, k + 1, '=') && is_p(&t, k.wrapping_sub(1), '[') {
-            if let Some(s) = lit(k + 2) {
-                out.push((t[k].line, s));
-            }
+        if id(&t, k) == Some("path")
+            && is_p(&t, k + 1, '=')
+            && is_p(&t, k.wrapping_sub(1), '[')
+            && let Some(s) = lit(k + 2)
+        {
+            out.push((t[k].line, s));
         }
-        if id(&t, k) == Some("include") && is_p(&t, k + 1, '!') && is_p(&t, k + 2, '(') {
-            if let Some(s) = lit(k + 3) {
-                out.push((t[k].line, s));
-            }
+        if id(&t, k) == Some("include")
+            && is_p(&t, k + 1, '!')
+            && is_p(&t, k + 2, '(')
+            && let Some(s) = lit(k + 3)
+        {
+            out.push((t[k].line, s));
         }
     }
     out
