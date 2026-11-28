@@ -157,7 +157,7 @@ no archives in <HOME>/archive
 
 ### $ klatch admin stats
 klatch stats (counts only; no message text, ask text, claim detail, label or payload)
-schema 45; room all; since the start; at <TODAY>
+schema 46; room all; since the start; at <TODAY>
 
 messages per room
   room  class    messages  sealed  senders  first       last

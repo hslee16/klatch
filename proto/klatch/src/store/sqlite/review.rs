@@ -5,6 +5,29 @@ use crate::domain::Result;
 use crate::store::{NewReview, QueuedReview, ReviewResolution};
 use rusqlite::params;
 
+/// The waiting item for one message, label, requester and target room: the dedupe lookup of every enqueue. Run on every
+/// crossing request, so it must be an index search (`review_queue_waiting_requester`, #1744), not a scan of the queue.
+pub(super) const WAITING_SAME_SQL: &str = "SELECT id FROM review_queue WHERE room=?1 AND seq=?2 AND to_label=?3 AND resolved IS NULL AND requester=?4 AND to_room=?5";
+
+/// How many crossings a requester has waiting: the cap check of every capped enqueue (index search, #1744).
+pub(super) const WAITING_COUNT_SQL: &str =
+    "SELECT COUNT(*) FROM review_queue WHERE resolved IS NULL AND to_room<>'' AND requester=?1";
+
+/// The tails of the two page reads of the waiting queue (never built from input: `after` is an integer). Both must be
+/// answered from `review_queue_waiting` (#1744), so a long history of resolved items is never walked.
+pub(super) const PENDING_TAIL: &str = "resolved IS NULL ORDER BY id";
+pub(super) fn pending_after_tail(after: i64) -> String {
+    format!("resolved IS NULL AND id>{after} ORDER BY id")
+}
+
+/// The statement behind `review_rows` for a fixed `WHERE ... ORDER BY` tail.
+pub(super) fn review_select(tail: &str) -> String {
+    format!(
+        "SELECT id,room,seq,to_label,reason,ts,to_room,requester,COALESCE(verdict,''),COALESCE(detail,''),redacted,applied \
+         FROM review_queue WHERE {tail} LIMIT ?1"
+    )
+}
+
 impl SqliteStore {
     /// Queue `item`, or return the id already waiting for it. With a `cap`, the requester's waiting crossings are
     /// counted in the same immediate transaction as the insert, and `None` means the cap stopped it (#1736).
@@ -20,7 +43,7 @@ impl SqliteStore {
             // told "queued" for a request never made, and a verdict never lands on another member's target (#1736,
             // #1743). A plain item has no requester and no target room, so it still dedupes by message and label.
             let waiting = self.optional(
-                "SELECT id FROM review_queue WHERE room=?1 AND seq=?2 AND to_label=?3 AND resolved IS NULL AND requester=?4 AND to_room=?5",
+                WAITING_SAME_SQL,
                 params![item.room, item.seq, item.to_label, item.requester, item.to_room],
                 |r| r.get(0),
             )?;
@@ -30,7 +53,7 @@ impl SqliteStore {
             if let Some(cap) = cap {
                 let n: i64 = self
                     .optional(
-                        "SELECT COUNT(*) FROM review_queue WHERE resolved IS NULL AND to_room<>'' AND requester=?1",
+                        WAITING_COUNT_SQL,
                         params![item.requester],
                         |r| r.get(0),
                     )?
@@ -56,7 +79,7 @@ impl SqliteStore {
     }
 
     pub(super) fn pending_review_rows(&self, limit: usize) -> Result<Vec<QueuedReview>> {
-        self.review_rows("resolved IS NULL ORDER BY id", limit)
+        self.review_rows(PENDING_TAIL, limit)
     }
 
     pub(super) fn pending_review_rows_after(
@@ -65,29 +88,19 @@ impl SqliteStore {
         limit: usize,
     ) -> Result<Vec<QueuedReview>> {
         // `after` is an integer, so formatting it in cannot carry input into the statement
-        self.review_rows(
-            &format!("resolved IS NULL AND id>{} ORDER BY id", after),
-            limit,
-        )
+        self.review_rows(&pending_after_tail(after), limit)
     }
 
     pub(super) fn waiting_crossing_count(&self, requester: &str) -> Result<usize> {
         let n: i64 = self
-            .optional(
-                "SELECT COUNT(*) FROM review_queue WHERE resolved IS NULL AND to_room<>'' AND requester=?1",
-                params![requester],
-                |r| r.get(0),
-            )?
+            .optional(WAITING_COUNT_SQL, params![requester], |r| r.get(0))?
             .unwrap_or(0);
         Ok(usize::try_from(n).unwrap_or(0))
     }
 
     /// Rows matching a fixed `WHERE ... ORDER BY` tail (never built from input).
     pub(super) fn review_rows(&self, tail: &str, limit: usize) -> Result<Vec<QueuedReview>> {
-        let sql = format!(
-            "SELECT id,room,seq,to_label,reason,ts,to_room,requester,COALESCE(verdict,''),COALESCE(detail,''),redacted,applied \
-             FROM review_queue WHERE {tail} LIMIT ?1"
-        );
+        let sql = review_select(tail);
         self.rows(&sql, params![limit as i64], |r| {
             Ok(QueuedReview {
                 id: r.get(0)?,

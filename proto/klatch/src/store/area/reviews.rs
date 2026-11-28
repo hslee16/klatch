@@ -14,11 +14,16 @@ pub trait ReviewStore {
         ))
     }
 
-    /// Queue a crossing unless its requester already has `cap` waiting; `None` when the cap stopped it (#1736). A
-    /// message already waiting for the label returns its id whatever the cap, since it adds nothing. A store with a real
-    /// queue counts and inserts in one transaction, so two processes of one member cannot both take the last place; this
-    /// default looks for a waiting duplicate (same message, label, requester and target room), counts and then queues,
-    /// and is not atomic.
+    /// Queue a crossing unless its requester already has `cap` waiting; `None` when the cap stopped it (#1736). The order
+    /// is fixed: a crossing already waiting for the same message, label, requester and target room returns its id
+    /// whatever the cap (it adds nothing, and another member's item is never handed back, #1743); only then is the cap
+    /// applied to the requester's waiting crossings.
+    ///
+    /// This default looks, counts and then queues as separate steps, so it is NOT atomic: two writers of one member
+    /// could both take the last place. It is right for a store with one writer (an in-process store, a test double). A
+    /// store that several processes write to and that declares `Feature::Reviews` must override it and count and insert
+    /// in one transaction, as the SQLite store does (#1747). The conformance tests run against this default (through
+    /// the faulty double) and against the SQLite override, so the two agree on the order above.
     fn enqueue_review_capped(&self, item: &NewReview, now: i64, cap: usize) -> Result<Option<i64>> {
         let waiting = self.pending_reviews(usize::MAX >> 1)?;
         if let Some(same) = waiting.iter().find(|r| {

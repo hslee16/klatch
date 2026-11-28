@@ -38,6 +38,8 @@ pub(super) const SCHEMA: &str = "CREATE TABLE members(tenant TEXT NOT NULL DEFAU
  CREATE TABLE policy(key TEXT PRIMARY KEY, value TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE TABLE refusals(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, member TEXT NOT NULL, room TEXT NOT NULL, operation TEXT NOT NULL, rule TEXT NOT NULL); CREATE TABLE credentials(member TEXT PRIMARY KEY, token_hash BLOB NOT NULL, clearance TEXT NOT NULL, parent TEXT NOT NULL, issued INTEGER NOT NULL, expires INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0, idle INTEGER NOT NULL DEFAULT 0, cap INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE review_queue(id INTEGER PRIMARY KEY AUTOINCREMENT, room TEXT NOT NULL, seq INTEGER NOT NULL, to_label TEXT NOT NULL, reason TEXT NOT NULL, ts INTEGER NOT NULL, verdict TEXT, detail TEXT, resolved INTEGER, to_room TEXT NOT NULL DEFAULT '', requester TEXT NOT NULL DEFAULT '', redacted TEXT NOT NULL DEFAULT '', applied TEXT NOT NULL DEFAULT '', told INTEGER NOT NULL DEFAULT 0);
+ CREATE INDEX review_queue_waiting_requester ON review_queue(requester, room, seq) WHERE resolved IS NULL;
+ CREATE INDEX review_queue_waiting ON review_queue(id) WHERE resolved IS NULL;
  CREATE TABLE member_parked(member TEXT PRIMARY KEY, why TEXT NOT NULL, since INTEGER NOT NULL, back_by INTEGER NOT NULL);
  CREATE TABLE member_mode(member TEXT PRIMARY KEY, mode TEXT NOT NULL, ts INTEGER NOT NULL);
  CREATE TABLE member_attrs(member TEXT PRIMARY KEY, member_id TEXT NOT NULL, repository TEXT NOT NULL, directory TEXT NOT NULL, ts INTEGER NOT NULL);
@@ -516,6 +518,7 @@ pub(super) const MIGRATIONS: &[Step] = &[
     migrate_v42,
     migrate_v43,
     migrate_v44,
+    migrate_v45,
 ];
 
 /// Version 37 to 38: the references an asker attaches to an ask (#1318), one row per ref in the order given. An ask with
@@ -630,6 +633,18 @@ pub(super) fn migrate_v43(conn: &Connection) -> Result<()> {
 pub(super) fn migrate_v44(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS claim_lapses(room TEXT NOT NULL, path TEXT NOT NULL, owner TEXT NOT NULL, expires INTEGER NOT NULL, since INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,path,owner));",
+    )
+    .map_err(be)
+}
+
+/// Version 45 to 46: two partial indexes on the waiting items of the review queue (#1744). Every crossing request runs the
+/// dedupe lookup and the per-requester count, and the reviewer and judge walk the waiting items by id; without an index
+/// each scanned the whole table, resolved history included. The indexes hold only unresolved rows, so they stay as small
+/// as the queue that waits. Additive: no column or row changes, and an old database gains them on open.
+pub(super) fn migrate_v45(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS review_queue_waiting_requester ON review_queue(requester, room, seq) WHERE resolved IS NULL;
+         CREATE INDEX IF NOT EXISTS review_queue_waiting ON review_queue(id) WHERE resolved IS NULL;",
     )
     .map_err(be)
 }
