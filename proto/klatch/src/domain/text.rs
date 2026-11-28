@@ -132,7 +132,13 @@ fn needs_escape(c: char) -> bool {
 /// escape, and what is longer than `MAX_AUDIT_TARGET` bytes is cut at a whole character or escape and ends with
 /// `TRUNCATED`. The result is pure ASCII with no control character, so no name can steer a terminal, hide text with a
 /// bidi or tag character, or flood a reader. A plain name of printable ASCII without a backslash (letters, digits,
-/// punctuation, space) up to the cap comes back unchanged. This is the one helper for it: `store::area::audit_target` is the same function.
+/// punctuation, space) up to the cap comes back unchanged. This is the one helper for it: `store::area::audit_target`
+/// is the same function.
+///
+/// The double quote is not escaped: an escaped quote would make the plain messages that carry quotes (serde and JSON
+/// errors) hard to read. A message that puts a shown value between quotes therefore cannot tell where the value ends
+/// if the value itself holds a quote. The value is still bounded plain ASCII, so what this costs is how a line reads,
+/// not a terminal or a model being steered.
 pub fn shown(value: impl AsRef<str>) -> String {
     let nk = value.as_ref();
     let room = MAX_AUDIT_TARGET - TRUNCATED.len();
@@ -195,8 +201,20 @@ mod tests {
     }
 
     #[test]
+    fn shown_leaves_the_double_quote_alone_and_a_quoted_value_stays_bounded_ascii() {
+        // documented: a quote passes through, so a quoted site cannot tell where a value with a quote ends
+        assert_eq!(super::shown("a\"b"), "a\"b");
+        let quoted = format!(
+            "\"{}\", and I only look",
+            super::shown(format!("x\", \u{1b}[2J{}", "n".repeat(500)))
+        );
+        assert!(quoted.is_ascii() && !quoted.chars().any(char::is_control));
+        assert!(quoted.len() < 200, "{}", quoted.len());
+    }
+
+    #[test]
     fn shown_is_capped_pure_ascii_whatever_the_input() {
-        let hostile = format!("{}\u{1b}[31m\u{202e}\u{e0041}\r\n", "n".repeat(100 * 1024));
+        let hostile = format!("\u{1b}[31m\u{202e}\u{e0041}\r\n{}", "n".repeat(100 * 1024));
         let t = super::shown(&hostile);
         assert!(t.is_ascii() && !t.chars().any(char::is_control));
         assert_eq!(t.len(), super::MAX_AUDIT_TARGET);

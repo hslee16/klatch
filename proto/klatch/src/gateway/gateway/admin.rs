@@ -195,7 +195,10 @@ impl<S: Store> Gateway<S> {
         if self.store.is_blocked(room, &who.member)? {
             return refuse(
                 "admin-block",
-                format!("you were removed from room {room} by the admin"),
+                format!(
+                    "you were removed from room {room} by the admin",
+                    room = shown(room)
+                ),
             );
         }
         if self.store.room_state("*")?.as_deref() == Some("paused") {
@@ -207,12 +210,16 @@ impl<S: Store> Gateway<S> {
         match self.store.room_state(room)?.as_deref() {
             Some("closed") => refuse(
                 "admin-close",
-                format!("room {room} is closed by the admin; it is read-only"),
+                format!(
+                    "room {room} is closed by the admin; it is read-only",
+                    room = shown(room)
+                ),
             ),
             Some("tripped") => refuse(
                 "tripwire",
                 format!(
-                    "room {room} is paused by a tripwire; it is read-only until an admin reopens it"
+                    "room {room} is paused by a tripwire; it is read-only until an admin reopens it",
+                    room = shown(room)
                 ),
             ),
             _ => Ok(()),

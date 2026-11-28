@@ -375,7 +375,7 @@ fn reviewer_refusal(role: Option<Role>, who: &Principal, op: &Operation) -> Opti
             "{} is a reviewer, which may only review",
             shown(&who.member)
         ),
-        (false, true) => format!("{} is not a reviewer", who.member),
+        (false, true) => format!("{} is not a reviewer", shown(&who.member)),
         _ => return None,
     };
     Some(Error::Refused {
