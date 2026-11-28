@@ -86,7 +86,7 @@ pub fn parse(args: &[&str]) -> Result<Options> {
                         .context("--first-frame-secs is a positive number")?,
                 );
             }
-            other => bail!("unknown option {other} for daemon"),
+            other => bail!("unknown option {} for daemon", klatch::domain::shown(other)),
         }
     }
     Ok(Options {

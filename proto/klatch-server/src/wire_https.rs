@@ -188,7 +188,7 @@ pub fn parse_with(args: &[&str], short_limits: bool) -> Result<Options> {
                     .filter(|n| *n > 0)
                     .context("--max-connections is a positive number")?;
             }
-            other => bail!("unknown option {other} for https"),
+            other => bail!("unknown option {} for https", klatch::domain::shown(other)),
         }
     }
     let limits = limits_of(&raw, max_connections, short_limits)?;
@@ -520,5 +520,25 @@ mod tests {
         // the knob lowers only that minimum, and only where the build has it
         let with_knob = parse_with(&with(&["ca.pem", "--stall-secs", "2"]), true);
         assert_eq!(with_knob.is_ok(), cfg!(debug_assertions));
+    }
+}
+
+#[cfg(test)]
+mod echo_tests {
+    use super::*;
+
+    /// #1776: an unknown option the operator typed is echoed in the refusal; a terminal escape, a bidi override or a
+    /// zero-width character in it must not reach the terminal raw.
+    #[test]
+    fn an_unknown_option_is_echoed_escaped() {
+        let e = format!(
+            "{:#}",
+            parse(&["--bad\u{1b}[2J\u{202e}\u{200b}"]).expect_err("an unknown option is refused")
+        );
+        assert!(e.contains("\\u{1b}"), "{e}");
+        assert!(
+            !e.chars().any(|c| c.is_control()) && !e.contains(['\u{202e}', '\u{200b}']),
+            "{e:?}"
+        );
     }
 }

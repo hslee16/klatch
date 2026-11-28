@@ -1,0 +1,1 @@
+- Escapes the names, rooms and option text that the local CLI and klatch-server flag parsers echo in a refusal (`klatch wait`, `convention`, `ask`, `answer`, `view`, daemon, http, https, webhook flags), so a terminal escape, bidi override, zero-width or line-break character typed or pasted there cannot reach the operator's terminal (#1776).

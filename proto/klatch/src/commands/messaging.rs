@@ -161,7 +161,10 @@ pub(super) fn view_cmd(t: &dyn Transport, view: Option<&str>) -> Result<()> {
             t.set_delivery_view(new)?;
             println!("view: {v} (read and history still show everything)");
         }
-        Some(other) => bail!("unknown view {other}: use all or scope"),
+        Some(other) => bail!(
+            "unknown view {}: use all or scope",
+            klatch::domain::shown(other)
+        ),
     }
     Ok(())
 }
@@ -239,7 +242,10 @@ pub(super) fn ask(
         .unwrap_or(text)
         .trim();
     if text.is_empty() {
-        bail!("an ask needs text: klatch ask {room} <what you need>");
+        bail!(
+            "an ask needs text: klatch ask {} <what you need>",
+            klatch::domain::shown(room)
+        );
     }
     let body = format!("{} {text}", klatch::domain::ASK_PREFIX);
     let posted = ctx.t.post_ask(room, &body, scope, refs)?;
@@ -273,7 +279,10 @@ pub(super) fn ask(
 /// shared room: the ask lives in the dm and is seen by the two members (and the human who runs klatch).
 pub(super) fn ask_to(ctx: &Ctx, to: &str, text: &[String]) -> Result<()> {
     if !klatch::domain::valid_name(to) {
-        bail!("`{to}` is not a member name: klatch ask --to MEMBER <what you need>");
+        bail!(
+            "`{}` is not a member name: klatch ask --to MEMBER <what you need>",
+            klatch::domain::shown(to)
+        );
     }
     if to == ctx.me {
         bail!("you cannot ask yourself: klatch ask --to MEMBER <what you need>");
@@ -285,11 +294,15 @@ pub(super) fn ask_to(ctx: &Ctx, to: &str, text: &[String]) -> Result<()> {
         .unwrap_or(text)
         .trim();
     if text.is_empty() {
-        bail!("an ask needs text: klatch ask --to {to} <what you need>");
+        bail!(
+            "an ask needs text: klatch ask --to {} <what you need>",
+            klatch::domain::shown(to)
+        );
     }
     if !shares_a_room_with(ctx.t, to) {
         bail!(
-            "{to} is not a member you share a room with; nothing was sent (join a room they are in, or check the name with `klatch who`)"
+            "{} is not a member you share a room with; nothing was sent (join a room they are in, or check the name with `klatch who`)",
+            klatch::domain::shown(to)
         );
     }
     let body = format!("{} {text}", klatch::domain::ASK_PREFIX);
@@ -324,11 +337,15 @@ fn resolve_answer_room(me: &str, room: &str) -> Result<String> {
 pub(super) fn answer(ctx: &Ctx, room: &str, n: i64, text: &[String]) -> Result<()> {
     let text = text.join(" ");
     if text.trim().is_empty() {
-        bail!("an answer needs text: klatch answer {room} {n} <your answer>");
+        bail!(
+            "an answer needs text: klatch answer {} {n} <your answer>",
+            klatch::domain::shown(room)
+        );
     }
     if !ctx.t.open_asks(room)?.iter().any(|a| a.seq == n) {
         bail!(
-            "#{n} is not an open ask in {room} (answered, closed or no such number); nothing was posted"
+            "#{n} is not an open ask in {} (answered, closed or no such number); nothing was posted",
+            klatch::domain::shown(room)
         );
     }
     let path = format!("ask:{n}");

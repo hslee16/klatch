@@ -533,10 +533,16 @@ fn wake_is_on() -> bool {
 /// `klatch convention`: the brief for a child agent, with this binary's own path.
 fn run_convention(name: Option<&str>, room: Option<&str>) -> Result<()> {
     if let Some(n) = name.filter(|n| !klatch::domain::valid_name(n)) {
-        bail!("the name '{n}' is not a member name (1 to 40 letters, digits, - _ .)");
+        bail!(
+            "the name '{}' is not a member name (1 to 40 letters, digits, - _ .)",
+            klatch::domain::shown(n)
+        );
     }
     if let Some(r) = room.filter(|r| !klatch::domain::valid_name(r)) {
-        bail!("the room '{r}' is not a room name (1 to 40 letters, digits, - _ .)");
+        bail!(
+            "the room '{}' is not a room name (1 to 40 letters, digits, - _ .)",
+            klatch::domain::shown(r)
+        );
     }
     let bin = std::env::current_exe()?;
     print!(
@@ -957,6 +963,24 @@ mod hook_notice_tests {
             let line = super::failure_line(&e, event);
             assert!(!line.contains("--discover"), "{event}: {line}");
             assert!(line.contains("no session"), "{event}: {line}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod echo_tests {
+    /// #1776: a name typed to `klatch convention` is echoed in the refusal; a terminal escape, a bidi override or a
+    /// zero-width character in it must not reach the terminal raw.
+    #[test]
+    fn a_refused_convention_name_is_echoed_escaped() {
+        let h = "\u{1b}[2J\u{202e}\u{200b}";
+        for (name, room) in [(Some(h), None), (None, Some(h))] {
+            let e = format!("{:#}", super::run_convention(name, room).unwrap_err());
+            assert!(e.contains("\\u{1b}"), "{e}");
+            assert!(
+                !e.chars().any(|c| c.is_control()) && !e.contains(['\u{202e}', '\u{200b}']),
+                "{e:?}"
+            );
         }
     }
 }
