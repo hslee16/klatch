@@ -676,6 +676,23 @@ fn a_reviewer_is_shown_the_target_room_so_items_with_the_same_text_can_be_told_a
 }
 
 #[test]
+fn a_reviewer_is_shown_the_target_rooms_current_label_not_the_one_at_queue_time() {
+    let (g, _) = world();
+    g.store
+        .policy_set("label:vault", Some("private"), 101)
+        .unwrap();
+    g.request_crossing(&alice(), "vault", 1, "open").unwrap();
+    assert_eq!(g.review_next(&rev()).unwrap().unwrap().to_label, "public");
+    // relabelled after queueing (still below the message): release uses this label, so the reviewer must see it
+    g.store
+        .policy_set("label:open", Some("internal"), 102)
+        .unwrap();
+    let item = g.review_next(&rev()).unwrap().unwrap();
+    assert_eq!(item.to_room, "open");
+    assert_eq!(item.to_label, "internal", "a stale queue-time label shown");
+}
+
+#[test]
 fn an_item_whose_target_room_the_reviewer_cannot_read_is_skipped_and_the_room_name_is_not_shown() {
     let (g, _) = world();
     g.request_crossing(&alice(), "vault", 1, "open").unwrap();
