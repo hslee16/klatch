@@ -183,7 +183,10 @@ fn the_pointer_is_exactly_the_one_fixed_line() {
         .lines()
         .find(|l| l.contains("klatch init --scope user"))
         .unwrap();
-    assert!(line.ends_with(KLATCH_POINTER), "nothing appended: {line}");
+    assert_eq!(
+        line, KLATCH_POINTER,
+        "the whole line, nothing before or after"
+    );
 }
 
 // ---- the MCP path ------------------------------------------------------------------------------------------------

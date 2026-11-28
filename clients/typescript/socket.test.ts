@@ -272,6 +272,31 @@ describe("klatch client over the daemon's Unix socket", () => {
       return d.frames().at(-1);
     }
 
+    const reviewItem = (over: Record<string, unknown> = {}) => ({ id: 4, room: "vault", seq: 2, to_label: "public", to_room: "open", reason: "crossing", text: "the plan", ...over });
+
+    it("reviewNext returns the item with its target room and label", async () => {
+      const item = reviewItem();
+      d.answer = (f) => [ok(f.id, { item })];
+      const got = await (await connect()).reviewNext();
+      assert.equal(d.frames().at(-1).method, "review_next");
+      assert.deepEqual(got, item);
+      assert.equal(got?.to_room, "open");
+      assert.equal(got?.to_label, "public");
+    });
+
+    it("reviewNext is null when nothing waits", async () => {
+      d.answer = (f) => [ok(f.id, { item: null })];
+      assert.equal(await (await connect()).reviewNext(), null);
+    });
+
+    it("an item without to_room from an older server reads as an empty one", async () => {
+      const { to_room: _gone, ...older } = reviewItem();
+      d.answer = (f) => [ok(f.id, { item: older })];
+      const got = await (await connect()).reviewNext();
+      assert.equal(got?.text, "the plan");
+      assert.equal(got?.to_room ?? "", "");
+    });
+
     it("post keeps only the given optionals", async () => {
       let f = await wire((c) => c.post("lobby", "b"));
       assert.deepEqual(f.params, { room: "lobby", body: "b" });

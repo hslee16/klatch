@@ -7,7 +7,9 @@
 //! the pointer (plant a settings file that looks like klatch hooks, or one that cannot be read with certainty) or fake it
 //! (print the same text itself). That is accepted: the same user can already edit the settings, the store and this
 //! binary. What the code guarantees is only that reading never hangs, never reads more than 1 MiB, never follows a
-//! `.claude` directory link or a file link out of the project, and never prints a path. The text is fixed and pinned by
+//! `.claude` directory link at project level or a file link out of the project, and never prints a path. One link is
+//! followed on purpose: the user-scope `~/.claude` (dotfile managers make it a link), read as the owner's own
+//! directory; when the project root is HOME itself, that same directory is the exempt one at project level too. The text is fixed and pinned by
 //! a test, so it carries no data from any settings file.
 
 use std::path::{Path, PathBuf};
@@ -26,14 +28,20 @@ pub fn no_hooks_pointer(cwd: &Path, home: Option<&Path>, headless: bool) -> Opti
         return None;
     }
     let root = scan::project_root(cwd);
-    let mut files: Vec<PathBuf> = Vec::new();
+    // (file, the directory a link may not leave, whether a linked `.claude` directory is followed)
+    let mut files: Vec<(PathBuf, PathBuf, bool)> = Vec::new();
     for dir in scan::dirs_up_to(cwd, &root) {
-        files.push(dir.join(".claude").join("settings.local.json"));
-        files.push(dir.join(".claude").join("settings.json"));
+        // when the project root is HOME itself, its `.claude` is the user-scope directory: the exempt one at this level
+        let user_home = home.filter(|h| scan::same_dir(h, &dir));
+        let user_level = user_home.is_some();
+        let within = user_home.map_or_else(|| root.clone(), Path::to_path_buf);
+        for name in ["settings.local.json", "settings.json"] {
+            files.push((dir.join(".claude").join(name), within.clone(), user_level));
+        }
     }
     let mut seen = Vec::new();
-    for f in &files {
-        seen.push(scan::look(f, &root, false)?);
+    for (f, within, follow) in &files {
+        seen.push(scan::look(f, within, *follow)?);
     }
     if let Some(h) = home {
         // the user scope may link out of the project by design; it is read as the owner's own file

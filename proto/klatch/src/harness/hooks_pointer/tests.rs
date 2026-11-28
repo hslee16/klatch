@@ -143,13 +143,17 @@ fn a_settings_symlink_out_of_the_project_is_not_followed() {
 #[test]
 fn a_settings_symlink_inside_the_project_is_followed() {
     let f = fx();
-    fs::write(f.repo.join("shared.json"), HOOKS).unwrap();
+    // The target holds no hooks, so the pointer appears: a link refused outright would also show the
+    // pointer, so the second half proves the content behind the link is what is read.
+    fs::write(f.repo.join("shared.json"), "{}").unwrap();
     fs::create_dir_all(f.repo.join(".claude")).unwrap();
     std::os::unix::fs::symlink(
         f.repo.join("shared.json"),
         f.repo.join(".claude").join("settings.local.json"),
     )
     .unwrap();
+    assert!(ask(&f).is_some());
+    fs::write(f.repo.join("shared.json"), HOOKS).unwrap();
     assert_eq!(ask(&f), None);
 }
 
@@ -229,7 +233,7 @@ fn a_fifo_where_the_settings_file_should_be_is_skipped_without_blocking() {
 }
 
 #[test]
-fn a_file_that_grows_past_the_cap_between_check_and_read_is_skipped() {
+fn a_reader_that_yields_more_than_the_cap_is_skipped_by_the_capped_read() {
     use std::io::Read;
     // the read itself is capped, not only an earlier size check: a reader that yields more than MAX_BYTES is skipped
     let big = std::io::repeat(b' ').take(scan::MAX_BYTES * 2);
@@ -258,4 +262,139 @@ fn a_file_that_grows_past_the_cap_between_check_and_read_is_skipped() {
         "{}",
         served.get()
     );
+}
+
+#[test]
+fn a_real_file_that_grows_past_the_cap_between_check_and_read_is_skipped() {
+    let f = fx();
+    settings(&f.repo, "settings.local.json", "{}");
+    let file = f.repo.join(".claude").join("settings.local.json");
+    // admitted at its small size, then grown by another writer before the read happens
+    let got = scan::look_with(
+        &file,
+        &f.repo,
+        false,
+        || {},
+        |handle| {
+            let mut w = fs::OpenOptions::new().append(true).open(&file).unwrap();
+            std::io::Write::write_all(&mut w, " ".repeat(2 * 1024 * 1024).as_bytes()).unwrap();
+            scan::read_capped(handle)
+        },
+    );
+    assert_eq!(got, None);
+}
+
+/// A reader that must never run: counts calls so a rejected handle is proved rejected before any read.
+#[cfg(unix)]
+fn rejected_before_read(handle: fs::File) -> Option<scan::Seen> {
+    let calls = std::cell::Cell::new(0);
+    let got = scan::seen_in(handle, |_| {
+        calls.set(calls.get() + 1);
+        Some("{}".to_string())
+    });
+    assert_eq!(calls.get(), 0, "the handle reached the reader");
+    got
+}
+
+#[cfg(unix)]
+#[test]
+fn a_directory_socket_or_device_handle_is_rejected_by_the_type_check_itself() {
+    let t = TestDir::new("hooks-pointer-handles");
+    let dir = fs::File::open(t.join("")).unwrap();
+    assert_eq!(rejected_before_read(dir), None, "directory");
+    // a socket handle made with socketpair(2) directly, so the source names no socket type the no_telemetry guard flags
+    let mut fds = [0 as libc::c_int; 2];
+    assert_eq!(
+        unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) },
+        0
+    );
+    let (sock, _peer) = unsafe {
+        use std::os::fd::{FromRawFd, OwnedFd};
+        (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1]))
+    };
+    assert_eq!(rejected_before_read(fs::File::from(sock)), None, "socket");
+    assert_eq!(
+        rejected_before_read(fs::File::open("/dev/null").unwrap()),
+        None,
+        "device (size 0, so only the type check can stop it)"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_regular_handle_within_the_cap_reaches_the_reader_and_a_big_one_does_not() {
+    let t = TestDir::new("hooks-pointer-regular");
+    let small = t.join("small.json");
+    fs::write(&small, "{}").unwrap();
+    let calls = std::cell::Cell::new(0);
+    let got = scan::seen_in(fs::File::open(&small).unwrap(), |h| {
+        calls.set(calls.get() + 1);
+        scan::read_capped(h)
+    });
+    assert_eq!((got, calls.get()), (Some(scan::Seen::NoHooks), 1));
+    let big = t.join("big.json");
+    fs::write(&big, " ".repeat(scan::MAX_BYTES as usize + 1)).unwrap();
+    assert_eq!(rejected_before_read(fs::File::open(&big).unwrap()), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_swapped_for_a_link_after_the_check_is_not_followed() {
+    let f = fx();
+    settings(&f.repo, "settings.local.json", HOOKS);
+    let file = f.repo.join(".claude").join("settings.local.json");
+    let outside = f._t.join("elsewhere.json");
+    fs::write(&outside, "{}").unwrap();
+    // the swap lands between the "not a link" look and the open; followed it would read "no hooks" from outside
+    let got = scan::look_with(
+        &file,
+        &f.repo,
+        false,
+        || {
+            fs::remove_file(&file).unwrap();
+            std::os::unix::fs::symlink(&outside, &file).unwrap();
+        },
+        scan::read_capped,
+    );
+    assert_eq!(got, None);
+}
+
+#[cfg(unix)]
+#[test]
+fn the_open_refuses_a_link_only_when_asked() {
+    let f = fx();
+    let real = f.repo.join("real.json");
+    fs::write(&real, "{}").unwrap();
+    let link = f.repo.join("link.json");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    assert!(scan::open_nonblocking(&link, true).is_err());
+    assert!(scan::open_nonblocking(&link, false).is_ok());
+    assert!(scan::open_nonblocking(&real, true).is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn when_home_is_the_project_root_a_linked_user_claude_directory_is_still_read() {
+    // dotfile managers link ~/.claude; HOME as the project root must not turn that into "unknown"
+    let t = TestDir::new("hooks-pointer-home-root");
+    let home = t.join("home");
+    let dots = t.join("dotfiles").join("claude");
+    fs::create_dir_all(home.join(".git")).unwrap();
+    fs::create_dir_all(&dots).unwrap();
+    std::os::unix::fs::symlink(&dots, home.join(".claude")).unwrap();
+    // no hooks anywhere: the pointer shows, in a cwd below HOME and in HOME itself
+    let cwd = home.join("work");
+    fs::create_dir_all(&cwd).unwrap();
+    assert!(no_hooks_pointer(&cwd, Some(&home), false).is_some());
+    assert!(no_hooks_pointer(&home, Some(&home), false).is_some());
+    // hooks in the linked directory silence it
+    fs::write(dots.join("settings.json"), HOOKS).unwrap();
+    assert_eq!(no_hooks_pointer(&cwd, Some(&home), false), None);
+    // and a project-level .claude link below HOME is still not followed
+    fs::remove_file(dots.join("settings.json")).unwrap();
+    let other = TestDir::new("hooks-pointer-home-root-sub");
+    let sub = cwd.join("proj");
+    fs::create_dir_all(sub.join(".git")).unwrap();
+    std::os::unix::fs::symlink(other.join(""), sub.join(".claude")).unwrap();
+    assert_eq!(no_hooks_pointer(&sub, Some(&home), false), None);
 }

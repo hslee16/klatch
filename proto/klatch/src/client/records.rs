@@ -89,6 +89,22 @@ pub struct ReviewItem {
     pub text: String,
 }
 
+impl ReviewItem {
+    /// An item as the wire gives it. A field an older server leaves out reads as empty (or zero), so a missing
+    /// `to_room` is a plain item, never an error.
+    pub fn from_wire(item: &Value) -> ReviewItem {
+        ReviewItem {
+            id: item["id"].as_i64().unwrap_or(0),
+            room: str_of(&item["room"]),
+            seq: item["seq"].as_u64().unwrap_or(0),
+            to_label: str_of(&item["to_label"]),
+            to_room: str_of(&item["to_room"]),
+            reason: str_of(&item["reason"]),
+            text: str_of(&item["text"]),
+        }
+    }
+}
+
 /// The reviewer's decision on a held item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict<'a> {
