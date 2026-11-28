@@ -8,8 +8,9 @@ use crate::gateway::CredentialSpec;
 
 /// A name that is long and carries every kind of character an error must not pass on.
 fn hostile() -> String {
+    // the junk comes first as well as last: a cap alone must not hide a missing escape
     format!(
-        "{}\u{1b}[31m\u{1b}]0;pwned\u{7}\u{202e}\u{2066}\u{e0041}\u{e0001}\u{200b}\r\n\t\u{0}x\\u{{41}}",
+        "\u{1b}[31m\u{202e}\u{e0041}\r\n{}\u{1b}]0;pwned\u{7}\u{2066}\u{e0001}\u{200b}\t\u{0}x\\u{{41}}",
         "n".repeat(100 * 1024)
     )
 }
