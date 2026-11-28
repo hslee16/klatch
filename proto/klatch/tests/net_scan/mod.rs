@@ -1241,6 +1241,12 @@ pub fn lexer_cases() -> Vec<(
             vec![],
         ),
         (
+            "an escaped quote char, a comma and a double quote char, then a string",
+            "quotes!{'\\'','\"'} libc_after; let s = \"str\"; last",
+            vec!["quotes", "libc_after", "let", "s", "last"],
+            vec!["str"],
+        ),
+        (
             "a char holding a double quote",
             "let c = '\"'; after",
             vec!["let", "c", "after"],
