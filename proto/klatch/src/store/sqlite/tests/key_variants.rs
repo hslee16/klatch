@@ -373,7 +373,7 @@ fn the_same_escaped_key_refused_again_gives_one_row() {
             format!(" Admin-Unlock-{} ", "y".repeat(100 * 1024)),
         ] {
             let s = SqliteStore::open_in_memory().unwrap();
-            let mut go = || {
+            let go = || {
                 for i in 0..5 {
                     assert!(s.policy_set(&k, Some("v"), 100 + i).is_err());
                 }
