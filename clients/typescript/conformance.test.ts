@@ -15,6 +15,7 @@ import { ApiError, Client, type Message, decodeServerFrame, PROTOCOL_VERSION, Pr
 const here = dirname(fileURLToPath(import.meta.url));
 const BIN = process.env.KLATCH_BIN || resolve(here, "../../proto/target/debug/klatch");
 const FIXTURES = resolve(here, "../../proto/klatch/fixtures/protocol");
+const ADMIN_HELPER = resolve(here, "../testing/klatch_admin.py");
 const SERVER_BIN = process.env.KLATCH_SERVER_BIN || resolve(here, "../../proto/target/debug/klatch-server");
 
 class Store {
@@ -394,6 +395,76 @@ describe(title, { skip }, () => {
     const a = await store.client("alice");
     await a.post("r", "x");
     assert.equal(await a.close(), 0);
+  });
+});
+
+// `reviewNext` against the real gateway (#1773). The admin passphrase is typed on a pseudo-terminal, which Node has no
+// way to open, so the admin acts run through the same helper the Python suite uses (clients/testing/klatch_admin.py, a
+// child process). The store is a throwaway KLATCH_HOME with its own key directory: never the live store or the Keychain.
+const python = spawnSync("python3", ["--version"]).status === 0;
+describe("klatch client reviewNext over a real server", { skip: process.platform === "win32" || !python }, () => {
+  let store: Store | null = null;
+  afterEach(async () => {
+    await store?.close();
+    store = null;
+  });
+
+  function admin(s: Store, ...args: string[]) {
+    const done = spawnSync("python3", [ADMIN_HELPER, BIN, s.home, ...args], { encoding: "utf8", timeout: 180_000 });
+    assert.equal(done.status, 0, `klatch admin ${args.join(" ")} failed:\n${done.stdout}${done.stderr}`);
+  }
+
+  /** vault is private (alice and the reviewer rev are cleared), open is public, and alice asked for a message of vault to
+   * be copied into open. */
+  async function waitingCrossing(s: Store): Promise<number> {
+    const alice = await s.client("alice");
+    await alice.post("vault", "hello");
+    await alice.post("open", "hello");
+    for (const act of [["label", "vault", "private"], ["clear", "alice", "private"], ["clear", "rev", "private"], ["reviewer", "rev"]]) admin(s, ...act);
+    const { seq } = await alice.post("vault", "the plan is blue");
+    const env: NodeJS.ProcessEnv = { ...process.env, KLATCH_HOME: s.home, KLATCH_KEY_DIR: join(s.home, "keys"), KLATCH_NAME: "alice" };
+    delete env.KLATCH_IDENTITY_FILE;
+    delete env.KLATCH_DISCOVER;
+    const done = spawnSync(BIN, ["cross", "vault", String(seq), "--to", "open"], { env, encoding: "utf8" });
+    assert.equal(done.status, 0, done.stdout + done.stderr);
+    return seq;
+  }
+
+  it("returns the item with its target room and its current label", async () => {
+    store = new Store();
+    const seq = await waitingCrossing(store);
+    const rev = await store.client("rev");
+    let item = await rev.reviewNext();
+    assert.deepEqual([item?.room, item?.seq, item?.text], ["vault", seq, "the plan is blue"]);
+    assert.deepEqual([item?.to_room, item?.to_label], ["open", "public"]);
+    // the target is relabelled after the request was queued: the reviewer sees the label a release will use (#1767)
+    admin(store, "label", "open", "internal");
+    item = await rev.reviewNext();
+    assert.deepEqual([item?.to_room, item?.to_label], ["open", "internal"]);
+  });
+
+  it("does not return an item whose target the reviewer cannot read, and its verdict answers as a missing item", async () => {
+    store = new Store();
+    await waitingCrossing(store);
+    const rev = await store.client("rev");
+    const item = await rev.reviewNext();
+    assert.ok(item);
+    // the source stays readable to rev (internal); the target is relabelled above rev's clearance
+    for (const act of [["label", "vault", "internal"], ["label", "open", "private"], ["clear", "rev", "internal"]]) admin(store, ...act);
+    assert.equal(await rev.reviewNext(), null);
+    const asked = async (id: number) => {
+      try {
+        await rev.reviewVerdict(id, "allow");
+      } catch (e) {
+        return e as ApiError;
+      }
+      throw new Error("the verdict was accepted");
+    };
+    const hidden = await asked(item.id);
+    const missing = await asked(item.id + 1000);
+    assert.equal(hidden.code, missing.code);
+    assert.equal(hidden.detail, missing.detail.replace(String(item.id + 1000), String(item.id)));
+    for (const leak of ["open", "private", "internal", "clearance"]) assert.ok(!hidden.detail.includes(leak), `${leak} leaked: ${hidden.detail}`);
   });
 });
 
