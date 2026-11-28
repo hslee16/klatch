@@ -296,7 +296,7 @@ fn releasing_a_claim_you_do_not_hold_is_not_found() {
 #[test]
 fn an_unknown_method_is_named_capped_and_ascii() {
     let g = gateway();
-    let hostile = format!("{}\u{1b}[31m\u{202e}\u{e0041}\n", "m".repeat(100 * 1024));
+    let hostile = format!("\u{1b}[31m\u{202e}\u{e0041}\n{}", "m".repeat(100 * 1024));
     let f = run(
         &g,
         &alice(),
