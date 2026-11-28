@@ -451,7 +451,6 @@ class Conformance(unittest.TestCase):
         self.assertEqual(a.close(), 0)
 
 
-@unittest.skipUnless(os.path.exists(SERVER_BIN), "klatch-server is not built (cargo build -p klatch-server)")
 @unittest.skipUnless(os.name == "posix", "the admin passphrase is typed on a pseudo-terminal")
 class ReviewerOverARealServer(unittest.TestCase):
     """`review_next` against the real gateway (#1773): a reviewer is made by the admin acts typed on a pty (the way the Rust
@@ -515,6 +514,7 @@ class ReviewerOverARealServer(unittest.TestCase):
             self.assertNotIn(leak, hidden.exception.message)
 
 
+@unittest.skipUnless(os.path.exists(SERVER_BIN), "klatch-server is not built (cargo build -p klatch-server)")
 class ConformanceOverTheDaemon(Conformance):
     """Every step of the scenario above, unchanged, over the klatch-server daemon's Unix socket (#1095): the same
     events and sequence numbers are required of both transports."""
