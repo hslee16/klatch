@@ -240,3 +240,155 @@ fn the_cut_is_exact_and_never_splits_a_character_or_an_escape() {
     assert_eq!(audit_target("a\u{202e}"), r"a\u{202e}");
     assert_eq!(audit_target(r"a\u{202e}"), r"a\u{5c}u{202e}");
 }
+
+// Review of #1758.
+
+#[test]
+fn every_invisible_or_non_ascii_character_is_escaped() {
+    use crate::store::area::audit_target;
+    let samples = [
+        '\u{600}',
+        '\u{6dd}',
+        '\u{70f}',
+        '\u{13430}',
+        '\u{1bca0}',
+        '\u{1d173}',
+        '\u{e0001}',
+        '\u{e0041}',
+        '\u{e007f}',
+        '\u{fe0f}',
+        '\u{e0100}',
+        '\u{34f}',
+        '\u{301}',
+        '\u{3164}',
+        '\u{115f}',
+        '\u{2800}',
+        '\u{a0}',
+        '\u{2003}',
+        '\u{3000}',
+        '\u{e000}',
+        '\u{f8ff}',
+        '\u{378}',
+        '\u{fffe}',
+        '\u{10ffff}',
+        '\u{212a}',
+        '\u{ff21}',
+        '\u{e9}',
+        '\u{1f600}',
+        '\u{7f}',
+        '\u{0}',
+        '\u{85}',
+    ];
+    for c in samples {
+        let t = audit_target(&format!("admin-passphrase{c}"));
+        assert!(
+            t.chars().all(|c| c.is_ascii_graphic() || c == ' '),
+            "{c:?} -> {t:?}"
+        );
+        assert_ne!(
+            t, "admin-passphrase",
+            "{c:?} must not display as the real key"
+        );
+    }
+    let s = SqliteStore::open_in_memory().unwrap();
+    assert!(
+        s.policy_set("admin-passphrase\u{e0001}", Some("v"), 100)
+            .is_err()
+    );
+    let t = refusal_targets(&s);
+    assert_eq!(t, [r"admin-passphrase\u{e0001}"]);
+}
+
+#[test]
+fn a_key_ending_with_the_marker_is_not_the_cut_form_of_a_longer_key() {
+    use crate::store::area::{MAX_AUDIT_TARGET, TRUNCATED, audit_target};
+    // while the escaped literal fits, it is stored uncut and must not look cut
+    for n in 0..=(MAX_AUDIT_TARGET - 8 - 11) {
+        let literal = format!("{}{TRUNCATED}", "a".repeat(n));
+        let t = audit_target(&literal);
+        let cut = audit_target(&format!("{}{}", "a".repeat(MAX_AUDIT_TARGET * 2), "b"));
+        assert!(!t.ends_with(TRUNCATED), "{t:?}");
+        assert_ne!(t, cut);
+    }
+}
+
+#[test]
+fn the_cap_is_128_bytes_exactly() {
+    use crate::store::area::{MAX_AUDIT_TARGET, TRUNCATED, audit_target};
+    assert_eq!(MAX_AUDIT_TARGET, 128);
+    assert_eq!(audit_target(&"a".repeat(128)).len(), 128);
+    assert!(!audit_target(&"a".repeat(128)).ends_with(TRUNCATED));
+    let t = audit_target(&"a".repeat(129));
+    assert_eq!(t.len(), 128);
+    assert_eq!(
+        t,
+        format!("{}{TRUNCATED}", "a".repeat(128 - TRUNCATED.len()))
+    );
+}
+
+#[test]
+fn a_cut_never_ends_inside_an_escape_or_a_character() {
+    use crate::store::area::{TRUNCATED, audit_target};
+    for pad in 100..140 {
+        for ch in ["\u{202e}", "\u{1f600}", "\u{e9}", "\0", "\\"] {
+            let k = format!("{}{}", "a".repeat(pad), ch.repeat(30));
+            let t = audit_target(&k);
+            let body = t.strip_suffix(TRUNCATED).unwrap_or(&t);
+            // every `\u{` in the body is closed, and every backslash starts a whole escape
+            let mut rest = body;
+            while let Some(i) = rest.find('\\') {
+                let tail = &rest[i + 1..];
+                if let Some(esc) = tail.strip_prefix("u{") {
+                    let close = esc
+                        .find('}')
+                        .unwrap_or_else(|| panic!("partial escape in {t:?}"));
+                    assert!(esc[..close].chars().all(|c| c.is_ascii_hexdigit()), "{t:?}");
+                    rest = &esc[close + 1..];
+                } else {
+                    panic!("bare backslash in {t:?}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn multibyte_keys_of_every_length_stay_whole() {
+    use crate::store::area::{MAX_AUDIT_TARGET, audit_target};
+    for n in 0..200 {
+        for ch in ['\u{e9}', '\u{20ac}', '\u{1f600}'] {
+            let t = audit_target(&format!("a{}", ch.to_string().repeat(n)));
+            assert!(t.len() <= MAX_AUDIT_TARGET, "{n} {ch:?}: {}", t.len());
+            assert!(t.starts_with('a'));
+        }
+    }
+}
+
+#[test]
+fn the_same_escaped_key_refused_again_gives_one_row() {
+    for inside in [false, true] {
+        for k in [
+            "admin-passphrase-\u{202e}x\n".to_string(),
+            "ADMIN-PASSPHRASE-\u{e0001}".to_string(),
+            format!(" Admin-Unlock-{} ", "y".repeat(100 * 1024)),
+        ] {
+            let s = SqliteStore::open_in_memory().unwrap();
+            let mut go = || {
+                for i in 0..5 {
+                    assert!(s.policy_set(&k, Some("v"), 100 + i).is_err());
+                }
+            };
+            if inside {
+                s.atomically(&mut || {
+                    go();
+                    Ok(())
+                })
+                .unwrap();
+            } else {
+                go();
+            }
+            let t = refusal_targets(&s);
+            assert_eq!(t.len(), 1, "inside={inside} {:?}", &k[..20]);
+        }
+    }
+}
