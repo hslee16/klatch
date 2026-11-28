@@ -84,7 +84,10 @@ fn act<S: Store>(g: &Gateway<S>, who: &Principal, call: Call) -> Vec<ServerFrame
         return vec![fail_with(
             call.id,
             "unknown_act",
-            format!("{} is not an act a role can call over the wire", p.act),
+            format!(
+                "{} is not an act a role can call over the wire",
+                crate::domain::shown(&p.act)
+            ),
         )];
     }
     match run_act(g, who, &p) {

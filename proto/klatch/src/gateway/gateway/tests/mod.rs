@@ -30,6 +30,7 @@ mod delivery_view;
 mod digest;
 mod dm;
 mod dm_nudge;
+mod echo_guard;
 mod error_name_echo;
 mod facilitator;
 mod floors;

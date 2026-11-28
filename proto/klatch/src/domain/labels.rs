@@ -27,7 +27,9 @@ impl LabelChain {
             Err(ChainError::BadName(i)) => {
                 Err(format!("bad label name: {}", super::shown(&names[i])))
             }
-            Err(ChainError::Repeat(i)) => Err(format!("label {} appears twice", names[i])),
+            Err(ChainError::Repeat(i)) => {
+                Err(format!("label {} appears twice", super::shown(&names[i])))
+            }
         }
     }
 

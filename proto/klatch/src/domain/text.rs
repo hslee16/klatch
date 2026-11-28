@@ -109,7 +109,6 @@ pub fn overlaps(a: &str, b: &str) -> bool {
     pre(a, b) || pre(b, a)
 }
 
-/// Every string of 0 to 3 pieces drawn from `pieces` (multi-byte characters included).
 /// The marker that ends a refusal audit target cut to `MAX_AUDIT_TARGET` (#1755).
 /// It is pure ASCII and starts with a bare backslash. `audit_target` writes every backslash of a key as the escape
 /// `\u{5c}`, and every other escape is `\u{..}` too, so an escaped body never contains a backslash that is not
@@ -158,6 +157,7 @@ pub fn shown(nk: &str) -> String {
     out
 }
 
+/// Every string of 0 to 3 pieces drawn from `pieces` (multi-byte characters included).
 #[cfg(test)]
 pub(crate) fn short_strings(pieces: &[&str]) -> Vec<String> {
     let mut all = vec![String::new()];

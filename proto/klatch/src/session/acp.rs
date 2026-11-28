@@ -133,7 +133,8 @@ fn parse_query(text: &str) -> Result<Query, String> {
             })
         }
         other => Err(format!(
-            "I do not know {other:?}, and I only look; I cannot do anything that changes a room"
+            "I do not know \"{}\", and I only look; I cannot do anything that changes a room",
+            crate::domain::shown(other)
         )),
     }
 }

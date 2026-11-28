@@ -118,7 +118,11 @@ impl SqliteStore {
             params![room, path, owner],
         )?;
         if n == 0 {
-            return Err(Error::NotFound(format!("no claim by {owner} on {path}")));
+            return Err(Error::NotFound(format!(
+                "no claim by {} on {}",
+                crate::domain::shown(owner),
+                crate::domain::shown(path)
+            )));
         }
         if let Some((since, expires)) = before {
             self.record_ended(Ended::at(room, path, (since, expires), now), "holder");

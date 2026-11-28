@@ -416,3 +416,42 @@ fn the_mcp_errors_that_repeat_the_caller_are_named_capped_and_ascii() {
     assert_eq!(out[3]["error"]["message"], "no method tele port");
     assert_eq!(out[4]["error"]["message"], "no tool nope");
 }
+
+/// The strings in a value, deep.
+fn strings(v: &Value, out: &mut Vec<String>) {
+    match v {
+        Value::String(s) => out.push(s.clone()),
+        Value::Array(a) => a.iter().for_each(|x| strings(x, out)),
+        Value::Object(o) => o.values().for_each(|x| strings(x, out)),
+        _ => {}
+    }
+}
+
+#[test]
+fn an_unknown_acp_query_word_is_capped_and_ascii() {
+    let h = hostile().replace(char::is_whitespace, "_");
+    let out = drive(&gateway(), "lib", &[new_session(), prompt(3, &h)]);
+    let mut all = Vec::new();
+    out.iter().for_each(|m| strings(m, &mut all));
+    let hit: Vec<_> = all.iter().filter(|s| s.contains("I do not know")).collect();
+    assert!(!hit.is_empty(), "{out:?}");
+    for s in hit {
+        // the reply may carry more lines (a hint); the echoed word is the quoted part
+        let word = s.split('"').nth(1).unwrap();
+        assert_bounded(word, "acp query word");
+        assert!(s.len() < 1000, "{}", s.len());
+        assert!(s.is_ascii(), "{s:?}");
+    }
+}
+
+#[test]
+fn a_release_that_finds_no_claim_names_a_hostile_path_capped_and_ascii() {
+    let g = gateway();
+    let me = who("bob");
+    g.join(&me, "lobby").unwrap();
+    // a claim path may hold bidi and tag characters (no control characters), up to 1024 bytes
+    let path = format!("/{}\u{202e}\u{e0041}x", "p".repeat(900));
+    let e = g.release(&me, "lobby", &path).unwrap_err();
+    assert!(e.to_string().contains("no claim"), "{e}");
+    assert_bounded(&e.to_string(), "release no claim");
+}

@@ -69,7 +69,8 @@ impl fmt::Display for Error {
             } => {
                 write!(
                     f,
-                    "refused: {path} is claimed by {owner} for another {secs_left}s"
+                    "refused: {} is claimed by {owner} for another {secs_left}s",
+                    crate::domain::shown(path)
                 )?;
                 if *held_secs >= crate::domain::FIRST_MILESTONE_SECS {
                     write!(
@@ -95,7 +96,7 @@ impl fmt::Display for Error {
                                 write!(f, " and {} more", rest.len() - shown)?;
                             }
                         }
-                        write!(f, " for your path {via})")?;
+                        write!(f, " for your path {})", crate::domain::shown(via))?;
                     }
                 }
                 Ok(())

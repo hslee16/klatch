@@ -38,8 +38,12 @@ pub(super) fn normalize_anchor(anchor: &str) -> String {
 
 /// Every item in `json`: one event or REST object, or an array of them.
 pub(super) fn parse_events(json: &str) -> Result<Vec<GithubItem>> {
-    let value: Value =
-        serde_json::from_str(json).map_err(|e| Error::Invalid(format!("not JSON: {e}")))?;
+    let value: Value = serde_json::from_str(json).map_err(|e| {
+        Error::Invalid(format!(
+            "not JSON: {}",
+            crate::domain::shown(&e.to_string())
+        ))
+    })?;
     match value {
         Value::Array(items) => items.iter().map(parse_one).collect(),
         one => Ok(vec![parse_one(&one)?]),
