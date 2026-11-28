@@ -384,7 +384,7 @@ fn parse<T: for<'de> Deserialize<'de>>(args: Value) -> Result<T, RpcError> {
     serde_json::from_value(args).map_err(|e| {
         rpc_error(
             INVALID_PARAMS,
-            format!("bad arguments: {}", crate::domain::shown(&e.to_string())),
+            format!("bad arguments: {}", crate::domain::shown(e.to_string())),
         )
     })
 }

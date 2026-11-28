@@ -202,15 +202,11 @@ mod tests {
         assert_eq!(t.len(), super::MAX_AUDIT_TARGET);
         assert!(t.ends_with(super::TRUNCATED));
         // exactly at the cap is not cut; one over is
-        assert_eq!(super::shown(&"a".repeat(128)).len(), 128);
-        assert!(super::shown(&"a".repeat(129)).ends_with(super::TRUNCATED));
+        assert_eq!(super::shown("a".repeat(128)).len(), 128);
+        assert!(super::shown("a".repeat(129)).ends_with(super::TRUNCATED));
         // a cut never splits an escape, even when the cap falls inside one
         for pad in 0..40 {
-            let t = super::shown(&format!(
-                "{}{}",
-                "a".repeat(pad + 90),
-                "\u{202e}".repeat(20)
-            ));
+            let t = super::shown(format!("{}{}", "a".repeat(pad + 90), "\u{202e}".repeat(20)));
             assert!(t.len() <= super::MAX_AUDIT_TARGET, "{t}");
             assert!(
                 !t.trim_end_matches(super::TRUNCATED).ends_with("\\u{20"),
