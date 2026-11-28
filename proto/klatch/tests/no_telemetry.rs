@@ -666,7 +666,7 @@ fn a_path_is_read_whatever_its_extension_and_a_missing_target_is_a_finding() {
         (
             "a non-Rust target that exists",
             "src/some/new_file.rs",
-            "#[path = \"../Cargo.toml\"]\nmod sock;\n",
+            "#[path = \"../../Cargo.toml\"]\nmod sock;\n",
         ),
         (
             "a non-Rust target with a dot dot",
