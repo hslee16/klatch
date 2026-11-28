@@ -303,10 +303,13 @@ fn build_args(profile: &str, dir: &std::path::Path) -> Vec<String> {
     cargo_build_args(&["-p", "klatch", "--features", "test-clock"], profile, dir)
 }
 
-/// The cargo arguments that build klatch as the workspace does (default features, no test clock) into the workspace's
-/// own target directory, so a workspace build that already made it leaves cargo nothing to do (#1353).
-fn plain_build_args(profile: &str, target: &std::path::Path) -> Vec<String> {
-    cargo_build_args(&["-p", "klatch"], profile, target)
+/// The cargo arguments that build klatch with its default features and no test clock, into `dir`: a target directory of
+/// its own, never the workspace's. A workspace build compiles klatch with the features its other crates ask for
+/// (`client-socket`, `client-http`), and `cargo build -p klatch` compiles it with the defaults only, so the two differ;
+/// built into the same directory, the second relinks `target/debug/klatch` and any test spawning it in that moment gets
+/// ENOENT (#1789, the cost of the sharing #1353 chose).
+fn plain_build_args(profile: &str, dir: &std::path::Path) -> Vec<String> {
+    cargo_build_args(&["-p", "klatch"], profile, dir)
 }
 
 /// The cargo arguments that build `klatch-server` as shipped (no test clock: the channel never reads it) in the same
@@ -480,10 +483,10 @@ pub fn find_binary() -> Result<std::path::PathBuf, String> {
     BINARY.get_or_init(build_binary).clone()
 }
 
-/// The klatch binary as the workspace builds it (no test clock), as a private copy (see `find_binary`), for tests that
-/// do not move klatch's clock. It shares the workspace target directory, so after a workspace build (as `cargo test
-/// --workspace` and nextest make) this builds nothing: the test-clock binary of `find_binary` is a second compile of
-/// klatch into its own directory, about ten seconds of CPU on every fresh run, that such a test has no use for (#1353).
+/// klatch with its default features and no test clock, as a private copy (see `find_binary`), for tests that do not move
+/// klatch's clock. Built into a target directory of its own (`bench-bin-plain`), so it never replaces
+/// `target/debug/klatch`, which other tests spawn while this builds (#1789; #1353 had shared the workspace directory to
+/// save a compile, and that share made cargo relink the binary under the running tests).
 pub fn find_plain_binary() -> Result<std::path::PathBuf, String> {
     static BINARY: std::sync::OnceLock<Result<std::path::PathBuf, String>> =
         std::sync::OnceLock::new();
@@ -506,12 +509,18 @@ fn build_server_binary() -> Result<std::path::PathBuf, String> {
     obtain_binary(&dir, &built, || run_cargo(args, &built))
 }
 
+/// Where the plain build goes and what it runs: its own target directory under the workspace's, the binary it makes
+/// there, and the cargo arguments. Nothing in it is the workspace's own `target/<profile>` (#1789).
+fn plain_build_plan(layout: &BuildLayout) -> (std::path::PathBuf, std::path::PathBuf, Vec<String>) {
+    let dir = layout.target.join("bench-bin-plain");
+    let built = dir.join(&layout.name).join(exe_name("klatch"));
+    let args = plain_build_args(&layout.name, &dir);
+    (dir, built, args)
+}
+
 fn build_plain_binary() -> Result<std::path::PathBuf, String> {
     let layout = BuildLayout::of_running_bench()?;
-    // Only the copies and the lock live here; the build itself is the workspace's, in `target`.
-    let dir = layout.target.join("bench-bin-plain");
-    let built = layout.profile.join(exe_name("klatch"));
-    let args = plain_build_args(&layout.name, &layout.target);
+    let (dir, built, args) = plain_build_plan(&layout);
     obtain_binary(&dir, &built, || run_cargo(args, &built))
 }
 
@@ -1068,15 +1077,75 @@ mod build_args_tests {
     use std::path::Path;
 
     #[test]
-    fn the_plain_build_is_the_workspaces_own_so_a_workspace_build_leaves_it_nothing_to_do() {
-        let dbg = plain_build_args("debug", Path::new("/t"));
+    fn the_plain_build_is_default_features_in_its_own_target_dir_never_the_workspaces() {
+        let dbg = plain_build_args("debug", Path::new("/t/bench-bin-plain"));
         let has = |args: &[String], a: &str| args.iter().any(|x| x == a);
         let flags = ["test-clock", "--features", "--release"].map(|f| has(&dbg, f));
         assert_eq!(flags, [false; 3], "{dbg:?}");
-        // the workspace target directory, not the private `bench-bin` one
-        assert_eq!(dbg.last().map(String::as_str), Some("/t"));
-        let rel = plain_build_args("release", Path::new("/t"));
+        assert_eq!(dbg.last().map(String::as_str), Some("/t/bench-bin-plain"));
+        let rel = plain_build_args("release", Path::new("/t/bench-bin-plain"));
         assert!(rel.contains(&"--release".to_string()), "{rel:?}");
+    }
+
+    /// The plan of the plain build, for any layout: its target directory is below the workspace's but is not it, the
+    /// binary it makes is not in the workspace's profile directory, and the `--target-dir` it passes is that directory
+    /// (#1789: the old plan passed the workspace's own, and the binary it made was `target/debug/klatch`).
+    #[test]
+    fn the_plain_build_plan_never_names_the_workspaces_target_or_binary() {
+        for (profile, name) in [
+            ("/w/target/debug", "debug"),
+            ("/w/target/release", "release"),
+        ] {
+            let layout = super::BuildLayout {
+                profile: std::path::PathBuf::from(profile),
+                target: std::path::PathBuf::from("/w/target"),
+                name: name.to_string(),
+            };
+            let (dir, built, args) = super::plain_build_plan(&layout);
+            assert_eq!(dir, Path::new("/w/target/bench-bin-plain"));
+            assert_ne!(dir, layout.target);
+            assert!(
+                !built.starts_with(&layout.profile),
+                "{built:?} is in the workspace's profile directory"
+            );
+            assert!(built.starts_with(&dir), "{built:?}");
+            let at = args
+                .iter()
+                .position(|a| a == "--target-dir")
+                .expect("a --target-dir");
+            assert_eq!(args[at + 1], dir.display().to_string(), "{args:?}");
+            assert_ne!(args[at + 1], layout.target.display().to_string());
+            assert!(!args.iter().any(|a| a == "test-clock"), "{args:?}");
+        }
+    }
+
+    /// Building the plain binary must not touch the workspace's own `target/debug/klatch` (#1789): the workspace test
+    /// build leaves a feature-unified klatch there, other tests spawn it by `CARGO_BIN_EXE_klatch` while this one builds,
+    /// and a cargo build that relinks it makes their spawn fail with ENOENT. Deterministic: after a workspace build the
+    /// two builds differ, so the old plain build relinked the file; the file's identity, time and size must not change.
+    #[cfg(unix)]
+    #[test]
+    fn building_the_plain_binary_leaves_the_workspace_binary_alone() {
+        use std::os::unix::fs::MetadataExt;
+        let layout = super::BuildLayout::of_running_bench().unwrap();
+        let ws = layout.profile.join(super::exe_name("klatch"));
+        let Ok(before) = std::fs::metadata(&ws) else {
+            eprintln!(
+                "skipped: {} is not built (only this crate's tests were built)",
+                ws.display()
+            );
+            return;
+        };
+        let id = |m: &std::fs::Metadata| (m.ino(), m.mtime(), m.mtime_nsec(), m.len());
+        let plain = super::build_plain_binary().expect("the plain klatch binary");
+        let after = std::fs::metadata(&ws).expect("the workspace binary is still there");
+        assert_eq!(
+            id(&after),
+            id(&before),
+            "building {} replaced {}: a test that spawns it meanwhile gets ENOENT (#1789)",
+            plain.display(),
+            ws.display()
+        );
     }
 
     #[test]
