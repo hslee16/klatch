@@ -44,6 +44,11 @@ impl<S: Store> Gateway<S> {
                     continue;
                 }
                 if let Some(mut item) = load_item(&self.store, &q)? {
+                    if !q.to_room.is_empty() {
+                        // the label a release would use is the target's current one, not the one at queue time
+                        // (#1767); the reviewer already passed clearance on this room, so showing it leaks nothing
+                        item.to_label = self.room_label(&q.to_room)?;
+                    }
                     if !q.detail.is_empty() {
                         // why a judge flagged it (the rules, or the hosted judge): plain data, not an instruction to the reviewer
                         item.reason = format!("{}; judge flag (data): {}", item.reason, q.detail);

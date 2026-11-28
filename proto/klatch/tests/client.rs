@@ -188,3 +188,65 @@ fn a_shared_claim_is_listed_with_scope_star_and_an_exclusive_one_is_not() {
         ]
     );
 }
+
+/// A store with a crossing waiting: `vault` is private (alice and the reviewer `rev` are cleared to it), `open` is
+/// public, and alice has asked for her message to be copied from the one into the other. Returns the message's seq.
+fn crossing_waiting(h: &Home) -> i64 {
+    let mut alice = connect(h, "alice");
+    for room in ["vault", "open"] {
+        alice.post(PostRequest::new(room, "hello")).unwrap();
+    }
+    for act in [
+        &["label", "vault", "private"][..],
+        &["clear", "alice", "private"],
+        &["clear", "rev", "private"],
+        &["reviewer", "rev"],
+    ] {
+        let r = h.admin(act, &[]);
+        assert!(r.ok(), "{act:?} failed:\n{}", r.text);
+    }
+    let (seq, _) = alice
+        .post(PostRequest::new("vault", "the plan is blue"))
+        .unwrap();
+    let r = h.run(
+        "alice",
+        &["cross", "vault", &seq.to_string(), "--to", "open"],
+    );
+    assert!(r.status.success(), "{r:?}");
+    seq as i64
+}
+
+#[test]
+fn a_reviewer_gets_the_item_with_its_target_room_and_its_current_label_over_the_client() {
+    let h = home();
+    let seq = crossing_waiting(&h);
+    let mut rev = connect(&h, "rev");
+    let item = rev.review_next().unwrap().expect("one item waits");
+    assert_eq!(
+        (item.room.as_str(), item.seq as i64, item.text.as_str()),
+        ("vault", seq, "the plan is blue")
+    );
+    assert_eq!(
+        (item.to_room.as_str(), item.to_label.as_str()),
+        ("open", "public")
+    );
+    // the target is relabelled after the request was queued: the reviewer sees the label a release will use (#1767)
+    let r = h.admin(&["label", "open", "internal"], &[]);
+    assert!(r.ok(), "{}", r.text);
+    let item = rev.review_next().unwrap().expect("still waiting");
+    assert_eq!(
+        (item.to_room.as_str(), item.to_label.as_str()),
+        ("open", "internal")
+    );
+}
+
+#[test]
+fn an_item_without_a_to_room_from_an_older_server_parses_as_an_empty_one() {
+    let item = klatch::client::ReviewItem::from_wire(&serde_json::json!({
+        "id": 4, "room": "vault", "seq": 2, "to_label": "public", "reason": "crossing", "text": "t"
+    }));
+    assert_eq!(
+        (item.id, item.to_room.as_str(), item.to_label.as_str()),
+        (4, "", "public")
+    );
+}

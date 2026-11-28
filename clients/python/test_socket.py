@@ -299,6 +299,31 @@ class Methods(SocketCase):
         call(c)
         return d.frames()[-1]
 
+    def review_item(self, **over):
+        item = {"id": 4, "room": "vault", "seq": 2, "to_label": "public", "to_room": "open", "reason": "crossing", "text": "the plan"}
+        item.update(over)
+        return item
+
+    def test_review_next_returns_the_item_with_its_target_room_and_label(self):
+        item = self.review_item()
+        d = self.serve(answer=lambda f: [ok(f["id"], {"item": item})])
+        got = self.connect(d).review_next()
+        self.assertEqual(d.frames()[-1]["method"], "review_next")
+        self.assertEqual(got, item)
+        self.assertEqual((got["to_room"], got["to_label"]), ("open", "public"))
+
+    def test_review_next_is_none_when_nothing_waits(self):
+        d = self.serve(answer=lambda f: [ok(f["id"], {"item": None})])
+        self.assertIsNone(self.connect(d).review_next())
+
+    def test_an_item_without_to_room_from_an_older_server_reads_as_an_empty_one(self):
+        item = self.review_item()
+        del item["to_room"]
+        d = self.serve(answer=lambda f: [ok(f["id"], {"item": item})])
+        got = self.connect(d).review_next()
+        self.assertEqual((got["id"], got["text"]), (4, "the plan"))
+        self.assertEqual(got.get("to_room", ""), "")
+
     def test_post_keeps_only_the_given_optionals_in_a_fixed_order(self):
         f = self.wire(lambda c: c.post("lobby", "seeking: x", label="L", scope="s", refs=[{"kind": "pr", "value": "1"}]))
         self.assertEqual(f["method"], "post")

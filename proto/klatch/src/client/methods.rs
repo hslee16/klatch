@@ -305,15 +305,7 @@ impl Client {
         if item.is_null() {
             return Ok(None);
         }
-        Ok(Some(ReviewItem {
-            id: item["id"].as_i64().unwrap_or(0),
-            room: str_of(&item["room"]),
-            seq: item["seq"].as_u64().unwrap_or(0),
-            to_label: str_of(&item["to_label"]),
-            to_room: str_of(&item["to_room"]),
-            reason: str_of(&item["reason"]),
-            text: str_of(&item["text"]),
-        }))
+        Ok(Some(ReviewItem::from_wire(item)))
     }
 
     /// The reviewer's verdict on an item: `allow`, `redact` (with `text`) or `deny` (with an optional `reason`).
